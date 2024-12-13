@@ -794,7 +794,7 @@ where
 #[derive(Clone)]
 struct ReferencedNodes {
   parent: Option<Arc<ReferencedNodes>>,
-  nodes:  SmallVec<[ArcGlyph; 4]>,
+  nodes:  SmallVec<ArcGlyph, 4>,
 }
 
 impl ReferencedNodes {

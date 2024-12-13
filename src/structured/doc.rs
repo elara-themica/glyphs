@@ -87,7 +87,7 @@ where
   B: ToGlyph,
 {
   id:            I,
-  prev_versions: SmallVec<[DocVer; 4]>,
+  prev_versions: SmallVec<DocVer, 4>,
   body:          B,
 }
 
@@ -107,7 +107,7 @@ where
 
   pub fn new_versioned(id: I, replaces: &[DocVer], body: B) -> Document<I, B> {
     let mut prev_versions =
-      SmallVec::<[DocVer; 4]>::with_capacity(replaces.len());
+      SmallVec::<DocVer, 4>::with_capacity(replaces.len());
     for ver in replaces {
       prev_versions.push(*ver);
     }
