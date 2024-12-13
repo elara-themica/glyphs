@@ -28,7 +28,6 @@ use crate::{
   zerocopy::{round_to_word, ZeroCopy, U16, U32},
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
 };
-use bitflags::bitflags;
 use core::{mem::size_of, ops::Deref};
 use log::Level;
 
@@ -237,31 +236,28 @@ struct SignatureGlyphHeader {
 unsafe impl ZeroCopy for SignatureGlyphHeader {}
 
 impl SignatureGlyphHeader {
+  const HAS_SIGNING_STATEMENT: u8 = 0b0000_0001;
+
   fn new(has_ss: bool, sig_type: CryptoSignatureTypes) -> Self {
-    let mut flags = SignatureGlyphFlags::empty();
-    flags.set(SignatureGlyphFlags::HAS_SIGNING_STATEMENT, has_ss);
+    let mut flags: u8 = 0;
+    if has_ss {
+      flags |= Self::HAS_SIGNING_STATEMENT;
+    }
 
     Self {
-      version:    0,
-      flags:      flags.bits,
-      sig_type:   sig_type.into(),
+      version: 0,
+      flags,
+      sig_type: sig_type.into(),
       reserved_2: Default::default(),
     }
   }
 
   fn has_statement(&self) -> bool {
-    let flags = SignatureGlyphFlags::from_bits_truncate(self.flags);
-    flags.contains(SignatureGlyphFlags::HAS_SIGNING_STATEMENT)
+    self.flags & Self::HAS_SIGNING_STATEMENT != 0
   }
 
   fn sig_type(&self) -> CryptoSignatureTypes {
     CryptoSignatureTypes::from(self.sig_type)
-  }
-}
-
-bitflags! {
-  struct SignatureGlyphFlags: u8 {
-    const HAS_SIGNING_STATEMENT = 0b0000_0001;
   }
 }
 

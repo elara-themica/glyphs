@@ -15,7 +15,6 @@ aes = { optional = true, version = "0.8" }
 async-recursion = "1.1.1"
 ctr = { optional = true, version = "0.9" }
 backtrace = { optional = true, version = "0.3" }
-bitflags = "1.3.2"
 blake3 = { optional = true, version = "1.5" }
 ed25519-dalek = { optional = true, version = "2.1", features = ["rand_core"] }
 log = { optional = true, version = "0.4" }
