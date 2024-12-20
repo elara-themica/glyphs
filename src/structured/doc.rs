@@ -4,8 +4,9 @@ use crate::{
   crypto::GlyphHash,
   glyph_close, glyph_read,
   util::MemoizedInvariant,
-  zerocopy::{ZeroCopy, U16, U64},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  zerocopy::{ZeroCopy, U16},
+  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphPtr, GlyphType, ParsedGlyph,
+  ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -33,39 +34,16 @@ unsafe impl ZeroCopy for DocGlyphHeader {}
 
 impl DocGlyphHeader {
   /// Creates a new [`DocGlyphHeader`].
-  pub fn new(num_old_versions: u16) -> DocGlyphHeader {
-    DocGlyphHeader {
+  pub fn new(num_old_versions: usize) -> Result<DocGlyphHeader, GlyphErr> {
+    let num_old_versions: U16 = num_old_versions
+      .try_into()
+      .map_err(|_| GlyphErr::DocOldVersionsOverflow(num_old_versions))?;
+    Ok(DocGlyphHeader {
       doc_glyph_version: 0,
-      reserved_0:        Default::default(),
-      num_old_versions:  U16::from(num_old_versions),
-      reserved_1:        Default::default(),
-    }
-  }
-}
-
-/// Describes version of a document, consisting of a `u64` serial number and
-/// a cryptographic hash.
-///
-/// - A document's serial number equal to one greater than the highest serial
-///   number of its (potentially multiple) parents/previous versions.  A
-///   document with no previous versions has a serial number of zero.
-/// - The hash is the document's cryptographic hash.
-///
-/// Note that implied in this definition, a document's own version (1) can be
-/// reliably calculated from its content but (2) cannot be stored or asserted
-/// directly in the document itself, due to the hash requirement.
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
-#[repr(packed)]
-pub struct DocVer {
-  pub serial: U64,
-  pub hash:   GlyphHash,
-}
-
-unsafe impl ZeroCopy for DocVer {}
-
-impl Debug for DocVer {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "DocVer({:?}/{})", &self.hash, &self.serial)
+      reserved_0: Default::default(),
+      num_old_versions,
+      reserved_1: Default::default(),
+    })
   }
 }
 
@@ -81,13 +59,9 @@ impl Debug for DocVer {
 ///   changes).
 #[cfg(feature = "alloc")]
 #[derive(Debug)]
-pub struct Document<I, B>
-where
-  I: ToGlyph,
-  B: ToGlyph,
-{
+pub struct Document<I, B> {
   id:            I,
-  prev_versions: SmallVec<DocVer, 4>,
+  prev_versions: SmallVec<GlyphHash, 2>,
   body:          B,
 }
 
@@ -109,23 +83,19 @@ where
   /// Create a new document to replace older versions.
   pub fn replace(id: I, body: B, replaces: &[GlyphHash]) -> Document<I, B> {
     let mut prev_versions =
-      SmallVec::<DocVer, 4>::with_capacity(replaces.len());
+      SmallVec::<GlyphHash, 2>::with_capacity(replaces.len());
     for ver in replaces {
       prev_versions.push(*ver);
     }
     Document {
       id,
-      prev_versions,
       body,
+      prev_versions,
     }
   }
 }
 
-impl<I, B> Document<I, B>
-where
-  I: ToGlyph + 'static,
-  B: ToGlyph + 'static,
-{
+impl<I, B> Document<I, B> {
   /// This function reads a(n immutable) [`DocGlyph`] into a new (mutable)
   /// `Document`, listing the original document as an old version.
   ///
@@ -164,12 +134,11 @@ where
   ) -> Result<Document<I, B>, GlyphErr>
   where
     G: Glyph,
-    I: FromGlyph<ParsedGlyph<'a>> + ToGlyph + 'static,
-    B: FromGlyph<ParsedGlyph<'a>> + ToGlyph + 'static,
-    // TODO: Is the 'static really required here?
+    I: FromGlyph<ParsedGlyph<'a>> + ToGlyph,
+    B: FromGlyph<ParsedGlyph<'a>> + ToGlyph,
   {
-    let id_glyph = parent.id();
-    let body_glyph = parent.body();
+    let id_glyph = parent.id_glyph();
+    let body_glyph = parent.body_glyph();
 
     let id = I::from_glyph(id_glyph)?;
     let body = B::from_glyph(body_glyph)?;
@@ -184,11 +153,7 @@ where
   }
 }
 
-impl<I, B> Document<I, B>
-where
-  I: ToGlyph,
-  B: ToGlyph,
-{
+impl<I, B> Document<I, B> {
   /// Returns a reference to the document's ID.
   pub fn id(&self) -> &I {
     &self.id
@@ -199,8 +164,13 @@ where
     &self.body
   }
 
+  /// Returns a mutable reference to the document's body.
+  pub fn body_mut(&mut self) -> &mut B {
+    &mut self.body
+  }
+
   /// Returns a reference to the vector of previous versions, if any.
-  pub fn prev_versions(&self) -> &[DocVer] {
+  pub fn prev_versions(&self) -> &[GlyphHash] {
     self.prev_versions.borrow()
   }
 
@@ -233,10 +203,10 @@ where
     let offset = *cursor;
     *cursor += size_of::<GlyphHeader>();
 
-    let dgh = DocGlyphHeader::new(self.prev_versions().len().try_into()?);
+    let dgh = DocGlyphHeader::new(self.prev_versions().len())?;
     dgh.bbwr(target, cursor)?;
 
-    DocVer::bbwrs(self.prev_versions(), target, cursor)?;
+    GlyphHash::bbwrs(self.prev_versions(), target, cursor)?;
 
     // Write ID and body.
     self.id.glyph_encode(target, cursor)?;
@@ -249,7 +219,7 @@ where
   fn glyph_len(&self) -> usize {
     size_of::<GlyphHeader>()
       + size_of::<DocGlyphHeader>()
-      + size_of::<DocVer>() * self.prev_versions.len()
+      + size_of::<GlyphHash>() * self.prev_versions.len()
       + self.id.glyph_len()
       + self.body.glyph_len()
   }
@@ -273,12 +243,11 @@ where
 //   `DocGlyph`'s buffer.
 pub struct DocGlyph<G: Glyph> {
   glyph:   G,
-  serial:  u64,
-  own_ver: MemoizedInvariant<DocVer>,
-  parents: NonNull<[DocVer]>,
+  own_ver: MemoizedInvariant<GlyphHash>,
+  parents: NonNull<[GlyphHash]>,
   // SAFETY: These aren't actually 'static; they're internal self-references.
-  id:      ParsedGlyph<'static>,
-  body:    ParsedGlyph<'static>,
+  id:      GlyphPtr,
+  body:    GlyphPtr,
 }
 
 impl<G: Glyph> DocGlyph<G> {
@@ -291,42 +260,32 @@ impl<G: Glyph> DocGlyph<G> {
   /// Returns the document's ID
   pub fn id_glyph(&self) -> ParsedGlyph {
     // SAFETY: Binds to lifetime of self.
-    self.id.clone()
+    unsafe { self.id.deref() }
   }
 
   /// Returns the document's body
   pub fn body_glyph(&self) -> ParsedGlyph {
     // SAFETY: Binds to lifetime of self.
-    self.body.clone()
+    unsafe { self.body.deref() }
   }
 
-  /// Returns the version of this document.
-  pub fn version(&self) -> &DocVer {
-    self.own_ver.get(|| {
-      let hash = self.glyph.glyph_hash();
-      DocVer {
-        serial: U64::from(self.serial),
-        hash,
-      }
-    })
-  }
-
-  pub fn serial(&self) -> u64 {
-    self.serial
+  /// Returns the document's version (i.e., its [`GlyphHash`]).
+  pub fn version(&self) -> &GlyphHash {
+    self.own_ver.get(|| self.glyph.glyph_hash())
   }
 }
 
 impl<'a> DocGlyph<ParsedGlyph<'a>> {
   /// Returns the document's ID, parsed from an underlying buffer.
   pub fn id_parse(&self) -> ParsedGlyph<'a> {
-    // SAFETY: Bound to lifetime 'a
-    self.id.clone()
+    // SAFETY: Bound to lifetime of underlying parsed glyph
+    unsafe { self.body.deref() }
   }
 
   /// Returns the document's body, parsed from an underlying buffer.
   pub fn body_parse(&self) -> ParsedGlyph<'a> {
-    // SAFETY: Bound to lifetime 'a
-    self.body.clone()
+    // SAFETY: Bound to lifetime of underlying parsed glyph
+    unsafe { self.body.deref() }
   }
 }
 
@@ -338,23 +297,16 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
 
     let dgh = DocGlyphHeader::bbrf(content, cursor)?;
     let nov = u16::from(dgh.num_old_versions) as usize;
-    let ov = DocVer::bbrfs(content, cursor, nov)?;
-    let mut serial = 0;
-    for v in ov {
-      if serial <= v.serial.get() {
-        serial = u64::from(v.serial) + 1;
-      }
-    }
+    let ov = GlyphHash::bbrfs(content, cursor, nov)?;
     // SAFETY: This internal self-reference must not escape without being bound
     // to the lifetime of 'self, and
-    let id = unsafe { glyph_read(content, cursor)?.detach() };
-    let body = unsafe { glyph_read(content, cursor)?.detach() };
+    let id = GlyphPtr::from_parsed(glyph_read(content, cursor)?);
+    let body = GlyphPtr::from_parsed(glyph_read(content, cursor)?);
 
     let parents = NonNull::from(ov);
 
     Ok(DocGlyph {
       glyph: source,
-      serial,
       own_ver: MemoizedInvariant::empty(),
       parents,
       id,
@@ -363,25 +315,13 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
   }
 }
 
-// #[glyphs_derive::from_ord(Eq, PartialEq, PartialOrd)]
-// impl<G> Ord for DocGlyph<G>
-// where
-//   G: PinnedGlyph,
-// {
-//   fn cmp(&self, other: &Self) -> Ordering {
-//     glyph_sort(&self.id(), &other.id())
-//       .then(self.serial.cmp(&other.serial))
-//       .then(self.glyph.glyph_hash().cmp(&other.glyph.glyph_hash()))
-//   }
-// }
-
 impl<G: Glyph> Debug for DocGlyph<G> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut b = f.debug_struct("DocGlyph");
-    b.field("id", &self.id());
+    b.field("id", &self.id_glyph());
     b.field("own_ver", &self.version());
-    b.field("parents", &self.parents());
-    b.field("body", &self.body());
+    b.field("parents", &self.previous_versions());
+    b.field("body", &self.body_glyph());
     b.finish()
   }
 }
@@ -448,7 +388,10 @@ mod test {
       "Version of the first glyph is {:?}",
       first_doc_glyph.version()
     );
-    println!("It has {:?} parents", first_doc_glyph.parents().len());
+    println!(
+      "It has {:?} parents",
+      first_doc_glyph.previous_versions().len()
+    );
 
     let mut second_doc = Document::<u32, String>::update(&first_doc_glyph)?;
     second_doc.set_body(String::from("7 (good) times 6 (evil)"));

@@ -1703,6 +1703,10 @@ pub enum GlyphErr {
   },
   /// The length of a glyph must be a multiple of 8 bytes.
   GlyphLenUnaligned(usize),
+
+  /// Attempt to create a document with more than the maximum allowed number
+  /// of old versions (`u16::MAX`)l
+  DocOldVersionsOverflow(usize),
 }
 
 impl Display for GlyphErr {
