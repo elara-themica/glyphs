@@ -126,6 +126,13 @@ impl GlyphHeader {
     (self.flags & Self::LONG_BIT) == 0
   }
 
+  /// Returns the length of the glyph's content, in bytes.
+  ///
+  /// The length returned represents the number of bytes after the glyph header,
+  /// including any padding if present.
+  ///
+  /// - It should always be a multiple of 8 bytes.
+  /// - The content length for short glyphs will be zero.
   #[inline(always)]
   pub const fn content_len(self) -> usize {
     let len_factor = (self.flags & Self::LONG_BIT) as u64;
@@ -133,6 +140,10 @@ impl GlyphHeader {
     (content_words * len_factor) as usize
   }
 
+  /// Returns the number of bytes of zero padding at the end of the glyph.
+  ///
+  /// This value is typically needed for types which require their length to
+  /// be specified in exact number of bytes, such as a string.
   pub const fn padding(self) -> usize {
     (self.flags & Self::PADDING_BITS) as usize
   }
@@ -148,6 +159,9 @@ impl GlyphHeader {
     self.len_data
   }
 
+  /// Returns the (4-byte) contents of a short glyph.
+  ///
+  /// - For short glyphs, the source of these bytes is the header length field.
   #[inline(always)]
   pub fn short_content_ref(&self) -> &[u8; 4] {
     &self.len_data
@@ -201,6 +215,24 @@ impl HasZeroCopyID for GlyphOffset {
 }
 
 impl GlyphOffset {
+  /// Creates a new instance from the specified start and position.
+  ///
+  /// - When reading content from glyphs, the start will typically be `0` (the
+  ///   start of the content section).
+  /// - When writing offsets in glyphs, the start and position will typically
+  ///   be determined by the write cursor.
+  ///
+  /// # Parameters
+  /// - `start`: The starting byte position, which must be aligned to an 8-byte
+  ///   boundary.
+  /// - `position`: The target byte position, which must also be aligned to an
+  ///   8-byte boundary.
+  ///
+  /// # Returns
+  /// - `Ok(Self)`: A new `GlyphOffset` instance representing the offset, if
+  ///   the inputs are valid.
+  /// - `Err(GlyphErr)`: An error if either of the positions is not aligned to
+  ///    an 8-byte boundary or if the length exceeds `u32::MAX * 8`.
   pub fn new(start: usize, position: usize) -> Result<Self, GlyphErr> {
     if (start % 8 != 0) || (position % 8 != 0) {
       return Err(err!(
@@ -286,6 +318,7 @@ to the array would no longer be valid.
 */
 // TOOD: Transfer safety information to this doc comment.
 pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
+  /// Returns the contents of the glyph, including any padding.
   #[inline(always)]
   fn content_padded(&self) -> &[u8] {
     let glyph_bytes = self.as_ref();
@@ -334,12 +367,14 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
     self.as_ref().len()
   }
 
+  /// Returns the associated glyph type.
   #[inline(always)]
   fn glyph_type(&self) -> GlyphType {
     let id = u16::from_le_bytes(self.header().type_id);
     id.into()
   }
 
+  /// Returns an error if the glyph's type is different from that provided.
   #[inline(always)]
   fn confirm_type(&self, glyph_type: GlyphType) -> Result<(), GlyphErr> {
     self.header().confirm_type(glyph_type)
@@ -352,11 +387,19 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
     Ok(())
   }
 
+  /// Borrows a [`ParsedGlyph`] from this glyph.
+  ///
+  /// This function may be used in some cases to avoid needing a generic across
+  /// different glyph types (i.e., [`ParsedGlyph`], [`BoxGlyph`], [`ArcGlyph`].
   fn borrow(&self) -> ParsedGlyph<'_> {
     let glyph_bytes = self.as_ref();
     ParsedGlyph { glyph_bytes }
   }
 
+  /// Returns the glyph's cryptographic hash.
+  ///
+  /// The entire glyph is included as input to the hash algorithm, including
+  /// the header and any zero padding.
   fn glyph_hash(&self) -> GlyphHash {
     GlyphHash::new(self.as_ref())
   }
@@ -398,10 +441,13 @@ pub struct ParsedGlyph<'a> {
 }
 
 impl<'a> ParsedGlyph<'a> {
+  /// Returns the glyph header, parsed from the glyph's underlying buffer.
   pub fn header_parsed(&self) -> &'a GlyphHeader {
     unsafe { GlyphHeader::bbrf_u(self.glyph_bytes, &mut 0) }
   }
 
+  /// Returns the glyph's contents, not including any zero padding, parsed from
+  /// the glyph's underlying buffer.
   pub fn content_parsed(&self) -> &'a [u8] {
     // TODO: Document safety, potentially simplify?
     let content = NonNull::from(self.content());
@@ -410,6 +456,7 @@ impl<'a> ParsedGlyph<'a> {
 
   // TODO: Document safety, potentially simplify?
   pub fn content_padded_parsed(&self) -> &'a [u8] {
+    // TODO: Document safety, potentially simplify?
     let content_padded = NonNull::from(self.content_padded());
     unsafe { content_padded.as_ref() }
   }
@@ -696,6 +743,7 @@ impl ArcGlyph {
   /// Create a new glyph by copying parsed bytes from another buffer onto the
   /// heap.
   pub fn from_parsed(parsed: ParsedGlyph) -> Result<Self, GlyphErr> {
+    // SAFETY: Glyph checks unnecessary, occurred when creating ParsedGlyph.
     unsafe {
       let mut buf = Self::new_buffer(parsed.len())?;
       buf.as_mut().copy_from_slice(parsed.as_ref());
@@ -714,8 +762,9 @@ impl ArcGlyph {
     Arc::<[u8], GlyphAlloc>::strong_count(&self.0.inner())
   }
 
-  pub fn weak_count(&self) -> usize {
-    Arc::<[u8], GlyphAlloc>::weak_count(&self.0.inner())
+  /// Returns the number of references to this [`ArcGlyph`].
+  pub fn num_references(&self) -> usize {
+    Arc::<_, _>::strong_count(&self.0)
   }
 }
 
@@ -982,6 +1031,7 @@ where
 
 /// The mapping of glyph types to `u16` values for the `type_id` field of
 /// [`GlyphHeader`].
+#[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum GlyphType {
@@ -1111,8 +1161,13 @@ pub enum GlyphType {
   /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
   F256 = 0x004a,
 
+  /// Signed Integer
   SignedInt = 0x004b,
+
+  /// Unsigned Integer
   UnsignedInt = 0x004c,
+
+  /// Floating Point Number (IEEE-754)
   Float = 0x004d,
 
   // =============================
@@ -1388,6 +1443,7 @@ pub enum GlyphErr {
   /// There was an attempt to create a glyph smaller than the minimum size.
   TooSmall(usize),
 
+  /// An attempt was made to write a container with more items than supported.
   TooManyItems {
     num_items: usize,
     allowed:   usize,

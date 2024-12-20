@@ -123,14 +123,19 @@ macro_rules! gen_zc_prim {
     }
 
     impl $zc_prim {
+      /// Creates an instance of the primitive from an array of bytes.
+      ///
+      /// Note that any types with endianness must be little-endian.
       pub fn from_bytes(bytes: [u8; size_of::<$native_prim>()]) -> $zc_prim {
         $zc_prim(bytes)
       }
 
+      /// Gets the associated native primitive
       pub fn get(&self) -> $native_prim {
         ($from_bytes)(self.0)
       }
 
+      /// Retrieves the raw bytes of the type.
       pub fn bytes(&self) -> &[u8; size_of::<$native_prim>()] {
         &self.0
       }

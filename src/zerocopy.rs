@@ -142,11 +142,18 @@ pub(crate) unsafe fn pad_to_word_u(target: &mut [u8], cursor: &mut usize) {
 
 /// [`ZeroCopy`] types with a corresponding glyph.
 pub trait HasZeroCopyID: ZeroCopy {
+  /// The ID used when labeling zero copy types in other glyphs.
+  ///
+  /// This value is used when working with these types, such as with
+  /// [`BasicVecGlyph`].
   const ZERO_COPY_ID: ZeroCopyTypeID;
 }
 
 /// [`ZeroCopy`] types with a corresponding glyph.
 pub trait ZeroCopyGlyph: ZeroCopy {
+  /// The [`GlyphType`] used when a zero-copy type is written as a glyph.
+  ///
+  /// E.g., [`U64`] has a glyph type of [`GlyphType::UnsignedInt`].
   const GLYPH_TYPE_ID: GlyphType;
 }
 
@@ -231,6 +238,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     alloc::vec::Vec::from(as_ref)
   }
 
+  /// Read an array of `[T; N]`.
   fn bbrda<T, const N: usize>(
     source: &T,
     cursor: &mut usize,
@@ -242,6 +250,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     unsafe { Ok(Self::bbrda_u(source, cursor)) }
   }
 
+  /// An unsafe version of [`ZeroCopy::bbrda()`] without the bounds check.
   #[inline(always)]
   unsafe fn bbrda_u<T, const N: usize>(
     source: &T,
@@ -314,6 +323,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     from_raw_parts(ptr, len)
   }
 
+  /// References an array of `[T; N]`.
   fn bbrfa<'a, T, const N: usize>(
     source: &'a T,
     cursor: &mut usize,
@@ -325,6 +335,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     Ok(unsafe { Self::bbrfa_u::<T, N>(source, cursor) })
   }
 
+  /// An unsafe version of [`ZeroCopy::bbrfa()`] without the bounds check.
   unsafe fn bbrfa_u<'a, T, const N: usize>(
     source: &'a T,
     cursor: &mut usize,
@@ -575,6 +586,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     }
   }
 
+  /// Mutably references an array of `[T; N]`.
   fn bbrfa_mut<'a, T, const N: usize>(
     source: &'a mut T,
     cursor: &mut usize,
@@ -587,6 +599,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     Ok(unsafe { Self::bbrfa_mut_u::<T, N>(source, cursor) })
   }
 
+  /// A unsafe version of [`ZeroCopy::bbrfa_mut()`] without the bounds check.
   unsafe fn bbrfa_mut_u<'a, T, const N: usize>(
     source: &'a mut T,
     cursor: &mut usize,
@@ -607,6 +620,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
 /// An identifier specifying a basic type.
 ///
 /// Basic types must be of fixed length and will typically be [`ZeroCopy`].
+#[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u16)]
 pub enum ZeroCopyTypeID {

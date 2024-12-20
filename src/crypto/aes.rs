@@ -49,6 +49,7 @@ impl AesKey {
     &self.0[..]
   }
 
+  /// Creates a new key from a 32-byte byte slice (256-bit key).
   pub fn from_bytes(bytes: &[u8]) -> Result<AesKey, GlyphErr> {
     if bytes.len() != 32 {
       Err(err!(trace, GlyphErr::CryptoKeyLength))
@@ -137,6 +138,7 @@ impl AesIv {
     &self.0[..]
   }
 
+  /// Return a new AesIv for CTR mode advanced by `offset` bytes.
   pub fn ctr_offset(&self, offset: i64) -> Self {
     let mut value = i128::from_be_bytes(self.0);
     value += i128::from(offset);

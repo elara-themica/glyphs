@@ -97,6 +97,7 @@ where
   I: ToGlyph,
   B: ToGlyph,
 {
+  /// Create a new document (i.e., no modification history)
   pub fn new(id: I, body: B) -> Document<I, B> {
     Document {
       id,
@@ -105,7 +106,8 @@ where
     }
   }
 
-  pub fn new_versioned(id: I, replaces: &[DocVer], body: B) -> Document<I, B> {
+  /// Create a new document to replace older versions.
+  pub fn replace(id: I, body: B, replaces: &[GlyphHash]) -> Document<I, B> {
     let mut prev_versions =
       SmallVec::<DocVer, 4>::with_capacity(replaces.len());
     for ver in replaces {
@@ -280,17 +282,20 @@ pub struct DocGlyph<G: Glyph> {
 }
 
 impl<G: Glyph> DocGlyph<G> {
-  pub fn parents(&self) -> &[DocVer] {
-    // SAFETY: Guaranteed by `PinnedGlyph` bounds on `G`.
+  /// Returns a slice of hashes of previous versions of this document.
+  pub fn previous_versions(&self) -> &[GlyphHash] {
+    // SAFETY: Self-reference to self.glyph, which is immutable.
     unsafe { self.parents.as_ref() }
   }
 
-  pub fn id(&self) -> ParsedGlyph<'_> {
+  /// Returns the document's ID
+  pub fn id_glyph(&self) -> ParsedGlyph {
     // SAFETY: Binds to lifetime of self.
     self.id.clone()
   }
 
-  pub fn body(&self) -> ParsedGlyph<'_> {
+  /// Returns the document's body
+  pub fn body_glyph(&self) -> ParsedGlyph {
     // SAFETY: Binds to lifetime of self.
     self.body.clone()
   }
@@ -312,11 +317,13 @@ impl<G: Glyph> DocGlyph<G> {
 }
 
 impl<'a> DocGlyph<ParsedGlyph<'a>> {
+  /// Returns the document's ID, parsed from an underlying buffer.
   pub fn id_parse(&self) -> ParsedGlyph<'a> {
     // SAFETY: Bound to lifetime 'a
     self.id.clone()
   }
 
+  /// Returns the document's body, parsed from an underlying buffer.
   pub fn body_parse(&self) -> ParsedGlyph<'a> {
     // SAFETY: Bound to lifetime 'a
     self.body.clone()

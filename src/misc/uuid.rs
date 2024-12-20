@@ -59,6 +59,7 @@ gen_prim_slice_to_glyph!(Uuid);
 
 gen_prim_slice_from_glyph_parsed!(Uuid);
 
+/// Glyph containing a UUID.
 pub struct UuidGlyph<T>(T)
 where
   T: Glyph;
@@ -67,6 +68,7 @@ impl<T> UuidGlyph<T>
 where
   T: Glyph,
 {
+  /// Returns a reference to the UUID contained in the glyph.
   pub fn get(&self) -> &Uuid {
     // SAFETY: Bounds check was performed upon creation, and Uuid has the same
     // UBI as [u8; 16].  See `from_glyph()`.

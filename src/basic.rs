@@ -178,6 +178,8 @@ impl<G: Glyph, T: ZeroCopy> Deref for BasicVecGlyph<G, T> {
 }
 
 impl<'a, T: ZeroCopy> BasicVecGlyph<ParsedGlyph<'a>, T> {
+  /// Get a reference to the contained array, but with a lifetime bound by
+  /// the underlying byte buffer.
   pub fn get_parsed(&self) -> &'a [T] {
     // SAFETY: Glyph referenced is immutable, pinned, and result's lifetime is
     //         bound by that of the underlying buffer.
@@ -523,6 +525,11 @@ where
 pub struct BoolGlyph<G: Glyph>(G);
 
 impl<G: Glyph> BoolGlyph<G> {
+  /// Fetches the glyph's truth value.
+  ///
+  /// `BoolGlyph`s are short glyphs, with the content stored in the length
+  /// filed of the [`GlyphHeader`].  If all of these bytes are zero, the truth
+  /// value will be `false`.  In all other conditions, it will be `true`.
   pub fn get(&self) -> bool {
     self.0.header().short_content() != [0u8; 4]
   }
@@ -623,6 +630,11 @@ where
     }
   }
 
+  /// Return a new instance of this bit vector, bound to the original's
+  /// lifetime.
+  ///
+  /// This is typically used to avoid a generic in functions that receive this
+  /// type as a parameter.
   pub fn borrow(&self) -> BitVector<&[u8]> {
     BitVector {
       data: self.data.as_ref(),
@@ -630,6 +642,7 @@ where
     }
   }
 
+  /// Returns an iterator through all the individual bits in this bit vector.
   pub fn iter(
     &self,
   ) -> impl Iterator<Item = bool>
@@ -655,6 +668,8 @@ where
 }
 
 impl<'a> BitVector<&'a [u8]> {
+  /// Returns an iterator through all the individual bits in this vit vector,
+  /// but the iterator's lifetime is bound only to the underlying buffer.
   pub fn iter_parsed(
     &self,
   ) -> impl Iterator<Item = bool>
@@ -852,12 +867,21 @@ pub struct BitVecGlyph<G: Glyph> {
 }
 
 impl<G: Glyph> BitVecGlyph<G> {
+  /// Returns the actual bit vector contained in this glyph.
+  ///
+  /// See the [`BitVector`] type for more details, though note that the
+  /// resulting BitVector will be immutable.
   pub fn bit_vector(&self) -> &BitVector<&'_ [u8]> {
     &self.bit_vector
   }
 }
 
 impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
+  /// Returns the actual bit vector contained in this glyph, but with a lifetime
+  /// bound only to the underlying buffer.
+  ///
+  /// See the [`BitVector`] type for more details, though note that the
+  /// resulting BitVector will be immutable.
   pub fn bit_vector_parsed(&self) -> BitVector<&'a [u8]> {
     self.bit_vector.clone()
   }
@@ -1064,6 +1088,11 @@ impl<G: Glyph> TryFrom<IntGlyph<G>> for i8 {
   }
 }
 
+/// A glyph containing an unsigned integer.
+///
+/// Currently, values up to a `u128` are supported, which is what will be
+/// returned by [`Deref`].  However, note that there are [`TryFrom`]
+/// implementations for the smaller unsigned integer types.
 pub struct UIntGlyph<G: Glyph>(G, u128);
 
 impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
@@ -1142,6 +1171,11 @@ impl<G: Glyph> TryFrom<UIntGlyph<G>> for u8 {
   }
 }
 
+/// A glyph containing a floating point number.
+///
+/// Currently, only `f32` and `f64` are supported, the latter of which is
+/// returned by [`Deref`].  However, note that there is also a direct [`From`]
+/// implementation from this type into a `f32`.
 pub struct FloatGlyph<G: Glyph>(G, f64);
 
 impl<G: Glyph> FromGlyph<G> for FloatGlyph<G> {

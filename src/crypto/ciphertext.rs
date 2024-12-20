@@ -20,6 +20,18 @@ use core::{
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
+/// Represents metadata associated with ciphertext necessary for decryption.
+///
+/// `CiphertextMetadata` encapsulates key information required for decrypting
+/// encrypted data, such as key fingerprints, initialization vectors (IVs),
+/// message authentication codes (MACs), and ephemeral public keys for certain
+/// encryption schemes.
+///
+/// Currently, it supports two major encryption schemes:
+/// - `Aes256Ctr`: Supporting CTR mode of AES-256 key, requiring an IV and MAC.
+/// - `X25519_Aes256Ctr`: Combines X25519 elliptic-curve Diffie-Hellman (ECDH)
+///   for key exchange with AES-256 for encryption and a MAC for message
+///   authentication.
 #[derive(Debug, Eq, PartialEq)]
 pub struct CiphertextMetadata {
   fingerprint:      Sha3Hash,
@@ -65,6 +77,23 @@ impl Debug for CiphertextMetadataInner {
 }
 
 impl CiphertextMetadata {
+  /// Creates a new `CiphertextMetadata` instance using AES-256-CTR encryption.
+  ///
+  /// # Parameters
+  ///
+  /// - `fingerprint`: A `Sha3Hash` that acts as a unique identifier or
+  ///   fingerprint for the key.
+  /// - `iv`: The initialization vector (`AesIv`) used for AES-256-CTR
+  ///   encryption.  Note that, to avoid certain kinds of cryptanalysis, this
+  ///   must be based on a nonce for this key (+ the # of bytes encrypted) that
+  ///   does not overlap with other uses of this key.  If this cannot be
+  ///   guaranteed, consider using a different form of encryption
+  /// - `mac`: The message authentication code (`AesMac`) for verifying the
+  ///   integrity and authenticity of the ciphertext.
+  ///
+  /// # Returns
+  ///
+  /// A new `CiphertextMetadata` instance with the provided fingerprint, IV, and MAC set for the AES-256-CTR scheme.
   pub fn new_aes_256(fingerprint: Sha3Hash, iv: AesIv, mac: AesMac) -> Self {
     Self {
       fingerprint,
@@ -72,6 +101,20 @@ impl CiphertextMetadata {
     }
   }
 
+  /// Retrieves the IV and MAC values associated with the AES-256-CTR encryption
+  /// scheme.
+  ///
+  /// # Returns
+  /// - `Ok((&AesIv, &AesMac))`: The initialization vector (IV) and message
+  ///   authentication code (MAC) if the metadata corresponds to the
+  ///   AES-256-CTR scheme.
+  /// - `Err(GlyphErr)`: An error if the metadata does not correspond to the
+  ///   AES-256-CTR encryption scheme.
+  ///
+  /// # Errors
+  ///
+  /// Returns `GlyphErr::WrongCryptoScheme` if the `CiphertextMetadata` instance
+  /// uses a different encryption scheme.
   pub fn get_aes_256(&self) -> Result<(&AesIv, &AesMac), GlyphErr> {
     match &self.inner {
       CiphertextMetadataInner::Aes256Ctr { iv, mac } => Ok((iv, mac)),
@@ -79,6 +122,21 @@ impl CiphertextMetadata {
     }
   }
 
+  /// Creates a new `CiphertextMetadata` instance using X25519 encryption
+  /// combined with AES-256-CTR for authenticated encryption.
+  ///
+  /// # Parameters
+  ///
+  /// - `fingerprint`: A `Sha3Hash` that uniquely identifies the key.
+  /// - `eph_pk`: The ephemeral public key (`[u8; X25519_KEY_LEN]`) used for the
+  ///   Diffie-Hellman key agreement in the X25519 scheme.
+  /// - `mac`: The message authentication code (`AesMac`) for verifying the
+  ///   integrity and authenticity of the ciphertext.
+  ///
+  /// # Returns
+  ///
+  /// A new `CiphertextMetadata` instance with the provided fingerprint, ephemeral
+  /// public key, and MAC set for the X25519 + AES-256-CTR encryption scheme.
   pub fn new_x25519(
     fingerprint: Sha3Hash,
     eph_pk: [u8; X25519_KEY_LEN],
@@ -90,7 +148,22 @@ impl CiphertextMetadata {
     }
   }
 
-  pub fn glyph_len(scheme: EncryptionSchemes) -> usize {
+  /// Calculates the total length of encryption metadata (a.k.a. "glyph")
+  /// for a given encryption scheme.
+  ///
+  /// # Parameters
+  ///
+  /// - `scheme`: The encryption scheme ([`EncryptionSchemes`]) for which the
+  ///   metadata size is computed. This determines the additional fields required
+  ///   in the metadata.
+  ///
+  /// # Returns
+  ///
+  /// The total size of the encryption metadata (`usize`), including
+  /// fixed-size headers and scheme-specific fields such as IVs, MACs, or keys.
+  // TODO: Is this necessary?  Do we need the size before we have an instance?
+  //       Document this here either way.
+  pub(crate) fn glyph_len(scheme: EncryptionSchemes) -> usize {
     size_of::<GlyphHeader>()
       + size_of::<CiphertextMetadataHeader>()
       + size_of::<Sha3Hash>()
@@ -107,6 +180,7 @@ impl CiphertextMetadata {
 }
 
 impl CiphertextMetadataInner {
+  /// Returns the type of encryption scheme for which we have metadata.
   fn encryption_scheme(&self) -> EncryptionSchemes {
     match self {
       CiphertextMetadataInner::Aes256Ctr { .. } => EncryptionSchemes::Aes256Ctr,
@@ -198,6 +272,7 @@ pub struct CiphertextMetadataHeader {
 unsafe impl ZeroCopy for CiphertextMetadataHeader {}
 
 impl CiphertextMetadataHeader {
+  /// Creates a new header for an encoded [`CiphertextMetadata`].
   pub fn new(scheme: EncryptionSchemes) -> Self {
     Self {
       version:    0,
@@ -207,6 +282,7 @@ impl CiphertextMetadataHeader {
     }
   }
 
+  /// Returns the type of encryption scheme used.
   pub fn scheme(&self) -> EncryptionSchemes {
     let val = u16::from(self.scheme);
     val.into()
@@ -218,9 +294,14 @@ impl CiphertextMetadataHeader {
 // Updating?  Also update the unsafe transmute below.
 #[repr(u16)]
 pub enum EncryptionSchemes {
-  Unknown = 0x0000,
+  /// The encryption scheme is deliberately unspecified
+  Unspecified = 0x0000,
+  /// AES-256 CTR Mode
   Aes256Ctr = 0x0001,
+  /// X25519 Diffie-Hellman and AES-256 CTR Mode
   X25519Aes256Ctr = 0x0002,
+  /// The encryption scheme is unsupported.
+  Unsupported = 0x0003,
 }
 
 impl From<u16> for EncryptionSchemes {
@@ -252,6 +333,31 @@ where
   K: Deref<Target = KT>,
   KT: EncryptionKey + ?Sized,
 {
+  /// Creates a new `GlyphCrypter` instance with the given glyph, key, and
+  /// random number generator.
+  ///
+  /// This function initializes an encryption context for the given glyph using
+  /// the specified encryption key. A random seed is generated from the provided
+  /// RNG to ensure unique encryption for each instance.
+  ///
+  /// # Parameters
+  /// - `glyph`: The glyph to be encrypted.
+  /// - `key`: A reference to the encryption key used for encrypting the glyph.
+  /// - `rng`: A cryptographically secure random number generator to produce a
+  ///   deterministic seed.
+  ///
+  /// # Returns
+  /// A new `GlyphCrypter` instance ready for glyph encryption.
+  ///
+  /// # Type Parameters
+  /// - `R`: A type implementing [`RngCore`] and [`CryptoRng`], used as the
+  ///   random number generator.
+  /// - `G`: A type implementing [`ToGlyph`], representing the glyph to be
+  ///   encrypted.
+  /// - `K`: A type that dereferences to `KT`.
+  /// - `KT`: A type implementing [`EncryptionKey`], specifying the encryption
+  ///   key behavior.
+  // TODO: Can this be simplified?
   pub fn new<R>(glyph: G, key: K, mut rng: R) -> Self
   where
     R: RngCore + CryptoRng,
@@ -312,6 +418,7 @@ where
 {
   glyph:             T,
   metadata:          CiphertextMetadata,
+  // TODO: Convert this into a GlyphOffset
   ciphertext_offset: usize,
 }
 
@@ -319,6 +426,25 @@ impl<T> EncryptedGlyph<T>
 where
   T: Glyph,
 {
+  /// Decrypts the encrypted glyph using the provided decryption key.
+  ///
+  /// This function interprets the internal representation of the encrypted glyph,
+  /// extracts the metadata and ciphertext, and decrypts the contents using the
+  /// given decryption key. Once decrypted, the plaintext is returned as a new
+  /// `BoxGlyph` along with its associated hash.
+  ///
+  /// # Parameters
+  /// - `key`: A reference to a decryption key implementing [`DecryptionKey`].
+  ///
+  /// # Returns
+  /// A `Result` containing a tuple with the glyph hash and the decrypted `BoxGlyph`
+  /// on success, or a `GlyphErr` on failure.
+  ///
+  /// # Errors
+  /// Returns an error in case of:
+  /// - Invalid metadata or ciphertext.
+  /// - Failure during decryption.
+  /// - Inability to interpret the decrypted contents as a glyph.
   #[cfg(feature = "alloc")]
   pub fn decrypt<K: DecryptionKey + ?Sized>(
     &self,
@@ -342,10 +468,26 @@ where
     Ok((hash, glyph))
   }
 
+  /// Retrieves a reference to the ciphertext metadata associated with this
+  /// `EncryptedGlyph`.
+  ///
+  /// This metadata contains details necessary for decryption, such as
+  /// encryption algorithms and key identifiers used during encryption.
+  ///
+  /// # Returns
+  /// A zero-copy reference to the [`CiphertextMetadata`] contained within the
+  /// encrypted glyph
   pub fn ciphertext_metadata(&self) -> &CiphertextMetadata {
     &self.metadata
   }
 
+  /// Returns the ciphertext of the encrypted glyph as a byte slice.
+  ///
+  /// This function retrieves the internal ciphertext contained within
+  /// the encrypted glyph.
+  ///
+  /// # Returns
+  /// A byte slice representing the ciphertext.
   pub fn ciphertext(&self) -> &[u8] {
     let content = self.glyph.content();
     if self.ciphertext_offset < content.len() {
@@ -374,8 +516,13 @@ where
   }
 }
 
-/// A builder used to create an encrypted extent glyph.
-pub struct ExtentCrypter<E, DK, K>
+/// Creates an encrypted extent when encoded as a glyph.
+///
+/// This type create an encrypted extent glyph.  It can be used either
+/// immediately or as part of a larger structure, in which case the extent
+/// is encrypted as part of the encoding process rather than requiring a
+/// separate memory allocation and duplication.
+pub struct ExtentCrypter<E, K>
 where
   E: AsRef<[u8]>,
   DK: Deref<Target = K>,
@@ -392,7 +539,14 @@ where
   DK: Deref<Target = K>,
   K: EncryptionKey + ?Sized,
 {
-  pub fn new<R>(extent: E, key: DK, mut rng: R) -> Self
+  /// Creates a new `ExtentCrypter`.
+  ///
+  /// # Parameters
+  /// - `extent`: The unencrypted data to be encrypted.
+  /// - `key`: The encryption key used to encrypt the data.
+  /// - `rng`: A cryptographically secure random number generator used
+  ///   for generating a random seed for encryption.
+  pub fn new<R>(extent: E, key: K, mut rng: R) -> Self
   where
     R: RngCore + CryptoRng,
   {
@@ -452,6 +606,7 @@ where
 {
   glyph:             T,
   metadata:          CiphertextMetadata,
+  // TODO: Convert to using a GlyphOffset
   ciphertext_offset: usize,
 }
 
@@ -459,6 +614,20 @@ impl<T> EncryptedExtent<T>
 where
   T: Glyph,
 {
+  /// Decrypts the ciphertext using the provided decryption key.
+  ///
+  /// # Parameters
+  /// - `key`: The decryption key used to decrypt the ciphertext.
+  ///
+  /// # Returns
+  /// If successful, returns a tuple consisting of:
+  /// - `GlyphHash`: A hash of the decrypted glyph content.
+  /// - `Box<[u8]>`: The decrypted data as a dynamically allocated byte buffer.
+  ///
+  /// # Errors
+  /// Returns a `GlyphErr` if the decryption process fails, for example,
+  /// due to an invalid key or corrupted ciphertext.
+  // TODO: Make an encrypted extent buffer that includes the hash.
   #[cfg(feature = "alloc")]
   pub fn decrypt<K: DecryptionKey>(
     &self,
@@ -470,10 +639,26 @@ where
     Ok((hash, buffer))
   }
 
+  /// Retrieves the ciphertext metadata associated with this encrypted extent.
+  ///
+  /// This metadata contains information necessary for decryption, such as
+  /// encryption algorithm details or associated data.
+  ///
+  /// # Returns
+  /// A zero-copy reference to the [`CiphertextMetadata`] associated with this
+  /// encrypted extent.
   pub fn ciphertext_metadata(&self) -> &CiphertextMetadata {
     &self.metadata
   }
 
+  /// Retrieves the ciphertext of the encrypted extent.
+  ///
+  /// The ciphertext represents the raw encrypted data stored within this
+  /// instance. The data begins at the `ciphertext_offset` computed during
+  /// construction and extends to the end of the glyph content.
+  ///
+  /// # Returns
+  /// A byte slice (`&[u8]`) referencing the ciphertext within the glyph content.
   pub fn ciphertext(&self) -> &[u8] {
     &self.glyph.content()[self.ciphertext_offset..]
   }

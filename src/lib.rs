@@ -1,3 +1,61 @@
+//! Semi-structured zero-copy types used in the GLIFS data management system.
+//!
+//! # Overview
+//!
+//! The _glyphs_ data format is a semi-structured zero copy data format,
+//! designed for use in large distributed systems.  Its name is inspired by the
+//! human language term of the same name, which represents a unit of writing,
+//! e.g., a letter.  Similarly, the data format uses the term (and type)
+//! [`Glyph`] to represent a unit of meaning for a computer data management
+//! system.
+//!
+//! - __Semi-Structured__.  The _glyphs_ data format is what's known
+//!   as [semi-structuerd](https://en.wikipedia.org/wiki/Semi-structured_data).
+//!   What this means is that it does not have a rigidly defined structure
+//!   (like a row in a relational database table) but instead has metadata
+//!   that describes its various elements and their types.  The most common
+//!   example of this type of data as of this writing is a JSON object, though
+//!   the two share little else in common.
+//! - __Zero Copy__.  It is also a binary format, designed to be used by
+//!   machines directly _without deserialization_.  Because deserialization
+//!   overhead in data-intensive applications accounts for a significant
+//!   proportion of all CPU use, a zero copy format can be dramatically more
+//!   efficient in some cases.
+//! - __Immutable__.  Once written, glyphs are intended to be immutable, as they
+//!   will frequently be referred to (either directly or through a container) by
+//!   a stable cryptographic hash.  Mutability takes place at higher layers,
+//!   e.g., with a [document](https://en.wikipedia.org/wiki/Document-oriented_database#Documents)
+//!   and different versions of [copy on write](https://en.wikipedia.org/wiki/Copy-on-write)
+//!   indexes.
+//!
+//! # The Glyph
+//!
+//! The [`Glyph`] is the basic unit of data, each of which begins with an 8-byte
+//! header containing a length, type information, and, in a few cases (e.g.,
+//! for 32-bit numbers) user data.
+//!
+//! - Glyphs are always a multiple of 8 bytes in length, though they may have
+//!   extra zero padding in some cases (e.g., strings).  This allows us to
+//!   maintain byte alignment for up to 64-bit primitive types.
+//! - Glyph may be stored on the heap ([`BoxGlyph`]), optionally with reference
+//!   counting ([`ArcGlyph`]), or parsed from some other buffer
+//!   ([`ParsedGlyph`]).  Most more specific types are generic over these.
+//! - The [`Glyph`] interface itself provides nothing more than (1) type
+//!   information and (2) an array of bytes.
+//! - Once written, glyphs are immutable.  This significantly simplifies
+//!   implementation.
+//!
+//! # Types of Glyphs
+//!
+//! - Basic existential types, such as [`NothingGlyph`].
+//! - Numeric types, such as [`IntGlyph`], [`UIntGlyph`], and [`FloatGlyph`].
+//! - Basic compound types, such as [`VecGlyph`], [`TupleGlyph`], and
+//!   [`MapGlyph`].
+//! - Structured types, such as [`ObjGlyph`] and [`DocGlyph`].
+//! - Cryptography types, such as [`HashGlyph`].
+//    TODO: Add glyph types for passwords and keys
+//! - Other useful types, such as [`UUIDGlyph`].
+
 #![no_std]
 // Used to allow const generics in trait APIs.
 #![feature(generic_const_exprs)]
@@ -27,14 +85,24 @@ extern crate test;
 #[macro_use]
 mod macros;
 
+#[deny(missing_docs)]
 pub mod basic;
+
+#[deny(missing_docs)]
 pub mod collections;
+
+#[allow(missing_docs)]
 pub mod crypto;
-pub mod zerocopy;
+
+#[allow(missing_docs)]
 // #[cfg(feature = "glifs")]
 pub mod glifs;
+#[deny(missing_docs)]
 mod glyph;
+#[deny(missing_docs)]
 pub mod misc;
+#[deny(missing_docs)]
+pub mod zerocopy;
 
 #[warn(missing_docs)]
 #[cfg(feature = "serde")]
@@ -47,7 +115,10 @@ pub use serde::{
   ser::{glyph_new_serde, glyph_serde_length, glyph_serde_serialize},
 };
 
+#[deny(missing_docs)]
 pub mod structured;
+
+#[allow(missing_docs)]
 mod util;
 
 pub use self::glyph::*;

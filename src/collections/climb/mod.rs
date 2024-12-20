@@ -1,3 +1,7 @@
+//! Copy-on-Write Log Structured (i) Merkle BTrees
+//!
+//! Work-in-progress.
+
 mod context;
 mod glyph;
 mod types;

@@ -143,6 +143,11 @@ where
     Some((key, value))
   }
 
+  /// Returns an iterator over the contained key/value pairs.
+  ///
+  /// Note that, currently, the ordering of these values is not strongly
+  /// defined; however, they will often be in the expected order based on the
+  /// container from which they were originally serialized.
   pub fn iter(
     &self,
   ) -> impl Iterator<Item = (ParsedGlyph<'_>, ParsedGlyph<'_>)>
@@ -171,6 +176,12 @@ impl<'a> MapGlyph<ParsedGlyph<'a>> {
     Some((key, value))
   }
 
+  /// Returns an iterator over the contained key/value pairs, but with lifetimes
+  /// bound to the underlying byte buffer.
+  ///
+  /// Note that, currently, the ordering of these values is not strongly
+  /// defined; however, they will often be in the expected order based on the
+  /// container from which they were originally serialized.
   pub fn iter_parsed(
     &self,
   ) -> impl Iterator<Item = (ParsedGlyph<'a>, ParsedGlyph<'a>)>

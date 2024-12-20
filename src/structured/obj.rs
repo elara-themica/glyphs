@@ -286,6 +286,7 @@ where
     unsafe { self.field_offsets.as_ref() }
   }
 
+  /// Returns `true` if the object has field names.
   pub fn has_field_names(&self) -> bool {
     self.header.has_field_names()
   }
@@ -373,6 +374,28 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
     unsafe { self.field_offsets.as_ref() }
   }
 
+  /// Returns the `index`-th field in the object.
+  ///
+  /// This function retrieves the field name and value at the specified `index`.
+  /// If the object has field names, the returned tuple will include the field
+  /// name as `Some(&str)`; otherwise, it will be `None`. The field value is
+  /// returned as a [`ParsedGlyph`].
+  ///
+  /// # Arguments
+  ///
+  /// * `index` - The zero-based index of the field to retrieve.
+  ///
+  /// # Returns
+  ///
+  /// * `Ok((Option<&'a str>, ParsedGlyph<'a>))` - A tuple containing the
+  ///   optional field name and the field value if the field exists at the
+  ///   specified index.
+  ///
+  /// # Errors
+  ///
+  /// This function will return:
+  /// * `GlyphErr::OutOfBounds` if the provided `index` is greater than or equal to the number of fields.
+  /// * Any error that occurs during decoding of the field name or content.
   pub fn nth_parse(
     &self,
     index: usize,
@@ -399,6 +422,19 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
     Ok((field_name, field_value))
   }
 
+  /// Returns an iterator through fields, parsed from the underlying buffer.
+  ///
+  /// This function creates an iterator that traverses all the fields in the object
+  /// and yields a tuple consisting of an optional field name and the corresponding
+  /// [`ParsedGlyph`] value.
+  ///
+  /// # Returns
+  ///
+  /// * `impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>` - An iterator
+  ///   where each item is a tuple containing:
+  ///     - `Option<&'a str>`: The field name if it exists, or `None` if the
+  ///       object does not have named fields.
+  ///     - `ParsedGlyph<'a>`: The parsed value of the field.
   pub fn fields_iter_parse(
     &self,
   ) -> impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>
@@ -418,19 +454,33 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
     unsafe { self.type_hash.map(|ptr| ptr.as_ref()) }
   }
 
+  /// Returns the object's type name, if present, parsed from the underlying
+  /// buffer.
   pub fn type_name_parsed(&self) -> Option<&'a str> {
     unsafe { self.type_name.map(|p| p.as_ref()) }
   }
 
+  /// Returns the object's variant name, if present, parsed from the underlying
+  /// buffer.
   pub fn variant_name_parsed(&self) -> Option<&'a str> {
     unsafe { self.variant_name.map(|p| p.as_ref()) }
   }
 
-  /// Returns the value of the field with the provided name, with lifetime bound by the backing
-  /// buffer rather than this `ObjGlyph`.
+  /// Returns the value of the field with the provided name, with lifetime bound
+  /// by the backing buffer rather than this `ObjGlyph`.
   ///
-  /// This function performs a binary search by field name, and so can find
-  /// a named field if present in `O=log(n)` time.
+  /// This function searches for a field by its name. If the field names are
+  /// ordered, a binary search is performed for efficiency. Otherwise, an
+  /// iterative search is used.
+  ///
+  /// # Arguments
+  ///
+  /// * `name` - A `&str` reference representing the name of the field to search for.
+  ///
+  /// # Returns
+  ///
+  /// * `Option<ParsedGlyph>` - If a field with the provided name exists, returns
+  ///   its value wrapped in `Some`. Otherwise, returns `None`.
   pub fn by_name_parsed(&self, name: &str) -> Option<ParsedGlyph> {
     if !self.has_field_names() {
       None

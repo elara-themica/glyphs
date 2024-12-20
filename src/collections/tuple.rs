@@ -299,6 +299,7 @@ where
     ))
   }
 
+  /// Iterate through the elements of the tuple.
   pub fn iter(&self) -> impl Iterator<Item = ParsedGlyph<'_>> {
     let content = self.0.content_padded();
     IterTuple(content, 0)
@@ -306,6 +307,8 @@ where
 }
 
 impl<'a> TupleGlyph<ParsedGlyph<'a>> {
+  /// Iterate through the elements of the tuple, but with the resulting
+  /// lifetimes bound to the underlying byte buffer.
   pub fn iter_parsed(&self) -> impl Iterator<Item = ParsedGlyph<'a>> {
     let content = self.0.content_parsed();
     IterTuple(content, 0)

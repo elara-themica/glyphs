@@ -156,9 +156,12 @@ macro_rules! hash_impls {
   };
 }
 
+/// The default cryptographic hash for glyphs.
 pub type GlyphHash = blake3::Blake3Hash;
+/// The default cryptographic hash context for glyphs.
 pub type GlyphHashContext = blake3::Blake3Context;
 
+/// A header used to identify a type of cryptographic hash.
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct CryptographicHashHeader {
@@ -174,10 +177,12 @@ impl CryptographicHashHeader {
     }
   }
 
-  pub fn hash_type(&self) -> CryptographicHashTypeID {
-    CryptographicHashTypeID::from(self.hash_type)
+  /// Returns the type of cryptographic hash.
+  pub fn hash_type(&self) -> CryptoHashType {
+    CryptoHashType::from(self.hash_type_id)
   }
 
+  /// Returns an error if the header's hash type doesn't match that provided.
   pub fn confirm_hash_type(
     &self,
     hash_type: CryptographicHashTypeID,
@@ -195,17 +200,26 @@ impl CryptographicHashHeader {
 
 unsafe impl ZeroCopy for CryptographicHashHeader {}
 
+/// Identifies the types of cryptographic hashes.
 #[repr(u16)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum CryptographicHashTypeID {
-  MD5,
-  SHA1,
-  SHA2,
-  SHA3,
-  Blake3,
+pub enum CryptoHashType {
+  /// Unspecified
+  Unspecified = 0x0000,
+  /// MD5
+  MD5 = 0x0001,
+  /// SHA-1
+  SHA1 = 0x0002,
+  /// SHA2-256
+  SHA2 = 0x0003,
+  /// SHA3-256
+  SHA3 = 0x0004,
+  /// Blake3
+  Blake3 = 0x0005,
 
   // This must always be the last member.
-  Unknown,
+  /// Unknown
+  Unknown = 0x0006,
 }
 
 impl From<u16> for CryptographicHashTypeID {
@@ -227,9 +241,11 @@ impl From<CryptographicHashTypeID> for U16 {
   }
 }
 
+/// Glyphs trait for cryptographic hash functions.
 pub trait CryptographicHash:
   ZeroCopy + Default + AsRef<[u8]> + Send + Sync
 {
+  /// The length of the hash produced by the function, in bytes.
   const HASH_LEN: usize;
 
   /// The glyph hash type ID associated with this type of cryptographic hash.
@@ -241,18 +257,26 @@ pub trait CryptographicHash:
 
   type Context: HashContext<Output = Self>;
 
-  fn new<B: AsRef<[u8]> + ?Sized>(bytes: &B) -> Self {
+  /// Calculate a new hash of this type from the byte slice provided.
+  ///
+  /// Note that, if you need to include more than just a single byte slice,
+  /// you'll need to use this type's hash context instead.
+  fn new(bytes: &[u8]) -> Self {
     let mut context = <Self as CryptographicHash>::Context::new();
     context.update(bytes.as_ref());
     context.finish()
   }
 
+  /// The raw hash bytes.
   fn hash_bytes(&self) -> &[u8; <Self as CryptographicHash>::HASH_LEN];
 
+  /// Create a new hash from an array of bytes.
   fn from_hash_bytes(
     hash_bytes: [u8; <Self as CryptographicHash>::HASH_LEN],
   ) -> Self;
 
+  /// Create a new random hash.
+  // TODO: Is this necessary?
   #[cfg(feature = "rand")]
   fn random<R: rand::RngCore>(rng: &mut R) -> Self
   where
@@ -362,10 +386,14 @@ impl HashPrefix {
     unsafe { u128::from_be_bytes(*transmute::<&Self, &[u8; 16]>(self)) & !0xff }
   }
 
+  /// Returns the number of bits in the hash mask.
   pub fn prefix_len(&self) -> usize {
     self.prefix_len as usize
   }
 
+  /// Returns a byte slice of the hash prefix.
+  ///
+  /// Note that only the first `prefex_len()` bits should be compared.
   pub fn prefix_bytes(&self) -> &[u8] {
     &self.prefix[..]
   }
