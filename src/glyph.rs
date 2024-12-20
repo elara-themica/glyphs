@@ -448,7 +448,22 @@ impl<'a> Debug for ParsedGlyph<'a> {
 ///
 /// A `GlyphPtr` is just a pointer to a glyph somewhere in memory.  It's
 /// typically used for an internal self-reference
+#[derive(Clone, Copy)]
 pub struct GlyphPtr(NonNull<[u8]>);
+
+impl GlyphPtr {
+  /// Creates a new pointer from a [`ParsedGlyph`].
+  pub fn from_parsed(parsed: ParsedGlyph) -> Self {
+    GlyphPtr(NonNull::from(parsed.as_ref()))
+  }
+
+  /// Dereference the pointer into a [`ParsedGlyph`].
+  pub unsafe fn deref<'a>(self) -> ParsedGlyph<'a> {
+    ParsedGlyph {
+      glyph_bytes: self.0.as_ref(),
+    }
+  }
+}
 
 #[cfg(feature = "alloc")]
 #[derive(Clone, Copy, Debug)]
