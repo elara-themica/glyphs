@@ -32,9 +32,8 @@ macro_rules! hash_impls {
       type Context = $context_name;
 
       const HASH_LEN: usize = $hash_len;
-      const HASH_TYPE_ID: $crate::crypto::CryptographicHashTypeID =
-        $crate::crypto::CryptographicHashTypeID::$hash_tid;
-      const ZERO: Self = Self([0u8; $hash_len]);
+      const HASH_TYPE_ID: $crate::crypto::CryptoHashType =
+        $crate::crypto::CryptoHashType::$hash_tid;
 
       fn from_hash_bytes(hash_bytes: [u8; $hash_len]) -> Self {
         $hash_name(hash_bytes)
@@ -48,7 +47,7 @@ macro_rules! hash_impls {
     /// The default value is all zeroes.
     impl core::default::Default for $hash_name {
       fn default() -> Self {
-        Self::ZERO
+        Self([0u8; $hash_len])
       }
     }
 
@@ -86,12 +85,12 @@ macro_rules! hash_impls {
       ) -> Result<(), $crate::GlyphErr> {
         let glyph_header = $crate::GlyphHeader::new(
           $crate::GlyphType::HashGlyph,
-          core::mem::size_of::<$crate::crypto::CryptographicHashHeader>()
+          core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
             + core::mem::size_of::<$hash_name>(),
         )?;
         $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
-        let hash_header = $crate::crypto::CryptographicHashHeader::new(
-          $crate::crypto::CryptographicHashTypeID::$hash_tid,
+        let hash_header = $crate::crypto::CryptoHashHeader::new(
+          $crate::crypto::CryptoHashType::$hash_tid,
         );
         $crate::zerocopy::ZeroCopy::bbwr(&hash_header, target, cursor)?;
         $crate::zerocopy::ZeroCopy::bbwr(self, target, cursor)?;
@@ -101,7 +100,7 @@ macro_rules! hash_impls {
 
       fn glyph_len(&self) -> usize {
         core::mem::size_of::<$crate::GlyphHeader>()
-          + core::mem::size_of::<$crate::crypto::CryptographicHashHeader>()
+          + core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
           + $crate::zerocopy::round_to_word(core::mem::size_of::<$hash_name>())
       }
     }
@@ -126,12 +125,11 @@ macro_rules! hash_impls {
       ) -> Result<(), $crate::GlyphErr> {
         let glyph_header = $crate::GlyphHeader::new(
           $crate::GlyphType::HashGlyph,
-          core::mem::size_of::<$crate::crypto::CryptographicHashHeader>()
+          core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
             + core::mem::size_of::<$hash_name>() * self.len(),
         )?;
         $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
-        let hash_header =
-          CryptographicHashHeader::new(CryptographicHashTypeID::$hash_tid);
+        let hash_header = CryptoHashHeader::new(CryptoHashType::$hash_tid);
         hash_header.bbwr(target, cursor)?;
         $hash_name::bbwrs(self, target, cursor)?;
         $crate::zerocopy::pad_to_word(target, cursor)?;
@@ -140,7 +138,7 @@ macro_rules! hash_impls {
 
       fn glyph_len(&self) -> usize {
         core::mem::size_of::<$crate::GlyphHeader>()
-          + core::mem::size_of::<$crate::crypto::CryptographicHashHeader>()
+          + core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
           + crate::zerocopy::round_to_word(size_of::<$hash_name>() * self.len())
       }
     }
@@ -164,16 +162,17 @@ pub type GlyphHashContext = blake3::Blake3Context;
 /// A header used to identify a type of cryptographic hash.
 #[repr(packed)]
 #[derive(Copy, Clone)]
-pub struct CryptographicHashHeader {
-  hash_type: U16,
-  reserved:  [u8; 6],
+pub struct CryptoHashHeader {
+  hash_type_id: U16,
+  reserved:     [u8; 6],
 }
 
-impl CryptographicHashHeader {
-  pub fn new(hash_type: CryptographicHashTypeID) -> Self {
+impl CryptoHashHeader {
+  /// Creates a new header.
+  pub fn new(hash_type: CryptoHashType) -> Self {
     Self {
-      hash_type: hash_type.into(),
-      reserved:  Default::default(),
+      hash_type_id: hash_type.into(),
+      reserved:     Default::default(),
     }
   }
 
@@ -185,7 +184,7 @@ impl CryptographicHashHeader {
   /// Returns an error if the header's hash type doesn't match that provided.
   pub fn confirm_hash_type(
     &self,
-    hash_type: CryptographicHashTypeID,
+    hash_type: CryptoHashType,
   ) -> Result<(), GlyphErr> {
     if hash_type == self.hash_type() {
       Ok(())
@@ -198,7 +197,7 @@ impl CryptographicHashHeader {
   }
 }
 
-unsafe impl ZeroCopy for CryptographicHashHeader {}
+unsafe impl ZeroCopy for CryptoHashHeader {}
 
 /// Identifies the types of cryptographic hashes.
 #[repr(u16)]
@@ -222,21 +221,21 @@ pub enum CryptoHashType {
   Unknown = 0x0006,
 }
 
-impl From<u16> for CryptographicHashTypeID {
+impl From<u16> for CryptoHashType {
   fn from(value: u16) -> Self {
     // SAFETY: target is #[repr(u16)]
-    unsafe { core::mem::transmute::<u16, CryptographicHashTypeID>(value) }
+    unsafe { core::mem::transmute::<u16, CryptoHashType>(value) }
   }
 }
 
-impl From<U16> for CryptographicHashTypeID {
+impl From<U16> for CryptoHashType {
   fn from(value: U16) -> Self {
     Self::from(value.get())
   }
 }
 
-impl From<CryptographicHashTypeID> for U16 {
-  fn from(value: CryptographicHashTypeID) -> Self {
+impl From<CryptoHashType> for U16 {
+  fn from(value: CryptoHashType) -> Self {
     U16::from(value as u16)
   }
 }
@@ -250,11 +249,10 @@ pub trait CryptographicHash:
 
   /// The glyph hash type ID associated with this type of cryptographic hash.
   ///
-  /// See [`CryptographicHashTypeID`].
-  const HASH_TYPE_ID: CryptographicHashTypeID;
+  /// See [`CryptoHashType`].
+  const HASH_TYPE_ID: CryptoHashType;
 
-  const ZERO: Self;
-
+  /// The type used for generating more hashes of this type.
   type Context: HashContext<Output = Self>;
 
   /// Calculate a new hash of this type from the byte slice provided.
@@ -295,7 +293,7 @@ impl<'a, H: CryptographicHash> HashGlyph<ParsedGlyph<'a>, H> {
   pub(crate) fn get_parsed(&self) -> &'a [H] {
     let content = self.0.content_parsed();
     let cursor = &mut 0;
-    *cursor += size_of::<CryptographicHashHeader>();
+    *cursor += size_of::<CryptoHashHeader>();
     H::bbrfs_i(content, cursor)
   }
 }
@@ -307,7 +305,7 @@ impl<G: Glyph, H: CryptographicHash> FromGlyph<G> for HashGlyph<G, H> {
     glyph.confirm_type(GlyphType::HashGlyph)?;
     let content = glyph.content();
     let cursor = &mut 0;
-    CryptographicHashHeader::bbrf(content, cursor)?
+    CryptoHashHeader::bbrf(content, cursor)?
       .confirm_hash_type(H::HASH_TYPE_ID)?;
     Ok(Self(glyph, Default::default()))
   }
@@ -319,7 +317,7 @@ impl<G: Glyph, H: CryptographicHash> std::ops::Deref for HashGlyph<G, H> {
   fn deref(&self) -> &Self::Target {
     let content = self.0.content();
     let cursor = &mut 0;
-    *cursor += core::mem::size_of::<CryptographicHashHeader>();
+    *cursor += core::mem::size_of::<CryptoHashHeader>();
     H::bbrfs_i(content, cursor)
   }
 }
@@ -763,6 +761,7 @@ mod test {
     },
     util::{init_test_logger, simple_codec_slice_test, simple_codec_test},
   };
+  use ::test::Bencher;
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;
@@ -807,7 +806,7 @@ mod test {
     }
   }
 
-  #[cfg(all(feature = "md5", feature = "bench_extended"))]
+  #[cfg(all(feature = "md5", feature = "test_slow"))]
   #[bench]
   fn bench_hash_md5(b: &mut Bencher) -> Result<(), GlyphErr> {
     let bytes = [0u8; 8192];
@@ -818,7 +817,7 @@ mod test {
     Ok(())
   }
 
-  #[cfg(all(feature = "sha1", feature = "bench_extended"))]
+  #[cfg(all(feature = "sha1", feature = "test_slow"))]
   #[bench]
   fn bench_hash_sha1(b: &mut Bencher) -> Result<(), GlyphErr> {
     let bytes = [42u8; 8192];
@@ -830,7 +829,7 @@ mod test {
     Ok(())
   }
 
-  #[cfg(all(feature = "sha2", feature = "bench_extended"))]
+  #[cfg(all(feature = "sha2", feature = "test_slow"))]
   #[bench]
   fn bench_hash_sha2(b: &mut Bencher) -> Result<(), GlyphErr> {
     let bytes = [42u8; 8192];
@@ -842,7 +841,7 @@ mod test {
     Ok(())
   }
 
-  #[cfg(all(feature = "sha3", feature = "bench_extended"))]
+  #[cfg(all(feature = "sha3", feature = "test_slow"))]
   #[bench]
   fn bench_hash_sha3(b: &mut Bencher) -> Result<(), GlyphErr> {
     let bytes = [42u8; 8192];
@@ -854,7 +853,7 @@ mod test {
     Ok(())
   }
 
-  #[cfg(all(feature = "blake3", feature = "bench_extended"))]
+  #[cfg(all(feature = "blake3", feature = "test_slow"))]
   #[bench]
   fn bench_hash_blake3(b: &mut Bencher) -> Result<(), GlyphErr> {
     let bytes = [42u8; 8192];
@@ -867,7 +866,7 @@ mod test {
   }
 
   // This is a deliberately slow password hash
-  #[cfg(all(feature = "rust-argon2", feature = "bench_extended"))]
+  #[cfg(all(feature = "rust-argon2", feature = "test_slow"))]
   #[bench]
   fn bench_hash_argon2(b: &mut Bencher) -> Result<(), GlyphErr> {
     let pw = b"hunter2";

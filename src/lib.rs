@@ -52,7 +52,7 @@
 //! - Basic compound types, such as [`VecGlyph`], [`TupleGlyph`], and
 //!   [`MapGlyph`].
 //! - Structured types, such as [`ObjGlyph`] and [`DocGlyph`].
-//! - Cryptography types, such as [`HashGlyph`].
+//! - Cryptography types, such as [`HashGlyph`], [`SignatureGlyph`] and
 //    TODO: Add glyph types for passwords and keys
 //! - Other useful types, such as [`UUIDGlyph`].
 

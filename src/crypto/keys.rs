@@ -61,20 +61,6 @@ pub trait SigningKey {
   fn crypto_sig_type(&self) -> CryptoSignatureTypes;
 }
 
-// impl<T> SigningKey for T
-// where
-//   T: Deref,
-//   T::Target: SigningKey,
-// {
-//   fn sign(&self, message: &[u8]) -> Result<CryptoSignature, GlyphErr> {
-//     (*self).sign(message)
-//   }
-//
-//   fn crypto_sig_type(&self) -> CryptoSignatureTypes {
-//     (*self).crypto_sig_type()
-//   }
-// }
-
 /// A key capable of verifying a cryptographic signature (e.g., the public key)
 pub trait AuthenticationKey: FingerprintKey {
   /// Returns `true` iff the `signature` is valid for `message`.
@@ -113,7 +99,7 @@ pub enum CryptoKeyTypes {
 
 impl From<u16> for CryptoKeyTypes {
   fn from(type_id: u16) -> Self {
-    if type_id > CryptoKeyTypes::X25519KeyPair as u16 {
+    if type_id > CryptoKeyTypes::Unknown as u16 {
       CryptoKeyTypes::Unknown
     } else {
       // SAFETY: Depends on highest known ID being checked, safety note

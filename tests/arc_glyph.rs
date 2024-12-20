@@ -12,8 +12,8 @@ fn arc_glyph() {
 
   assert_eq!(g1.as_ref(), g2.as_ref());
   assert_eq!(g1.as_ref().as_ptr(), g3.as_ref().as_ptr());
-  dbg!(glyph.strong_count());
+  dbg!(glyph.num_references());
   dbg!(glyph);
   dbg!(&g1);
-  dbg!(g1.strong_count());
+  dbg!(g1.num_references());
 }

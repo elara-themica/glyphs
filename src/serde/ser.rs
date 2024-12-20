@@ -5,7 +5,7 @@ use crate::{
   },
   serde::SerdeGlyphErr,
   structured::{ObjGlyphLenCalc, ObjGlyphSerializer},
-  BoxGlyph, GlyphErr, ToGlyph,
+  BoxGlyph, BoxGlyphBuf, GlyphErr, ToGlyph,
 };
 use serde::{
   ser::{
@@ -25,14 +25,14 @@ where
   T: Serialize,
 {
   let glyph_len = value.serialize(GlyphLenCalc)?;
-  let mut buffer = BoxGlyph::new_buffer(glyph_len)?;
+  let mut buffer = BoxGlyphBuf::new(glyph_len)?;
   let mut cursor = 0;
   let gs = GlyphSerializer {
     target: buffer.as_mut(),
     cursor: &mut cursor,
   };
   value.serialize(gs)?;
-  let glyph = BoxGlyph::try_from(buffer)?;
+  let glyph = buffer.finalize()?;
   Ok(glyph)
 }
 

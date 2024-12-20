@@ -23,7 +23,7 @@ pub(super) mod tests {
     glyph_new_arc,
     util::{debug::HexDump, BloomFilter},
     zerocopy::I64,
-    ArcGlyph, BoxGlyph, FromGlyph, GlyphErr, ToGlyph,
+    ArcGlyph, BoxGlyphBuf, FromGlyph, GlyphErr, ToGlyph,
   };
   use rand::{Rng, RngCore, SeedableRng};
   use rand_chacha::ChaCha20Rng;
@@ -205,7 +205,7 @@ pub(super) mod tests {
     let length = lc.finish();
 
     //=== Do Encoding Manually ===/
-    let mut buffer = BoxGlyph::new_buffer(length).unwrap();
+    let mut buffer = BoxGlyphBuf::new(length).unwrap();
     let mut cursor = 0usize;
     let mut enc = CLiMBTreeNodeWriter::<I64, I64>::new(
       buffer.as_mut(),
@@ -241,7 +241,7 @@ pub(super) mod tests {
     dbg!(HexDump(buffer.as_ref()));
 
     //=== Glyph Decoding ===/
-    let glyph = BoxGlyph::from_buffer(buffer).unwrap();
+    let glyph = buffer.finalize().unwrap();
     let ctng = CLiMBTreeNodeGlyph::<_, I64, I64>::from_glyph(glyph).unwrap();
     dbg!(&ctng);
 

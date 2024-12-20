@@ -32,6 +32,14 @@ where
     }
   }
 
+  /// Sets the value, if it becomes known through other means.
+  pub fn set(&self, value: T) {
+    self.computed.store(2, Release);
+    unsafe {
+      *self.value.get() = value;
+    }
+  }
+
   /// Create a new instance with a pre-computed result. `get()` will always return this result.
   #[allow(dead_code)]
   pub fn pre_computed(value: T) -> MemoizedInvariant<T> {

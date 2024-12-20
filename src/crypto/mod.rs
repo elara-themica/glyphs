@@ -112,8 +112,6 @@ pub enum CryptoErr {
   /// an X25519 public key) using some other scheme (e.g., a password).
   WrongScheme,
 
-  SignatureType,
-
   /// An internal error, indicating a bug or an unknown error condition.
   Internal,
 

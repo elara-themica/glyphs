@@ -60,7 +60,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
       let buf = if size_of::<T>() > 4 {
         self.0.content_padded()
       } else {
-        &self.0.header().short_content_ref()[..]
+        &self.0.header().short_content()[..]
       };
       T::bbrf_u(buf, &mut 0)
     }
@@ -76,7 +76,7 @@ impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
       let buf = if size_of::<T>() > 4 {
         self.0.content_padded_parsed()
       } else {
-        &self.0.header_parsed().short_content_ref()[..]
+        &self.0.header_parsed().short_content()[..]
       };
       T::bbrf_u(buf, &mut 0)
     }
@@ -515,7 +515,7 @@ where
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.header().confirm_type(GlyphType::Bool)?;
     let content = source.short_content();
-    let value = u32::from_le_bytes(content);
+    let value = u32::from_le_bytes(*content);
     Ok(value != 0)
   }
 }
@@ -531,7 +531,7 @@ impl<G: Glyph> BoolGlyph<G> {
   /// filed of the [`GlyphHeader`].  If all of these bytes are zero, the truth
   /// value will be `false`.  In all other conditions, it will be `true`.
   pub fn get(&self) -> bool {
-    self.0.header().short_content() != [0u8; 4]
+    self.0.header().short_content() != &[0u8; 4]
   }
 }
 
@@ -1016,7 +1016,7 @@ impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(SignedInt)?;
     let val = if glyph.header().is_short() {
-      i32::from_le_bytes(glyph.header().short_content()) as i128
+      i32::from_le_bytes(*glyph.header().short_content()) as i128
     } else {
       let buf = glyph.content_padded();
       // SAFETY: Bounds checks are redundant with switching on length
@@ -1099,7 +1099,7 @@ impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(UnsignedInt)?;
     let val = if glyph.header().is_short() {
-      u32::from_le_bytes(glyph.header().short_content()) as u128
+      u32::from_le_bytes(*glyph.header().short_content()) as u128
     } else {
       let buf = glyph.content_padded();
       // SAFETY: Bounds checks are redundant with switching on length
@@ -1182,7 +1182,7 @@ impl<G: Glyph> FromGlyph<G> for FloatGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(Float)?;
     let val = if glyph.header().is_short() {
-      f32::from_le_bytes(glyph.header().short_content()) as f64
+      f32::from_le_bytes(*glyph.header().short_content()) as f64
     } else {
       let buf = glyph.content_padded();
       // SAFETY: Bounds checks are redundant with switching on length
@@ -1498,7 +1498,7 @@ impl<G: Glyph> CharGlyph<G> {
   pub fn get(&self) -> char {
     let bytes = self.0.header().short_content();
     // SAFETY: A valid value was confirmed when the CharGlyph was created.
-    unsafe { char::from_u32_unchecked(u32::from_le_bytes(bytes)) }
+    unsafe { char::from_u32_unchecked(u32::from_le_bytes(*bytes)) }
   }
 }
 

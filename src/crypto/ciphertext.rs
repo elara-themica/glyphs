@@ -10,7 +10,7 @@ use crate::{
   },
   util::debug::ShortHexDump,
   zerocopy::{round_to_word, ZeroCopy, U16},
-  BoxGlyph,
+  BoxGlyph, BoxGlyphBuf,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -35,7 +35,7 @@ use rand_chacha::ChaCha20Rng;
 #[derive(Debug, Eq, PartialEq)]
 pub struct CiphertextMetadata {
   fingerprint:      Sha3Hash,
-  pub(crate) inner: CiphertextMetadataInner,
+  pub(super) inner: CiphertextMetadataInner,
 }
 
 /// Metadata necessary for decryption (e.g., ephemeral keys, MACs, etc...)
@@ -168,13 +168,14 @@ impl CiphertextMetadata {
       + size_of::<CiphertextMetadataHeader>()
       + size_of::<Sha3Hash>()
       + match scheme {
-        EncryptionSchemes::Unknown => 0,
+        EncryptionSchemes::Unspecified => 0,
         EncryptionSchemes::Aes256Ctr => {
           size_of::<AesIv>() + size_of::<AesMac>()
         },
         EncryptionSchemes::X25519Aes256Ctr => {
           X25519_KEY_LEN + size_of::<AesMac>()
         },
+        EncryptionSchemes::Unsupported => 0,
       }
   }
 }
@@ -259,7 +260,7 @@ where
   }
 }
 
-/// Header used in encoding a `CiphertextMetadata`
+/// Header used in encoding a [`CiphertextMetadata`]
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(packed)]
 pub struct CiphertextMetadataHeader {
@@ -306,8 +307,8 @@ pub enum EncryptionSchemes {
 
 impl From<u16> for EncryptionSchemes {
   fn from(src: u16) -> Self {
-    if src > EncryptionSchemes::X25519Aes256Ctr as u16 {
-      EncryptionSchemes::Unknown
+    if src > EncryptionSchemes::Unsupported as u16 {
+      EncryptionSchemes::Unsupported
     } else {
       // SAFETY: Enum with checked contiguous values.
       unsafe { transmute::<u16, EncryptionSchemes>(src) }
@@ -449,7 +450,7 @@ where
   pub fn decrypt<K: DecryptionKey + ?Sized>(
     &self,
     key: &K,
-  ) -> Result<(GlyphHash, BoxGlyph), GlyphErr> {
+  ) -> Result<BoxGlyph, GlyphErr> {
     let source = self.glyph.content();
     let cursor = &mut 0;
 
@@ -459,13 +460,13 @@ where
 
     // Copy ciphertext to a new memory buffer
     let ciphertext = &source[*cursor..];
-    let mut buffer = BoxGlyph::new_buffer(ciphertext.len())?;
+    let mut buffer = BoxGlyphBuf::new(ciphertext.len())?;
     buffer.as_mut().copy_from_slice(ciphertext);
 
     // Decrypt and interpret as a glyph.
     let hash = key.decrypt(&metadata, buffer.as_mut())?;
-    let glyph = BoxGlyph::try_from(buffer)?;
-    Ok((hash, glyph))
+    buffer.set_known_hash(&hash);
+    buffer.finalize()
   }
 
   /// Retrieves a reference to the ciphertext metadata associated with this
@@ -525,19 +526,17 @@ where
 pub struct ExtentCrypter<E, K>
 where
   E: AsRef<[u8]>,
-  DK: Deref<Target = K>,
-  K: EncryptionKey + ?Sized,
+  K: EncryptionKey,
 {
   extent:   E,
-  key:      DK,
+  key:      K,
   rng_seed: [u8; 32],
 }
 
-impl<E, DK, K> ExtentCrypter<E, DK, K>
+impl<E, K> ExtentCrypter<E, K>
 where
   E: AsRef<[u8]>,
-  DK: Deref<Target = K>,
-  K: EncryptionKey + ?Sized,
+  K: EncryptionKey,
 {
   /// Creates a new `ExtentCrypter`.
   ///
@@ -560,11 +559,10 @@ where
   }
 }
 
-impl<E, DK, K> ToGlyph for ExtentCrypter<E, DK, K>
+impl<E, K> ToGlyph for ExtentCrypter<E, K>
 where
   E: AsRef<[u8]>,
-  DK: Deref<Target = K>,
-  K: EncryptionKey + ?Sized,
+  K: EncryptionKey,
 {
   fn glyph_encode(
     &self,
@@ -631,7 +629,7 @@ where
   #[cfg(feature = "alloc")]
   pub fn decrypt<K: DecryptionKey>(
     &self,
-    key: &K,
+    key: K,
   ) -> Result<(GlyphHash, alloc::boxed::Box<[u8]>), GlyphErr> {
     let mut buffer = alloc::boxed::Box::<[u8]>::try_from(self.ciphertext())?;
 
@@ -708,7 +706,7 @@ mod test {
     let crypted_glyph = EncryptedGlyph::from_glyph(crypted_glyph).unwrap();
 
     // This is what it should decode as.
-    let (_hash, decrypted_glyph) = crypted_glyph.decrypt(&key).unwrap();
+    let decrypted_glyph = crypted_glyph.decrypt(&key).unwrap();
     let msg = <&str>::from_glyph(decrypted_glyph.borrow()).unwrap();
     assert_eq!(msg, "Hello, World");
   }
@@ -722,12 +720,12 @@ mod test {
     let key = AesKey::new(&mut rng);
 
     // Encode with the `ExtentCrypter`.
-    let gc = ExtentCrypter::new(TEST_PLAINTEXT, &key, &mut rng);
+    let gc = ExtentCrypter::new(TEST_PLAINTEXT, key, &mut rng);
     let glyph = glyph_new(&gc).unwrap();
 
     let ee = EncryptedExtent::from_glyph(glyph).unwrap();
 
-    let (_hash, decrypted_buf) = ee.decrypt(&key).unwrap();
+    let (_hash, decrypted_buf) = ee.decrypt(key).unwrap();
     assert_eq!(decrypted_buf.as_ref(), TEST_PLAINTEXT);
   }
 }

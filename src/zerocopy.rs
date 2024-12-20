@@ -46,36 +46,16 @@
 //! those types which have a regular glyph type associated with them as well.
 //! See the documentation for [`BasicGlyph`] for more details.
 use crate::{
-  crypto::{CryptographicHash, GlyphHash},
-  util::{collate_f32, collate_f64, MemoizedInvariant},
+  util::{collate_f32, collate_f64},
   GlyphErr, GlyphType,
 };
-use alloc::alloc::Global;
 use core::{
-  alloc::{AllocError, Allocator, Layout},
-  cell::UnsafeCell,
   fmt::Debug,
   hint::unreachable_unchecked,
   intrinsics::{copy_nonoverlapping, transmute},
-  mem::MaybeUninit,
-  ptr::{write_unaligned, NonNull},
+  ptr::write_unaligned,
   slice::{from_raw_parts, from_raw_parts_mut},
 };
-
-#[cfg(feature = "alloc")]
-#[derive(Clone, Copy, Debug)]
-pub struct GlyphAlloc;
-
-#[cfg(feature = "alloc")]
-unsafe impl Allocator for GlyphAlloc {
-  fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-    Global.allocate(layout.align_to(8).unwrap())
-  }
-
-  unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-    Global.deallocate(ptr, layout.align_to(8).unwrap())
-  }
-}
 
 /// Bounds check that returns [`BufferErr`] on failure.
 #[inline(always)]
@@ -787,111 +767,8 @@ gen_zc_prim!(
   Float
 );
 
-/// An atomic reference-counted pointer to a byte buffer containing a glyph.
-///
-/// T is a state parameter, either `ArcGlyphBufUninit` or `ArcGlyphBufFinalized`, where only the
-/// former allows writing.  This allows the type system to enforce the restriction that the buffer
-/// is immutable once finalized and contains a valid glyph.
-pub struct ArcGlyphBuf<T>(alloc::sync::Arc<UnsafeCell<[u8]>, GlyphAlloc>, T);
-
-unsafe impl<T> Send for ArcGlyphBuf<T> {}
-unsafe impl Sync for ArcGlyphBuf<ArcGlyphBufFinalized> {}
-
-#[derive(Clone, Default)]
-struct ArcGlyphHeader {
-  glyph_hash: MemoizedInvariant<GlyphHash>,
-}
-
-pub struct ArcGlyphBufUninit;
-pub struct ArcGlyphBufFinalized;
-
-impl ArcGlyphBuf<ArcGlyphBufUninit> {
-  pub fn new(length: usize) -> Result<Self, GlyphErr> {
-    unsafe {
-      // TODO: There's no try version?  There is in Box, is this an oversight by std?
-      let arc = alloc::sync::Arc::<[u8], GlyphAlloc>::new_uninit_slice_in(
-        size_of::<ArcGlyphHeader>() + length,
-        GlyphAlloc,
-      )
-      .assume_init();
-      let buf = Self(transmute::<_, _>(arc), ArcGlyphBufUninit);
-      let ptr = (&*(buf.0.get())).get_unchecked(0) as *const u8;
-      let header_ptr = transmute::<_, *mut MaybeUninit<ArcGlyphHeader>>(ptr);
-      header_ptr.as_mut().unwrap().write(Default::default());
-      Ok(buf)
-    }
-  }
-
-  pub fn finalize(self) -> ArcGlyphBuf<ArcGlyphBufFinalized> {
-    ArcGlyphBuf(self.0, ArcGlyphBufFinalized)
-  }
-}
-
-impl ArcGlyphBuf<ArcGlyphBufFinalized> {
-  fn header(&self) -> &ArcGlyphHeader {
-    unsafe {
-      let ptr = (&*(self.0.get())).get_unchecked(0) as *const u8;
-      transmute::<_, _>(ptr)
-    }
-  }
-
-  pub fn glyph_hash(&self) -> &GlyphHash {
-    self
-      .header()
-      .glyph_hash
-      .get(|| GlyphHash::new(self.as_ref()))
-  }
-
-  pub fn inner(&self) -> &alloc::sync::Arc<[u8], GlyphAlloc> {
-    unsafe { transmute::<_, _>(&self.0) }
-  }
-}
-
-impl<T> AsRef<[u8]> for ArcGlyphBuf<T> {
-  fn as_ref(&self) -> &[u8] {
-    unsafe {
-      let ptr = self.0.get();
-      &(*ptr)[size_of::<ArcGlyphHeader>()..]
-    }
-  }
-}
-
-impl AsMut<[u8]> for ArcGlyphBuf<ArcGlyphBufUninit> {
-  fn as_mut(&mut self) -> &mut [u8] {
-    // SAFETY: We've controlled this Arc from its birth, we know we have the
-    //         only copy of it.  OK, OK, I know this is "never OK" but is it
-    //         really?  We know there aren't any other copies of the Arc, so
-    //         there should be zero risk of simultaneous access.
-    //
-    //         - We can't construct it any other way than with new(),
-    //         - We only give it out with into_inner(), which takes an owned
-    //           self and so this function wouldn't get called on it again.
-    unsafe {
-      let inner = transmute::<
-        _,
-        &mut alloc::sync::Arc<UnsafeCell<[u8]>, GlyphAlloc>,
-      >(&mut self.0);
-      let ptr = inner.get();
-      &mut (*ptr)[size_of::<ArcGlyphHeader>()..]
-    }
-  }
-}
-
-impl Clone for ArcGlyphBuf<ArcGlyphBufFinalized> {
-  fn clone(&self) -> Self {
-    Self(self.0.clone(), ArcGlyphBufFinalized)
-  }
-}
-
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use std::dbg;
 
-  #[test]
-  fn arc_glyph() {
-    dbg!(size_of::<ArcGlyphHeader>());
-    assert_eq!(size_of::<ArcGlyphHeader>() % 8, 0);
-    assert!(align_of::<ArcGlyphHeader>() <= 8);
-  }
+  // TODO: Tests
 }

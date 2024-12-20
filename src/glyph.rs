@@ -3,17 +3,25 @@ use alloc::string::FromUtf8Error;
 
 use crate::{
   crypto::{CryptographicHash, GlyphHash},
-  util::debug::{HexDump, ShortHexDump},
+  util::{
+    debug::{HexDump, ShortHexDump},
+    MemoizedInvariant,
+  },
   zerocopy::{
-    bounds_check, pad_to_word, round_to_word, ArcGlyphBuf,
-    ArcGlyphBufFinalized, ArcGlyphBufUninit, GlyphAlloc, HasZeroCopyID,
-    ZeroCopy, ZeroCopyTypeID, U16, U32,
+    bounds_check, pad_to_word, round_to_word, HasZeroCopyID, ZeroCopy,
+    ZeroCopyTypeID, U16, U32,
   },
 };
-use alloc::{alloc::AllocError, boxed::Box, sync::Arc};
+#[cfg(feature = "alloc")]
+use alloc::{
+  alloc::{AllocError, Allocator, Global, Layout},
+  boxed::Box,
+  sync::Arc,
+};
 use core::{
+  cell::UnsafeCell,
   fmt::{Debug, Display, Formatter},
-  mem::size_of,
+  mem::{size_of, transmute, MaybeUninit},
   num::TryFromIntError,
   ptr::NonNull,
   slice::from_raw_parts,
@@ -98,7 +106,7 @@ impl GlyphHeader {
   pub fn glyph_type(self) -> GlyphType {
     unsafe {
       let id = u16::from_le_bytes(self.type_id);
-      core::mem::transmute::<u16, GlyphType>(id)
+      transmute::<u16, GlyphType>(id)
     }
   }
 
@@ -154,16 +162,16 @@ impl GlyphHeader {
     size_of::<GlyphHeader>() + self.content_len()
   }
 
-  #[inline(always)]
-  pub fn short_content(self) -> [u8; 4] {
-    self.len_data
-  }
+  // #[inline(always)]
+  // pub fn short_content(self) -> [u8; 4] {
+  //   self.len_data
+  // }
 
   /// Returns the (4-byte) contents of a short glyph.
   ///
   /// - For short glyphs, the source of these bytes is the header length field.
   #[inline(always)]
-  pub fn short_content_ref(&self) -> &[u8; 4] {
+  pub fn short_content(&self) -> &[u8; 4] {
     &self.len_data
   }
 
@@ -316,7 +324,7 @@ buffer was created--rust won't allow this because the lifetime of the reference
 to the array would no longer be valid.
 
 */
-// TOOD: Transfer safety information to this doc comment.
+// TODO: Transfer safety information to this doc comment.
 pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
   /// Returns the contents of the glyph, including any padding.
   #[inline(always)]
@@ -350,7 +358,7 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
   /// If this is not a short glyph, this function will return the glyph's
   /// length bytes (a little-endian u32).
   #[inline(always)]
-  fn short_content(&self) -> [u8; 4] {
+  fn short_content(&self) -> &[u8; 4] {
     self.header().short_content()
   }
 
@@ -409,7 +417,7 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
   ///
   /// Note that the returned glyph is _not_ bound by Rust's lifetime rules, and
   /// is thus not protected by them.  Allowing the resulting glyph to escape
-  /// outside of a closely-guarded API and into user code will quickly lead
+  /// outside a closely-guarded API and into user code will quickly lead
   /// to undefined behavior.
   ///
   /// This type is primarily intended for use in internal self-references, which
@@ -422,15 +430,6 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
     ParsedGlyph {
       glyph_bytes: glyph_bytes.as_ref(),
     }
-  }
-
-  /// Copy this glyph to a new buffer on the heap.
-  fn copy(&self) -> Result<BoxGlyph, GlyphErr> {
-    // SAFETY: Since we're copying from something that's already a `Glyph`,
-    //         the buffer has already been checked.
-    let mut b = BoxGlyph::new_buffer(self.len())?;
-    b.as_mut().copy_from_slice(self.as_ref());
-    Ok(BoxGlyph(b))
   }
 }
 
@@ -454,7 +453,8 @@ impl<'a> ParsedGlyph<'a> {
     unsafe { content.as_ref() }
   }
 
-  // TODO: Document safety, potentially simplify?
+  /// Returns the glyph's contents, including any zero padding, parsed from
+  /// the glyph's underlying buffer.
   pub fn content_padded_parsed(&self) -> &'a [u8] {
     // TODO: Document safety, potentially simplify?
     let content_padded = NonNull::from(self.content_padded());
@@ -633,42 +633,6 @@ pub struct BoxGlyph(Box<[u8], GlyphAlloc>);
 
 #[cfg(feature = "alloc")]
 impl BoxGlyph {
-  /// Creates a new [`Box`]`<[u8]>` with the alignment required for [`Glyph`]s.
-  ///
-  /// - Length can be no greater than `u32::MAX * 8` and must be a multiple
-  ///   of 8.
-  /// - The contents of the buffer will not be zeroed.  Take care to overwrite
-  ///   the entire buffer, or you may leak secrets into the encoded glyph.
-  /// - Once the buffer contains a well-formed glyph, it can be converted into
-  ///   a [`BoxGlyph`] by calling [`BoxGlyph::from_buffer`].
-  pub fn new_buffer(length: usize) -> Result<Box<[u8], GlyphAlloc>, GlyphErr> {
-    if length % 8 != 0 {
-      Err(GlyphErr::GlyphLenUnaligned(length))
-    } else if length > u32::MAX as usize * 8 {
-      Err(GlyphErr::GlyphLenOverflow(length))
-    } else {
-      unsafe {
-        let b =
-          Box::<[u8], GlyphAlloc>::try_new_uninit_slice_in(length, GlyphAlloc)?
-            .assume_init();
-        Ok(b)
-      }
-    }
-  }
-
-  /// Converts a [`Box`]`<[u8]>` created by [`BoxGlyph::new_buffer()`]
-  /// containing a well-formed glyph into a [`BoxGlyph`].
-  ///
-  /// - The buffer must contain a well-formed glyph--i.e., it must start with
-  ///   a [`GlyphHeader`] with a length matching the size of the buffer itself.
-  /// - A regular `Box<[u8]>` cannot be used directly due to alignment concerns.
-  pub fn from_buffer(
-    buffer: Box<[u8], GlyphAlloc>,
-  ) -> Result<BoxGlyph, GlyphErr> {
-    let _parsed = glyph_read(buffer.as_ref(), &mut 0)?;
-    unsafe { Ok(Self::from_unchecked_buf(buffer)) }
-  }
-
   /// Create a new glyph by copying parsed bytes from another buffer onto the
   /// heap.
   pub fn copy_from_parsed(parsed: ParsedGlyph) -> Result<Self, GlyphErr> {
@@ -682,19 +646,16 @@ impl BoxGlyph {
       Ok(BoxGlyph(b))
     }
   }
-
-  pub unsafe fn from_unchecked_buf(buf: Box<[u8], GlyphAlloc>) -> Self {
-    BoxGlyph(buf)
-  }
 }
 
 #[cfg(feature = "alloc")]
 impl AsRef<[u8]> for BoxGlyph {
   fn as_ref(&self) -> &[u8] {
-    self.0.as_ref()
+    &self.0.as_ref()[size_of::<HeapGlyphHeader>()..]
   }
 }
 
+#[cfg(feature = "alloc")]
 impl ToGlyph for BoxGlyph {
   fn glyph_encode(
     &self,
@@ -710,56 +671,109 @@ impl ToGlyph for BoxGlyph {
   }
 }
 
-impl TryFrom<Box<[u8], GlyphAlloc>> for BoxGlyph {
-  type Error = GlyphErr;
-
-  fn try_from(value: Box<[u8], GlyphAlloc>) -> Result<Self, Self::Error> {
-    // SAFETY: glyph_read does our bounds checking (header vs buffer)
-    let _ = glyph_read(value.as_ref(), &mut 0)?;
-    Ok(BoxGlyph(value))
+#[cfg(feature = "alloc")]
+unsafe impl Glyph for BoxGlyph {
+  fn glyph_hash(&self) -> GlyphHash {
+    let hgh = unsafe {
+      let ptr = self.0.as_ptr();
+      transmute::<_, &HeapGlyphHeader>(ptr)
+    };
+    *hgh.glyph_hash.get(|| GlyphHash::new(self.as_ref()))
   }
 }
 
-unsafe impl Glyph for BoxGlyph {}
-
+#[cfg(feature = "alloc")]
 impl Debug for BoxGlyph {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     glyph_debug(self, f)
   }
 }
 
+/// An atomic reference-counted pointer to a byte buffer containing a glyph.
+///
+/// T is a state parameter, either `ArcGlyphBufUninit` or
+/// `ArcGlyphBufFinalized`, where only the former allows writing.  This allows
+/// the type system to enforce the restriction that the buffer is immutable once
+/// finalized and contains a valid glyph.
+#[cfg(feature = "alloc")]
+pub struct ArcGlyphBuf(Arc<UnsafeCell<[u8]>, GlyphAlloc>);
+
+#[cfg(feature = "alloc")]
+unsafe impl Send for ArcGlyphBuf {}
+
+#[cfg(feature = "alloc")]
+unsafe impl Sync for ArcGlyphBuf {}
+
+impl ArcGlyphBuf {
+  /// Creates a new buffer on the heap of size `length` for an [`ArcGlyph`].
+  pub fn new(length: usize) -> Result<Self, GlyphErr> {
+    unsafe {
+      // TODO: There's no try version?  There is in Box, is this an oversight by std?
+      let arc = alloc::sync::Arc::<[u8], GlyphAlloc>::new_uninit_slice_in(
+        size_of::<HeapGlyphHeader>() + length,
+        GlyphAlloc,
+      )
+      .assume_init();
+      let buf = Self(transmute::<_, _>(arc));
+      let ptr = (&*(buf.0.get())).get_unchecked(0) as *const u8;
+      let header_ptr = transmute::<_, *mut MaybeUninit<HeapGlyphHeader>>(ptr);
+      header_ptr.as_mut().unwrap().write(Default::default());
+      Ok(buf)
+    }
+  }
+
+  /// Finalize the buffer into a glyph, checking for a valid header & buffer.
+  pub fn finalize(self) -> Result<ArcGlyph, GlyphErr> {
+    // Make sure it reads correctly.
+    let _ = glyph_read(self.as_ref(), &mut 0)?;
+    // SAFETY: We just did the check, using unchecked version to DRY.
+    unsafe { Ok(self.finalize_unchecked()) }
+  }
+
+  /// Finalize the buffer into a glyph, skipping validity checks.
+  pub unsafe fn finalize_unchecked(self) -> ArcGlyph {
+    ArcGlyph(self.0)
+  }
+}
+
+impl AsRef<[u8]> for ArcGlyphBuf {
+  fn as_ref(&self) -> &[u8] {
+    unsafe {
+      let ptr = self.0.get();
+      &(*ptr)[size_of::<HeapGlyphHeader>()..]
+    }
+  }
+}
+
+impl AsMut<[u8]> for ArcGlyphBuf {
+  fn as_mut(&mut self) -> &mut [u8] {
+    // SAFETY: We've controlled this Arc from its birth, we know we have the
+    //         only copy of it, and we never give it out directly--the only
+    //         way to use it is by calling `finish()` and converting it into
+    //         an `ArcGlyph`.
+    unsafe {
+      let inner_ptr = &mut *self.0.get();
+      &mut (*inner_ptr)[size_of::<HeapGlyphHeader>()..]
+    }
+  }
+}
+
+/// A glyph in a reference-counted byte buffer.
 #[cfg(feature = "alloc")]
 #[derive(Clone)]
-pub struct ArcGlyph(ArcGlyphBuf<ArcGlyphBufFinalized>);
+pub struct ArcGlyph(Arc<UnsafeCell<[u8]>, GlyphAlloc>);
 
 #[cfg(feature = "alloc")]
 impl ArcGlyph {
-  pub fn new_buffer(
-    length: usize,
-  ) -> Result<ArcGlyphBuf<ArcGlyphBufUninit>, GlyphErr> {
-    ArcGlyphBuf::new(length)
-  }
-
   /// Create a new glyph by copying parsed bytes from another buffer onto the
   /// heap.
   pub fn from_parsed(parsed: ParsedGlyph) -> Result<Self, GlyphErr> {
     // SAFETY: Glyph checks unnecessary, occurred when creating ParsedGlyph.
     unsafe {
-      let mut buf = Self::new_buffer(parsed.len())?;
+      let mut buf = ArcGlyphBuf::new(parsed.len())?;
       buf.as_mut().copy_from_slice(parsed.as_ref());
-      let buf = buf.finalize();
-      Ok(ArcGlyph::from_unchecked_buf(buf))
+      Ok(buf.finalize_unchecked())
     }
-  }
-
-  pub unsafe fn from_unchecked_buf(
-    buf: ArcGlyphBuf<ArcGlyphBufFinalized>,
-  ) -> Self {
-    ArcGlyph(buf)
-  }
-
-  pub fn strong_count(&self) -> usize {
-    Arc::<[u8], GlyphAlloc>::strong_count(&self.0.inner())
   }
 
   /// Returns the number of references to this [`ArcGlyph`].
@@ -768,28 +782,22 @@ impl ArcGlyph {
   }
 }
 
+#[cfg(feature = "alloc")]
 impl AsRef<[u8]> for ArcGlyph {
   fn as_ref(&self) -> &[u8] {
-    self.0.as_ref()
+    unsafe { &*self.0.as_ref().get() }
   }
 }
 
+#[cfg(feature = "alloc")]
 impl Debug for ArcGlyph {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut d = f.debug_struct(core::any::type_name::<ArcGlyph>());
     let addr = self.as_ref().as_ptr();
     d.field("address", &addr);
-    d.field(
-      "strong_references",
-      &Arc::<[u8], GlyphAlloc>::strong_count(&self.0.inner()),
-    );
-    d.field(
-      "weak_references",
-      &Arc::<[u8], GlyphAlloc>::weak_count(&self.0.inner()),
-    );
+    d.field("num_references", &self.num_references());
     d.field("glifs_hash", &self.glyph_hash());
     d.field("header", &self.header());
-    #[cfg(feature = "alloc")]
     if !self.header().is_short() {
       d.field("content", &HexDump(self.content_padded()));
     } else {
@@ -815,9 +823,16 @@ impl ToGlyph for ArcGlyph {
 
 unsafe impl Glyph for ArcGlyph {
   fn glyph_hash(&self) -> GlyphHash {
-    *self.0.glyph_hash()
+    let hgh = unsafe {
+      let ptr = (&*(self.0.get())).get_unchecked(0) as *const u8;
+      transmute::<_, &HeapGlyphHeader>(ptr)
+    };
+    *hgh.glyph_hash.get(|| GlyphHash::new(self.as_ref()))
   }
 }
+
+unsafe impl Send for ArcGlyph {}
+unsafe impl Sync for ArcGlyph {}
 
 pub(crate) fn glyph_debug<G>(
   glyph: &G,
@@ -848,7 +863,7 @@ where
 {
   let buf_len = src.glyph_len();
   debug_assert_eq!(buf_len % 8, 0);
-  let mut buf = BoxGlyph::new_buffer(buf_len)?;
+  let mut buf = BoxGlyphBuf::new(buf_len)?;
   let cursor = &mut 0;
   src.glyph_encode(buf.as_mut(), cursor)?;
 
@@ -869,7 +884,8 @@ where
 
   // glyph reads correctly.
   debug_assert!(glyph_read(buf.as_ref(), &mut 0).is_ok());
-  let glyph = unsafe { BoxGlyph::from_unchecked_buf(buf) };
+  // SAFETY: Glyph was created by local code, checks needed for debugging.
+  let glyph = unsafe { buf.finalize_unchecked() };
   Ok(glyph)
 }
 
@@ -881,17 +897,10 @@ where
 {
   let buf_len = src.glyph_len();
   debug_assert_eq!(buf_len % 8, 0);
-  let mut buf = ArcGlyph::new_buffer(buf_len)?;
+  let mut buf = ArcGlyphBuf::new(buf_len)?;
   let cursor = &mut 0;
   src.glyph_encode(buf.as_mut(), cursor)?;
-  let buf = buf.finalize();
-
-  #[cfg(test)]
-  {
-    if *cursor != buf_len {
-      std::dbg!(HexDump(buf.as_ref()));
-    }
-  }
+  let glyph = buf.finalize()?;
 
   // Check for (1) buffer overflows and (2) missing zero padding to the word.
   if *cursor != buf_len {
@@ -900,10 +909,6 @@ where
       buf_len, *cursor
     );
   }
-
-  // glyph reads correctly.
-  debug_assert!(glyph_read(buf.as_ref(), &mut 0).is_ok());
-  let glyph = unsafe { ArcGlyph::from_unchecked_buf(buf) };
   Ok(glyph)
 }
 
@@ -1077,7 +1082,7 @@ pub enum GlyphType {
   /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/tuple_vec.html)
   VecGlyph = 0x0021,
 
-  /// A glyph that contains a associative map of unique keys to values.
+  /// A glyph that contains an associative map of unique keys to values.
   ///
   /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/map.html)
   MapGlyph = 0x0022,
@@ -1096,9 +1101,6 @@ pub enum GlyphType {
   ///
   /// TODO: Reference binary format documentation (after written!)
   ObjGlyph = 0x0025,
-
-  BeTreeNode = 0x0026,
-  BeTreeLeaf = 0x0027,
 
   /// Vectors of basic types.  See [`BasicType`].
   BasicVecGlyph = 0x0028,
@@ -1257,7 +1259,7 @@ pub enum GlyphType {
   // ======================
   // === Human Language ===
   // ======================
-  /// A glyph containing a single unicode code point.
+  /// A glyph containing a single Unicode code point.
   ///
   /// See the binary format [here](http://www.glifs.org/docs/books/format/language.html)
   UnicodeChar = 0x0060,
@@ -1396,13 +1398,13 @@ pub enum GlyphType {
 
 impl From<U16> for GlyphType {
   fn from(value: U16) -> Self {
-    unsafe { std::mem::transmute(value.get()) }
+    unsafe { transmute(value.get()) }
   }
 }
 
 impl From<u16> for GlyphType {
   fn from(value: u16) -> Self {
-    unsafe { std::mem::transmute(value) }
+    unsafe { transmute(value) }
   }
 }
 
@@ -1418,6 +1420,7 @@ impl From<GlyphType> for U16 {
 // significantly affected by what kinds of variants are included, as this
 // enum may be returned from those functions.  Specifically, the addition of
 // an `Other(Option<String>)` slowed these functions down by a factor of 3x.
+#[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C, u32)]
 pub enum GlyphErr {
@@ -1477,7 +1480,7 @@ pub enum GlyphErr {
   /// match what was expected.
   UnexpectedStructure,
 
-  /// An out of bounds error occurred, e.g., indexing past the end of a
+  /// An out-of-bounds error occurred, e.g., indexing past the end of a
   /// [`VecGlyph`]
   OutOfBounds {
     index:  usize,
@@ -1664,7 +1667,7 @@ pub enum GlyphErr {
   CLiMBTreeNodeEntriesIncomplete,
   CLiMBTreeNodeSSTableLinksIncomplete,
   InvalidIntType(GlyphType),
-  Infalliable,
+  Infallible,
   BasicGlyphTypeMissing,
   BasicTypeLenOverflow,
   UnexpectedZeroCopyType {
@@ -1676,8 +1679,8 @@ pub enum GlyphErr {
     addr:   usize,
   },
   UnexpectedCryptoHashType {
-    expected: crate::crypto::CryptographicHashTypeID,
-    observed: crate::crypto::CryptographicHashTypeID,
+    expected: crate::crypto::CryptoHashType,
+    observed: crate::crypto::CryptoHashType,
   },
   CryptoHashOverflow {
     expected: usize,
@@ -1736,7 +1739,7 @@ impl From<TryFromIntError> for GlyphErr {
 
 impl From<core::convert::Infallible> for GlyphErr {
   fn from(_value: core::convert::Infallible) -> Self {
-    GlyphErr::Infalliable
+    GlyphErr::Infallible
   }
 }
 
@@ -1765,5 +1768,12 @@ mod test {
     let tg = &number as &dyn ToGlyph;
     glyph_new(tg)?;
     Ok(())
+  }
+
+  #[test]
+  fn arc_glyph() {
+    dbg!(size_of::<HeapGlyphHeader>());
+    assert_eq!(size_of::<HeapGlyphHeader>() % 8, 0);
+    assert!(align_of::<HeapGlyphHeader>() <= 8);
   }
 }

@@ -224,7 +224,7 @@ mod test {
     dbg!(eg.ciphertext().len());
     dbg!(ShortHexDump(eg.ciphertext(), 8));
 
-    let (_hash, dg) = eg.decrypt(&sk).unwrap();
+    let dg = eg.decrypt(&sk).unwrap();
     let decoded = BasicVecGlyph::<_, u8>::from_glyph(dg).unwrap();
 
     assert_eq!(&*decoded, &TEST_PLAINTEXT[..]);
