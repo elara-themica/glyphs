@@ -450,6 +450,121 @@ impl<'a> Debug for ParsedGlyph<'a> {
 /// typically used for an internal self-reference
 pub struct GlyphPtr(NonNull<[u8]>);
 
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy, Debug)]
+struct GlyphAlloc;
+
+#[cfg(feature = "alloc")]
+unsafe impl Allocator for GlyphAlloc {
+  fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    Global.allocate(layout.align_to(8).unwrap())
+  }
+
+  unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+    Global.deallocate(ptr, layout.align_to(8).unwrap())
+  }
+}
+
+/// For glyphs stored separately on the heap, we maintain a header that
+/// header memoizing its [`GlyphHash`].
+#[cfg(feature = "alloc")]
+#[derive(Clone, Default)]
+struct HeapGlyphHeader {
+  glyph_hash: MemoizedInvariant<GlyphHash>,
+}
+
+/// A buffer used to write glyphs on the heap.
+///
+/// `BoxGlyphBuf` is responsible for creating and managing a glyph buffer stored
+/// on the heap. It ensures proper alignment and memory safety during glyph
+/// creation, modification, and finalization. The buffer is initialized with
+/// space for both the glyph's contents and its corresponding metadata,
+/// including memoization for the [`GlyphHash`].
+///
+/// # Examples
+///
+/// Creating a new unsigned integer glyph from a `u64`.
+///
+/// ```
+/// use glyphs::{BoxGlyphBuf, FromGlyph, GlyphHeader, GlyphType, ToGlyph};
+/// use glyphs::zerocopy::{ZeroCopy, U64};
+///
+/// let header = GlyphHeader::new(GlyphType::UnsignedInt, 8).unwrap();
+/// let value = U64::from(0xDEAD_BEEF_DEAD_BEEF);
+///
+/// let mut glyph_buf = BoxGlyphBuf::new(value.glyph_len())
+///                       .expect("Failed to create buffer");
+/// let mut cursor = 0usize;
+/// header.bbwr(glyph_buf.as_mut(), &mut cursor).unwrap();
+/// value.bbwr(glyph_buf.as_mut(), &mut cursor).unwrap();
+/// let glyph = glyph_buf.finalize().unwrap();
+/// let value = U64::from_glyph(glyph).unwrap().get();
+/// assert_eq!(value, 0xDEAD_BEEF_DEAD_BEEF);
+/// ```
+#[cfg(feature = "alloc")]
+pub struct BoxGlyphBuf(Box<[u8], GlyphAlloc>);
+
+#[cfg(feature = "alloc")]
+impl BoxGlyphBuf {
+  /// Creates a new buffer on the heap of size `length` for a [`BoxGlyph`].
+  pub fn new(length: usize) -> Result<Self, GlyphErr> {
+    if length % 8 != 0 {
+      return Err(GlyphErr::GlyphLenUnaligned(length));
+    };
+
+    unsafe {
+      let mut b = Box::<[u8], GlyphAlloc>::try_new_uninit_slice_in(
+        size_of::<HeapGlyphHeader>() + length,
+        GlyphAlloc,
+      )?
+      .assume_init();
+      let ptr = b.as_mut_ptr();
+      let hgh = transmute::<_, *mut HeapGlyphHeader>(ptr);
+      hgh.write(Default::default());
+      Ok(BoxGlyphBuf(b))
+    }
+  }
+
+  /// Sets the glyph hash if it is already known.
+  ///
+  /// In situations where the glyph hash is already known (e.g., from message
+  /// authentication in decryption), it can be set here to avoid future
+  /// computation.
+  pub fn set_known_hash(&mut self, hash: &GlyphHash) {
+    unsafe {
+      let ptr = transmute::<_, *mut HeapGlyphHeader>(self.0.as_ref().as_ptr());
+      (*ptr).glyph_hash.set(*hash);
+    }
+  }
+
+  /// Finalize the buffer into a glyph, checking for a valid header & buffer.
+  pub fn finalize(self) -> Result<BoxGlyph, GlyphErr> {
+    // Make sure it reads correctly.
+    let _ = glyph_read(self.as_ref(), &mut 0)?;
+    // SAFETY: We just did the check, using unchecked version to DRY.
+    unsafe { Ok(self.finalize_unchecked()) }
+  }
+
+  /// Finalize the buffer into a glyph, skipping validity checks.
+  pub unsafe fn finalize_unchecked(self) -> BoxGlyph {
+    BoxGlyph(self.0)
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl AsRef<[u8]> for BoxGlyphBuf {
+  fn as_ref(&self) -> &[u8] {
+    &self.0.as_ref()[size_of::<HeapGlyphHeader>()..]
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl AsMut<[u8]> for BoxGlyphBuf {
+  fn as_mut(&mut self) -> &mut [u8] {
+    &mut self.0.as_mut()[size_of::<HeapGlyphHeader>()..]
+  }
+}
+
 /// A glyph stored on the heap.
 #[cfg(feature = "alloc")]
 pub struct BoxGlyph(Box<[u8], GlyphAlloc>);
