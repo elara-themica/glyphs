@@ -247,8 +247,42 @@ pub(super) mod tests {
 
     //=== Data Verification ===/
     // Pivots
+    let pivot_iter = pivots.iter();
+    let decoded_pivots = ctng.iter_pivots();
+    assert_eq!(pivot_iter.len(), decoded_pivots.len());
 
-    // SSTables
+    let mut last_upper = None;
+    for ((pivot, (expected_hash, expected_sst_links)), decoded_pivot) in
+      pivot_iter.zip(decoded_pivots)
+    {
+      // Check if the pivot matches
+      assert_eq!(pivot, decoded_pivot.lower_bound());
+      if let Some(last_upper) = last_upper {
+        assert_eq!(pivot, last_upper)
+      }
+      last_upper = decoded_pivot.upper_bound();
+
+      // Check target hash
+      assert_eq!(Some(expected_hash), decoded_pivot.child_hash());
+
+      // Pivot-level SSTables
+      assert_eq!(
+        decoded_pivot.iter_ss_tables().len(),
+        expected_sst_links.len()
+      );
+      for ((expected_sst_hash, expected_sst_len, expected_bf), decoded_ssti) in
+        expected_sst_links
+          .iter()
+          .zip(decoded_pivot.iter_ss_tables())
+      {
+        assert_eq!(expected_sst_hash, decoded_ssti.target_hash());
+        assert_eq!(*expected_sst_len, decoded_ssti.target_length());
+        assert_eq!(expected_bf.num_hashes(), decoded_ssti.bloom_k());
+        assert_eq!(expected_bf.data(), decoded_ssti.bloom_data());
+      }
+    }
+
+    // Node-level SSTables
     let ssti = ss_tables.iter();
     let gssti = ctng.iter_ss_tables();
     assert_eq!(ssti.len(), gssti.len());
@@ -264,71 +298,5 @@ pub(super) mod tests {
 
     // Entries
     assert!(entries.iter().map(|(a, b)| (a, b)).eq(ctng.iter_entries()));
-
-    //
-    //
-    // //== Encoding and Decoding without Error
-    // let lw = CLiMBTreeNodeIterWriter::<I64, I64, _, _, _, _>::new(
-    //   children.iter().map(|(lower_bound, target)| {
-    //     (lower_bound, Some(target), iter::empty())
-    //   }),
-    //   tombstones.iter(),
-    //   entries.iter(),
-    // );
-    // let calc_len = lw.glyph_len();
-    // dbg!(calc_len);
-    //
-    // let glyph = glyph_new(lw).unwrap();
-    // assert_eq!(calc_len, glyph.len());
-    // dbg!(&glyph);
-    // let decoded = CLiMBTreeNodeGlyph::<_, I64, I64>::from_glyph(glyph).unwrap();
-    // dbg!(&decoded);
-    //
-    // //== Equality for pivot keys / bounds and targets and key bounds
-    // let src_children = children.iter();
-    // let decoded_children = decoded.iter_pivots();
-    // assert_eq!(src_children.len(), 10);
-    // assert_eq!(src_children.len(), decoded_children.len());
-    // let mut last_upper_bound = None;
-    // for (i, ((src_lower_bound, src_hash), pivot_info)) in
-    //   src_children.zip(decoded_children).enumerate()
-    // {
-    //   if i == 0 {
-    //     // Node doesn't return lower bound for the first pivot, and we'll
-    //     // test for upper bound equality on the next iteration
-    //     assert!(pivot_info.upper_bound().is_some());
-    //     assert_eq!(src_hash, pivot_info.child_hash().unwrap());
-    //     last_upper_bound = Some(pivot_info.upper_bound().unwrap());
-    //   } else if i < 9 {
-    //     let lower_bound = pivot_info.lower_bound();
-    //     // Lower bound matches source data
-    //     assert_eq!(src_lower_bound, lower_bound);
-    //     // Last node's upper bound is equal to this one's lower bound
-    //     assert_eq!(last_upper_bound.unwrap(), pivot_info.lower_bound());
-    //     // Target node hash matches source data
-    //     assert_eq!(src_hash, pivot_info.child_hash().unwrap());
-    //     // Replace last node's upper bound for next round
-    //     last_upper_bound = Some(pivot_info.upper_bound().unwrap());
-    //   } else {
-    //     // Last node is similar to others, except there's no upper bound
-    //     assert_eq!(pivot_info.lower_bound(), last_upper_bound.unwrap());
-    //     assert_eq!(src_hash, pivot_info.child_hash().unwrap());
-    //     assert!(pivot_info.upper_bound().is_none());
-    //   }
-    // }
-    //
-    // //== Equality for tombstones and entries
-    // let src_tombstones = tombstones.iter();
-    // let decoded_tombstones = decoded.iter_tombstones();
-    // assert_eq!(src_tombstones.len(), decoded_tombstones.len());
-    // for (src, decoded) in src_tombstones.zip(decoded_tombstones) {
-    //   assert_eq!(src, decoded);
-    // }
-    // let src_entries = entries.iter();
-    // let decoded_entries = decoded.iter_entries();
-    // assert_eq!(src_entries.len(), decoded_entries.len());
-    // for (src, decoded) in src_entries.zip(decoded_entries) {
-    //   assert_eq!(src, decoded);
-    // }
   }
 }
