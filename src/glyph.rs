@@ -2,6 +2,7 @@
 use alloc::string::FromUtf8Error;
 
 use crate::{
+  basic::UnitTypes,
   crypto::{CryptographicHash, GlyphHash},
   util::{
     debug::{HexDump, ShortHexDump},
@@ -1394,6 +1395,7 @@ pub enum GlyphType {
 
   /// === Merkle Structures ===
   CLiMBTreeNode = 0x0100,
+  Unit,
 }
 
 impl From<U16> for GlyphType {
@@ -1713,6 +1715,13 @@ pub enum GlyphErr {
   BitVecLenOverflow {
     data_len: usize,
     len:      usize,
+  },
+  /// Attempt to decode a unit type glyph from something other than a short
+  /// glyph.
+  UnitLength(usize),
+  UnitTypeMismatch {
+    expected: UnitTypes,
+    observed: UnitTypes,
   },
 }
 
