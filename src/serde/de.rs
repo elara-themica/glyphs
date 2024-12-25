@@ -1,5 +1,6 @@
 use crate::{
-  basic::{BasicVecGlyph, BasicVecGlyphHeader, BitVecGlyph},
+  basic::BitVecG,
+  basic::{ZcVecG, ZcVecGHeader},
   collections::{MapGlyph, TupleGlyph, VecGlyph},
   serde::SerdeGlyphErr,
   structured::ObjGlyph,

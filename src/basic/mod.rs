@@ -1,11 +1,8 @@
 //! Numbers, strings, boolean, nothing, option, etc...
 use crate::{
-  glyph::glyph_close,
-  util::debug::{HexDump, ShortHexDump},
   zerocopy::{
-    bounds_check, pad_to_word, round_to_word, HasZeroCopyID, ZeroCopy,
-    ZeroCopyGlyph, ZeroCopyTypeID, F32, F64, I128, I16, I32, I64, U128, U16,
-    U32, U64,
+    bounds_check, round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyGlyph,
+    ZeroCopyTypeID, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64,
   },
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
   GlyphType::{Float, SignedInt, UnsignedInt},
@@ -19,6 +16,9 @@ use core::{
   ptr::NonNull,
   str::from_utf8,
 };
+
+mod bitvec;
+pub use bitvec::*;
 
 /// A single instance of a basic zero-copy type, e.g., a [`U32`].
 ///
@@ -37,9 +37,9 @@ use core::{
 /// from the glyph header.
 ///
 // TODO: Write doc example.
-pub struct BasicGlyph<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
+pub struct ZcG<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
 
-impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
+impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for ZcG<G, T> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(T::GLYPH_TYPE_ID)?;
     if size_of::<T>() > 4 {
@@ -51,7 +51,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
+impl<G: Glyph, T: ZeroCopyGlyph> Deref for ZcG<G, T> {
   type Target = T;
 
   fn deref(&self) -> &Self::Target {
@@ -67,7 +67,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
   }
 }
 
-impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
+impl<'a, T: ZeroCopyGlyph> ZcG<ParsedGlyph<'a>, T> {
   /// Returns a reference to the target type from the underlying buffer (i.e.,
   /// not also this `BasicGlyph`.
   pub fn get_parsed(&self) -> &'a T {
@@ -85,7 +85,7 @@ impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
 
 #[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Debug)]
 #[repr(packed)]
-pub(crate) struct BasicVecGlyphHeader {
+pub(crate) struct ZcVecGHeader {
   /// A type identifier.  See [`ZeroCopyTypeID`].
   pub basic_type_id: U16,
 
@@ -94,14 +94,14 @@ pub(crate) struct BasicVecGlyphHeader {
 
   /// Allows the specification of arbitrary dimensionality.
   ///
-  /// See the documentation on [`BasicVecGlyph`].
+  /// See the documentation on [`ZcVecG`].
   pub tensor_rank: u8,
 
   /// Reserved for future use.
   pub _reserved: [u8; 3],
 }
 
-impl BasicVecGlyphHeader {
+impl ZcVecGHeader {
   pub fn new_vec<T: HasZeroCopyID>() -> Result<Self, GlyphErr> {
     let type_len = U16::from(
       u16::try_from(size_of::<T>())
@@ -133,7 +133,7 @@ impl BasicVecGlyphHeader {
   }
 }
 
-unsafe impl ZeroCopy for BasicVecGlyphHeader {}
+unsafe impl ZeroCopy for ZcVecGHeader {}
 
 /// A vector of a basic zero-copy type, e.g., a [`U32`].
 ///
@@ -152,14 +152,14 @@ unsafe impl ZeroCopy for BasicVecGlyphHeader {}
 /// from the glyph header.
 ///
 
-pub struct BasicVecGlyph<G: Glyph, T: ZeroCopy>(G, NonNull<[T]>);
+pub struct ZcVecG<G: Glyph, T: ZeroCopy>(G, NonNull<[T]>);
 
-impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for BasicVecGlyph<G, T> {
+impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for ZcVecG<G, T> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(GlyphType::BasicVecGlyph)?;
     let cursor = &mut 0;
     let content = glyph.content();
-    let header = BasicVecGlyphHeader::bbrf(content, cursor)?;
+    let header = ZcVecGHeader::bbrf(content, cursor)?;
     header.confirm_zero_copy_type(T::ZERO_COPY_ID)?;
     *cursor += header.tensor_rank as usize * size_of::<U32>();
     *cursor = round_to_word(*cursor);
@@ -168,7 +168,7 @@ impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for BasicVecGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopy> Deref for BasicVecGlyph<G, T> {
+impl<G: Glyph, T: ZeroCopy> Deref for ZcVecG<G, T> {
   type Target = [T];
 
   fn deref(&self) -> &Self::Target {
@@ -177,7 +177,7 @@ impl<G: Glyph, T: ZeroCopy> Deref for BasicVecGlyph<G, T> {
   }
 }
 
-impl<'a, T: ZeroCopy> BasicVecGlyph<ParsedGlyph<'a>, T> {
+impl<'a, T: ZeroCopy> ZcVecG<ParsedGlyph<'a>, T> {
   /// Get a reference to the contained array, but with a lifetime bound by
   /// the underlying byte buffer.
   pub fn get_parsed(&self) -> &'a [T] {
@@ -187,7 +187,7 @@ impl<'a, T: ZeroCopy> BasicVecGlyph<ParsedGlyph<'a>, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopy + Debug> Debug for BasicVecGlyph<G, T> {
+impl<G: Glyph, T: ZeroCopy + Debug> Debug for ZcVecG<G, T> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     if !f.alternate() {
       core::fmt::Debug::fmt(self.deref(), f)
@@ -267,21 +267,21 @@ where
 /// than the concept of numbers.
 ///
 /// Can be created by encoding the rust unit type `()`.
-pub struct NothingGlyph<G>(G)
+pub struct NothingG<G>(G)
 where
   G: Glyph;
 
-impl<G> FromGlyph<G> for NothingGlyph<G>
+impl<G> FromGlyph<G> for NothingG<G>
 where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.header().confirm_type(GlyphType::Nothing)?;
-    Ok(NothingGlyph(source))
+    Ok(NothingG(source))
   }
 }
 
-impl<G> Debug for NothingGlyph<G>
+impl<G> Debug for NothingG<G>
 where
   G: Glyph,
 {
@@ -290,21 +290,21 @@ where
   }
 }
 
-impl<T: Glyph> PartialEq for NothingGlyph<T> {
+impl<T: Glyph> PartialEq for NothingG<T> {
   fn eq(&self, _other: &Self) -> bool {
     true
   }
 }
 
-impl<T: Glyph> Eq for NothingGlyph<T> {}
+impl<T: Glyph> Eq for NothingG<T> {}
 
-impl<T: Glyph> PartialOrd for NothingGlyph<T> {
+impl<T: Glyph> PartialOrd for NothingG<T> {
   fn partial_cmp(&self, _other: &Self) -> Option<Ordering> {
     Some(Ordering::Equal)
   }
 }
 
-impl<T> Ord for NothingGlyph<T>
+impl<T> Ord for NothingG<T>
 where
   T: Glyph,
 {
@@ -367,36 +367,36 @@ impl Ord for Redacted {
 /// has been removed, e.g., for security or confidentiality.
 ///
 /// See also [`Redacted`].
-pub struct RedactedGlyph<G: Glyph>(G);
+pub struct RedactedG<G: Glyph>(G);
 
-impl<G: Glyph> FromGlyph<G> for RedactedGlyph<G> {
+impl<G: Glyph> FromGlyph<G> for RedactedG<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.header().confirm_type(GlyphType::Redacted)?;
-    Ok(RedactedGlyph(source))
+    Ok(RedactedG(source))
   }
 }
 
-impl<G: Glyph> Debug for RedactedGlyph<G> {
+impl<G: Glyph> Debug for RedactedG<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(f, "RedactedGlyph")
   }
 }
 
-impl<G: Glyph> PartialEq for RedactedGlyph<G> {
+impl<G: Glyph> PartialEq for RedactedG<G> {
   fn eq(&self, _other: &Self) -> bool {
     true
   }
 }
 
-impl<G: Glyph> Eq for RedactedGlyph<G> {}
+impl<G: Glyph> Eq for RedactedG<G> {}
 
-impl<G: Glyph> PartialOrd for RedactedGlyph<G> {
+impl<G: Glyph> PartialOrd for RedactedG<G> {
   fn partial_cmp(&self, _other: &Self) -> Option<Ordering> {
     Some(Ordering::Equal)
   }
 }
 
-impl<G: Glyph> Ord for RedactedGlyph<G> {
+impl<G: Glyph> Ord for RedactedG<G> {
   fn cmp(&self, _other: &Self) -> Ordering {
     Ordering::Equal
   }
@@ -404,7 +404,7 @@ impl<G: Glyph> Ord for RedactedGlyph<G> {
 
 /// Something that is unknown.
 ///
-/// See also [`UnknownGlyph`].
+/// See also [`UnknownG`].
 #[derive(Copy, Clone, Debug)]
 pub struct Unknown;
 
@@ -452,38 +452,38 @@ impl Ord for Unknown {
 
 /// A glyph representing the concept of something that is unknown.
 ///
-/// This is distinct from a [`NothingGlyph`] in that the latter is an assertion
+/// This is distinct from a [`NothingG`] in that the latter is an assertion
 /// that no value is present.
-pub struct UnknownGlyph<G: Glyph>(G);
+pub struct UnknownG<G: Glyph>(G);
 
-impl<G: Glyph> FromGlyph<G> for UnknownGlyph<G> {
+impl<G: Glyph> FromGlyph<G> for UnknownG<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.header().confirm_type(GlyphType::Unknown)?;
-    Ok(UnknownGlyph(source))
+    Ok(UnknownG(source))
   }
 }
 
-impl<G: Glyph> Debug for UnknownGlyph<G> {
+impl<G: Glyph> Debug for UnknownG<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(f, "UnknownGlyph")
   }
 }
 
-impl<G: Glyph> PartialEq for UnknownGlyph<G> {
+impl<G: Glyph> PartialEq for UnknownG<G> {
   fn eq(&self, _other: &Self) -> bool {
     true
   }
 }
 
-impl<G: Glyph> Eq for UnknownGlyph<G> {}
+impl<G: Glyph> Eq for UnknownG<G> {}
 
-impl<G: Glyph> PartialOrd for UnknownGlyph<G> {
+impl<G: Glyph> PartialOrd for UnknownG<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(Ord::cmp(self, other))
   }
 }
 
-impl<G: Glyph> Ord for UnknownGlyph<G> {
+impl<G: Glyph> Ord for UnknownG<G> {
   fn cmp(&self, _other: &Self) -> Ordering {
     Ordering::Equal
   }
@@ -522,9 +522,9 @@ where
 
 /// A glyph containing a boolean value.
 ///
-pub struct BoolGlyph<G: Glyph>(G);
+pub struct BoolG<G: Glyph>(G);
 
-impl<G: Glyph> BoolGlyph<G> {
+impl<G: Glyph> BoolG<G> {
   /// Fetches the glyph's truth value.
   ///
   /// `BoolGlyph`s are short glyphs, with the content stored in the length
@@ -535,14 +535,14 @@ impl<G: Glyph> BoolGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for BoolGlyph<G> {
+impl<G: Glyph> FromGlyph<G> for BoolG<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.confirm_type(GlyphType::Bool)?;
-    Ok(BoolGlyph(source))
+    Ok(BoolG(source))
   }
 }
 
-impl<G: Glyph> Debug for BoolGlyph<G> {
+impl<G: Glyph> Debug for BoolG<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     if !f.alternate() {
       Debug::fmt(&self.get(), f)
@@ -554,440 +554,23 @@ impl<G: Glyph> Debug for BoolGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for BoolGlyph<G> {
+impl<G: Glyph> PartialEq for BoolG<G> {
   fn eq(&self, other: &Self) -> bool {
     self.get() == other.get()
   }
 }
 
-impl<G: Glyph> Eq for BoolGlyph<G> {}
+impl<G: Glyph> Eq for BoolG<G> {}
 
-impl<G: Glyph> PartialOrd for BoolGlyph<G> {
+impl<G: Glyph> PartialOrd for BoolG<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for BoolGlyph<G> {
+impl<G: Glyph> Ord for BoolG<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
-  }
-}
-
-/// A dense bit vector, with 8 bits per byte rather than a `[bool]`
-///
-/// Ideally, we would have liked to us
-#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub struct BitVector<B>
-where
-  B: AsRef<[u8]>,
-{
-  /// The source bytes
-  data: B,
-  /// The number of bits in the vector.
-  ///
-  /// A separate length (other than self.data.len() * 8) is necessary to allow
-  /// lengths other than multiples of 8.
-  len:  usize,
-}
-
-impl<B> BitVector<B>
-where
-  B: AsRef<[u8]>,
-{
-  /// Create a new BitVector from the provided buffer.
-  ///
-  /// # Parameters:
-  ///
-  /// `data`: a slice of bytes that contain the bit array.
-  /// `length`: an optional length (in bits), if different from `data.len() * 8`.
-  pub fn from_bytes(data: B, length: Option<usize>) -> Self {
-    let len = length.unwrap_or(data.as_ref().len() * 8);
-    Self { data, len }
-  }
-
-  /// Returns the length of the vector, in bits.
-  pub fn len(&self) -> usize {
-    self.len
-  }
-
-  /// Returns `true` if the vector is of length zero
-  pub fn is_empty(&self) -> bool {
-    self.len == 0
-  }
-
-  /// Gets the bit at position `index`.
-  pub fn get(&self, index: usize) -> Option<bool> {
-    // Bounds Check
-    if index >= self.len {
-      None
-    } else {
-      let data = self.data.as_ref();
-      let (byte_num, bit_mask) = Self::index_mask(index);
-      let value = data.get(byte_num)?;
-      let result = value & bit_mask;
-      Some(result != 0)
-    }
-  }
-
-  /// Return a new instance of this bit vector, bound to the original's
-  /// lifetime.
-  ///
-  /// This is typically used to avoid a generic in functions that receive this
-  /// type as a parameter.
-  pub fn borrow(&self) -> BitVector<&[u8]> {
-    BitVector {
-      data: self.data.as_ref(),
-      len:  self.len(),
-    }
-  }
-
-  /// Returns an iterator through all the individual bits in this bit vector.
-  pub fn iter(
-    &self,
-  ) -> impl Iterator<Item = bool>
-       + Clone
-       + ExactSizeIterator
-       + DoubleEndedIterator
-       + '_ {
-    IterBits {
-      vector:   self.borrow(),
-      position: 0,
-      end:      self.len,
-    }
-  }
-
-  /// For a given bit index, return a byte index and a mask with (only) that bit set.
-  #[inline(always)]
-  fn index_mask(bit_index: usize) -> (usize, u8) {
-    let byte_num = bit_index / 8;
-    let bit_num = bit_index % 8;
-    let bit_mask: u8 = 0x80u8 >> bit_num;
-    (byte_num, bit_mask)
-  }
-}
-
-impl<'a> BitVector<&'a [u8]> {
-  /// Returns an iterator through all the individual bits in this vit vector,
-  /// but the iterator's lifetime is bound only to the underlying buffer.
-  pub fn iter_parsed(
-    &self,
-  ) -> impl Iterator<Item = bool>
-       + Clone
-       + ExactSizeIterator
-       + DoubleEndedIterator
-       + 'a {
-    IterBits {
-      vector:   BitVector {
-        data: self.data,
-        len:  self.len,
-      },
-      position: 0,
-      end:      self.len,
-    }
-  }
-}
-
-impl<B> BitVector<B>
-where
-  B: AsRef<[u8]> + AsMut<[u8]>,
-{
-  /// Sets the specified bit to the provided value.
-  pub fn set(&mut self, index: usize, value: bool) -> Option<()> {
-    if index < self.len() {
-      let content = self.data.as_mut();
-      let (index, mask) = Self::index_mask(index);
-      let old = content.get_mut(index)?;
-      if value {
-        *old |= mask;
-      } else {
-        *old &= !mask;
-      }
-      Some(())
-    } else {
-      None
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl BitVector<alloc::boxed::Box<[u8]>> {
-  /// Creates a new bit vector sufficient to hold `num_bits` bits.  They will
-  /// all be initialized to zero/false.
-  pub fn new(num_bits: usize) -> Result<Self, GlyphErr> {
-    let num_bytes = (num_bits + 7) / 8;
-
-    let data: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(num_bytes).collect();
-    Ok(BitVector {
-      data,
-      len: num_bits,
-    })
-  }
-}
-
-impl<B> Debug for BitVector<B>
-where
-  B: AsRef<[u8]>,
-{
-  fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-    let mut d = f.debug_struct("BitVector");
-    d.field("length", &self.len);
-    if self.data.as_ref().len() <= 32 {
-      d.field("bits", &ShortHexDump(self.data.as_ref(), 4));
-    } else {
-      d.field("bits", &HexDump(self.data.as_ref()));
-    }
-    d.finish()
-  }
-}
-
-impl<B> ToGlyph for BitVector<B>
-where
-  B: AsRef<[u8]>,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let offset = *cursor;
-    *cursor += size_of::<GlyphHeader>();
-    if self.len() > 0 {
-      U64::from(self.len as u64).bbwr(target, cursor)?;
-      u8::bbwrs(self.data.as_ref(), target, cursor)?;
-    }
-    glyph_close(GlyphType::VecBool, target, offset, cursor, true)
-  }
-
-  fn glyph_len(&self) -> usize {
-    size_of::<GlyphHeader>()
-      + if self.len() > 0 {
-        round_to_word(size_of::<U64>() + self.data.as_ref().len())
-      } else {
-        0
-      }
-  }
-}
-
-impl<B> AsRef<[u8]> for BitVector<B>
-where
-  B: AsRef<[u8]>,
-{
-  fn as_ref(&self) -> &[u8] {
-    self.data.as_ref()
-  }
-}
-
-#[derive(Clone)]
-struct IterBits<B>
-where
-  B: AsRef<[u8]>,
-{
-  vector:   BitVector<B>,
-  position: usize,
-  end:      usize,
-}
-
-impl<B> Iterator for IterBits<B>
-where
-  B: AsRef<[u8]>,
-{
-  type Item = bool;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    if self.position <= self.end {
-      let result = self.vector.get(self.position)?;
-      self.position += 1;
-      Some(result)
-    } else {
-      None
-    }
-  }
-
-  fn size_hint(&self) -> (usize, Option<usize>) {
-    let len = self.len();
-    (len, Some(len))
-  }
-}
-
-impl<B> ExactSizeIterator for IterBits<B>
-where
-  B: AsRef<[u8]>,
-{
-  fn len(&self) -> usize {
-    self.vector.len - self.position
-  }
-}
-
-impl<B> DoubleEndedIterator for IterBits<B>
-where
-  B: AsRef<[u8]>,
-{
-  fn next_back(&mut self) -> Option<Self::Item> {
-    if self.position <= self.end {
-      let result = self.vector.get(self.end)?;
-      self.end -= 1;
-      Some(result)
-    } else {
-      None
-    }
-  }
-}
-
-impl<'a> FromGlyph<ParsedGlyph<'a>> for BitVector<&'a [u8]> {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header_parsed().confirm_type(GlyphType::VecBool)?;
-    let content = source.content_parsed();
-    if content.len() == 0 {
-      Ok(BitVector { data: &[], len: 0 })
-    } else {
-      let cursor = &mut 0;
-      let num_bits: u64 = U64::bbrd(source.content_padded(), cursor)?.into();
-      let num_bytes = (num_bits + 7) / 8;
-      let buf = u8::bbrfs(content, cursor, num_bytes as usize)?;
-
-      // Don't need to zero because we're just going to overwrite every byte.
-      let result = BitVector {
-        data: buf,
-        len:  num_bits as usize,
-      };
-      Ok(result)
-    }
-  }
-}
-
-/// A glyph containing a dense (8 bits per byte) bit vector.
-pub struct BitVecGlyph<G: Glyph> {
-  // SAFETY: bit_vector references this.
-  #[allow(dead_code)]
-  glyph:      G,
-  // The &'static [u8] is an internal self-reference to the glyph's content.
-  bit_vector: BitVector<&'static [u8]>,
-}
-
-impl<G: Glyph> BitVecGlyph<G> {
-  /// Returns the actual bit vector contained in this glyph.
-  ///
-  /// See the [`BitVector`] type for more details, though note that the
-  /// resulting BitVector will be immutable.
-  pub fn bit_vector(&self) -> &BitVector<&'_ [u8]> {
-    &self.bit_vector
-  }
-}
-
-impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
-  /// Returns the actual bit vector contained in this glyph, but with a lifetime
-  /// bound only to the underlying buffer.
-  ///
-  /// See the [`BitVector`] type for more details, though note that the
-  /// resulting BitVector will be immutable.
-  pub fn bit_vector_parsed(&self) -> BitVector<&'a [u8]> {
-    self.bit_vector.clone()
-  }
-}
-
-impl<G: Glyph> Debug for BitVecGlyph<G> {
-  fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-    let mut df = f.debug_struct("BitVectorGlyph");
-    df.field("num_bits", &self.bit_vector.len());
-    if self.bit_vector.as_ref().len() <= 32 {
-      df.field("bits", &ShortHexDump(self.bit_vector.as_ref(), 4));
-    } else {
-      df.field("bits", &HexDump(self.bit_vector.as_ref()));
-    }
-    df.finish()
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::VecBool)?;
-    let content = source.content_padded();
-
-    if content.len() == 0 {
-      let bit_vector = BitVector::from_bytes(&[][..], None);
-      Ok(Self {
-        glyph: source,
-        bit_vector,
-      })
-    } else {
-      let cursor = &mut 0;
-      let num_bits: u64 = U64::bbrd(content, cursor)?.into();
-      let num_bytes = (num_bits + 7) / 8;
-      let buf =
-        u8::bbrfs(content, cursor, num_bytes as usize)? as *const [u8];
-      // SAFETY: Pinning is guaranteed by the bounds on G, just need to make sure
-      // it doesn't escape this type unless bounded by the lifetime of `self`.
-      let buf = unsafe { &*buf };
-
-      // Don't need to zero because we're just going to overwrite every byte.
-      let bit_vector = BitVector::from_bytes(buf, Some(num_bits as usize));
-      Ok(Self {
-        glyph: source,
-        bit_vector,
-      })
-    }
-  }
-}
-
-impl ToGlyph for [bool] {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    if self.len() > 0 {
-      let glyph_start = GlyphHeader::skip(cursor);
-      let num_bytes = round_to_word((self.len() + 7) / 8);
-      U64::from(self.len() as u64).bbwr(target, cursor)?;
-
-      // We're going to construct a mutable BitVector in place and set the bits.
-      let bytes = u8::bbrfs_mut(target, cursor, num_bytes)?;
-      bytes.fill(0);
-      let mut bv = BitVector::from_bytes(bytes, Some(self.len()));
-      for (i, bit) in self.iter().enumerate() {
-        bv.set(i, *bit);
-      }
-      pad_to_word(target, cursor)?;
-      glyph_close(GlyphType::VecBool, target, glyph_start, cursor, false)
-    } else {
-      GlyphHeader::new_short(GlyphType::VecBool, Default::default())
-        .bbwr(target, cursor)?;
-      Ok(())
-    }
-  }
-
-  fn glyph_len(&self) -> usize {
-    let num_bits = self.len();
-    match num_bits {
-      0 => size_of::<GlyphHeader>(),
-      _ => {
-        size_of::<GlyphHeader>()
-          + size_of::<U64>()
-          + round_to_word((num_bits + 7) / 8)
-      },
-    }
-  }
-}
-
-impl<G: Glyph> PartialEq for BitVecGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for BitVecGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for BitVecGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for BitVecGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.bit_vector.cmp(&other.bit_vector)
   }
 }
 
@@ -1543,7 +1126,10 @@ mod test {
   use super::*;
   use crate::{
     glyph_new, glyph_read,
-    util::{simple_codec_slice_test, simple_codec_test, BENCH_BUF_SIZE},
+    util::{
+      debug::HexDump, simple_codec_slice_test, simple_codec_test,
+      BENCH_BUF_SIZE,
+    },
     FromGlyph, Glyph, GlyphErr,
   };
   use ::test::Bencher;
@@ -1551,7 +1137,7 @@ mod test {
   use std::{dbg, hint::black_box, iter::repeat, string::String};
 
   #[test]
-  fn codec_basic() -> Result<(), GlyphErr> {
+  fn codec_basic() {
     //== Simple Scalar Values ==/
     simple_codec_test(());
     simple_codec_test(Unknown);
@@ -1582,17 +1168,6 @@ mod test {
     simple_codec_slice_test::<3, i128, I128>(-1234);
     simple_codec_slice_test::<3, f32, F32>(core::f32::consts::E);
     simple_codec_slice_test::<3, f64, F64>(core::f64::consts::E);
-
-    //== Bit Vector ==/
-    let mut bv = BitVector::new(100).unwrap();
-    for i in 0..100 {
-      bv.set(i, (i % 3) == 0).unwrap();
-    }
-    let bvg = glyph_new(&bv).unwrap();
-    let decoded = BitVector::<&[u8]>::from_glyph(bvg.borrow()).unwrap();
-    assert_eq!(bv.as_ref(), decoded.as_ref());
-
-    Ok(())
   }
 
   macro_rules! gen_bench {

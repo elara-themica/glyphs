@@ -1710,6 +1710,10 @@ pub enum GlyphErr {
   /// Attempt to create a document with more than the maximum allowed number
   /// of old versions (`u16::MAX`)l
   DocOldVersionsOverflow(usize),
+  BitVecLenOverflow {
+    data_len: usize,
+    len:      usize,
+  },
 }
 
 impl Display for GlyphErr {
