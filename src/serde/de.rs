@@ -1,6 +1,5 @@
 use crate::{
-  basic::BitVecG,
-  basic::{ZcVecG, ZcVecGHeader},
+  basic::{BitVecG, ZcVecG, ZcVecGHeader},
   collections::{MapGlyph, TupleGlyph, VecGlyph},
   serde::SerdeGlyphErr,
   structured::ObjGlyph,
@@ -397,73 +396,73 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
         visitor.visit_seq(ds)
       },
       GlyphType::VecBool => {
-        let vg = BitVecGlyph::from_glyph(self.0)?;
+        let vg = BitVecG::from_glyph(self.0)?;
         let mut it = vg.bit_vector_parsed().iter_parsed();
         let ds = VecDeserializer::BoolIt(&mut it);
         visitor.visit_seq(ds)
       },
       GlyphType::BasicVecGlyph => {
         let content = self.0.content_padded();
-        let vgh = BasicVecGlyphHeader::bbrf(content, &mut 0)?;
+        let vgh = ZcVecGHeader::bbrf(content, &mut 0)?;
         let zct = vgh.get_zero_copy_type_id();
         match zct {
           ZeroCopyTypeID::U8 => {
-            let vg = BasicVecGlyph::<_, u8>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, u8>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecU8(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::U16 => {
-            let vg = BasicVecGlyph::<_, U16>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, U16>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecU16(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::U32 => {
-            let vg = BasicVecGlyph::<_, U32>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, U32>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecU32(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::U64 => {
-            let vg = BasicVecGlyph::<_, U64>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, U64>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecU64(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::U128 => {
-            let vg = BasicVecGlyph::<_, U128>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, U128>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecU128(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::I8 => {
-            let vg = BasicVecGlyph::<_, i8>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, i8>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecI8(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::I16 => {
-            let vg = BasicVecGlyph::<_, I16>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, I16>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecI16(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::I32 => {
-            let vg = BasicVecGlyph::<_, I32>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, I32>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecI32(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::I64 => {
-            let vg = BasicVecGlyph::<_, I64>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, I64>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecI64(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::I128 => {
-            let vg = BasicVecGlyph::<_, I128>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, I128>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecI128(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::F32 => {
-            let vg = BasicVecGlyph::<_, F32>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, F32>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecF32(vg.get_parsed());
             visitor.visit_seq(ds)
           },
           ZeroCopyTypeID::F64 => {
-            let vg = BasicVecGlyph::<_, F64>::from_glyph(self.0)?;
+            let vg = ZcVecG::<_, F64>::from_glyph(self.0)?;
             let ds = VecDeserializer::VecF64(vg.get_parsed());
             visitor.visit_seq(ds)
           },

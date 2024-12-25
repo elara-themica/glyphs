@@ -332,9 +332,9 @@ macro_rules! gen_prim_from_glyph {
     impl<G: Glyph> crate::FromGlyph<G> for $target_type {
       fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
         let result =
-          $crate::basic::BasicGlyph::<G, $target_type>::from_glyph(glyph);
+          $crate::basic::ZcG::<G, $target_type>::from_glyph(glyph);
         let val = $crate::util::LogErr::<
-          $crate::basic::BasicGlyph<G, $target_type>,
+          $crate::basic::ZcG<G, $target_type>,
           $crate::GlyphErr,
         >::log_err(result, log::Level::Trace)?;
         Ok(*vl)
@@ -419,12 +419,12 @@ macro_rules! gen_prim_slice_to_glyph {
           $crate::zerocopy::bounds_check(target, *cursor + self.glyph_len())?;
           let header = $crate::GlyphHeader::new(
             $crate::GlyphType::BasicVecGlyph,
-            size_of::<$crate::basic::BasicVecGlyphHeader>()
+            size_of::<$crate::basic::ZcVecGHeader>()
               + size_of::<$source_type>() * self.len(),
           )?;
           header.bbwr_u(target, cursor);
           let header2 =
-            crate::basic::BasicVecGlyphHeader::new_vec::<$source_type>()?;
+            crate::basic::ZcVecGHeader::new_vec::<$source_type>()?;
           header2.bbwr_u(target, cursor);
           $source_type::bbwrs_u(self, target, cursor);
           $crate::zerocopy::pad_to_word_u(target, cursor);
@@ -434,7 +434,7 @@ macro_rules! gen_prim_slice_to_glyph {
 
       fn glyph_len(&self) -> usize {
         size_of::<$crate::GlyphHeader>()
-          + size_of::<$crate::basic::BasicVecGlyphHeader>()
+          + size_of::<$crate::basic::ZcVecGHeader>()
           + $crate::zerocopy::round_to_word(
             size_of::<$source_type>() * self.len(),
           )
@@ -454,12 +454,12 @@ macro_rules! gen_prim_slice_to_glyph {
           bounds_check(target, *cursor + self.glyph_len())?;
           let header = GlyphHeader::new(
             GlyphType::BasicVecGlyph,
-            size_of::<$crate::basic::BasicVecGlyphHeader>()
+            size_of::<$crate::basic::ZcVecGHeader>()
               + size_of::<$zc_type>() * self.len(),
           )?;
           header.bbwr_u(target, cursor);
           let header2 =
-            crate::basic::BasicVecGlyphHeader::new_vec::<$zc_type>()?;
+            crate::basic::ZcVecGHeader::new_vec::<$zc_type>()?;
           header2.bbwr_u(target, cursor);
           for element in self.iter() {
             let zct: $zc_type = ($conv_fn)(element);
@@ -472,7 +472,7 @@ macro_rules! gen_prim_slice_to_glyph {
 
       fn glyph_len(&self) -> usize {
         size_of::<GlyphHeader>()
-          + size_of::<$crate::basic::BasicVecGlyphHeader>()
+          + size_of::<$crate::basic::ZcVecGHeader>()
           + round_to_word(size_of::<$zc_type>() * self.len())
       }
     }
@@ -496,7 +496,7 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
   ($zc_type:ty) => {
     impl<'a> $crate::FromGlyph<$crate::ParsedGlyph<'a>> for &'a [$zc_type] {
       fn from_glyph(glyph: $crate::ParsedGlyph<'a>) -> Result<Self, $crate::GlyphErr> {
-        let bvg = $crate::basic::BasicVecGlyph::<$crate::ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
+        let bvg = $crate::basic::ZcVecG::<$crate::ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
         Ok(bvg.get_parsed())
       }
     }
@@ -505,7 +505,7 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
   ($zc_type:ty, le_native, $native_type:ty) => {
     impl<'a> $crate::FromGlyph<$crate::ParsedGlyph<'a>> for &'a [$zc_type] {
       fn from_glyph(glyph: $crate::ParsedGlyph<'a>) -> Result<Self, $crate::GlyphErr> {
-        let bvg = $crate::basic::BasicVecGlyph::<$crate::ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
+        let bvg = $crate::basic::ZcVecG::<$crate::ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
         Ok(bvg.get_parsed())
       }
     }
@@ -513,7 +513,7 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
     #[cfg(target_endian = "little")]
     impl<'a> $crate::FromGlyph<$crate::ParsedGlyph<'a>> for &'a [$native_type] {
       fn from_glyph(glyph: $crate::ParsedGlyph<'a>) -> Result<Self, $crate::GlyphErr> {
-        let bvg = $crate::basic::BasicVecGlyph::<ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
+        let bvg = $crate::basic::ZcVecG::<ParsedGlyph<'a>, $zc_type>::from_glyph(glyph)?;
         let as_zc_slice = bvg.get_parsed();
         if as_zc_slice.as_ptr().is_aligned() {
           unsafe { Ok(core::mem::transmute::<&'a [$zc_type], &'a [$native_type]>(as_zc_slice)) }

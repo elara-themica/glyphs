@@ -148,7 +148,7 @@ where
 mod test {
   use super::*;
   use crate::{
-    basic::BasicVecGlyph,
+    basic::ZcVecG,
     crypto::{EncryptedGlyph, GlyphCrypter, TEST_PLAINTEXT},
     glyph_new,
     util::{
@@ -225,7 +225,7 @@ mod test {
     dbg!(ShortHexDump(eg.ciphertext(), 8));
 
     let dg = eg.decrypt(&sk).unwrap();
-    let decoded = BasicVecGlyph::<_, u8>::from_glyph(dg).unwrap();
+    let decoded = ZcVecG::<_, u8>::from_glyph(dg).unwrap();
 
     assert_eq!(&*decoded, &TEST_PLAINTEXT[..]);
   }

@@ -10,6 +10,7 @@ mod test;
 
 #[cfg(test)]
 pub(crate) use self::test::*;
+#[allow(unused_imports)]
 pub(crate) use self::{bloom::*, log::*, memoize::*, sorting::*};
 #[allow(unused_imports)]
 #[cfg(feature = "alloc")]
