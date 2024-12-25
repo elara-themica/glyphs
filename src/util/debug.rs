@@ -63,7 +63,7 @@ impl<'a> Debug for ShortHexDump<'a> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     for (i, byte) in self.0.iter().enumerate() {
       if self.1 != 0 {
-        if i != 0 && (i % self.1) == 0 && i != self.0.len() - 1 {
+        if i != 0 && (i % self.1) == 0 {
           write!(f, ":")?;
         }
       }
