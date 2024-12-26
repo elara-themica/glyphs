@@ -12,11 +12,11 @@ edition = "2021"
 
 [dependencies]
 aes = { optional = true, version = "0.8" }
-async-recursion = "1.1.1"
 ctr = { optional = true, version = "0.9" }
 backtrace = { optional = true, version = "0.3" }
 blake3 = { optional = true, version = "1.5" }
 ed25519-dalek = { optional = true, version = "2.1", features = ["rand_core"] }
+icu_collator = { optional = false, version = "1.5.*" }
 log = { optional = true, version = "0.4" }
 md5 = { default-features = false, optional = true, version = "0.7" }
 rand = { optional = true, version = "0.8.4" }
