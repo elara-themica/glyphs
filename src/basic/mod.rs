@@ -1,16 +1,12 @@
 //! Numbers, strings, boolean, nothing, option, etc...
 use crate::{
-  zerocopy::{ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  zerocopy::{F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
+  FromGlyph, Glyph, GlyphErr, GlyphType, ToGlyph,
 };
-use core::{
-  cmp::Ordering,
-  fmt::{Debug, Formatter},
-  str::from_utf8,
-};
+use core::str::from_utf8;
 
-mod bitvec;
-pub use bitvec::*;
+mod bool;
+pub use bool::*;
 
 mod lang;
 pub use lang::*;
@@ -54,97 +50,17 @@ where
 {
   fn from_glyph(source: B) -> Result<Self, GlyphErr> {
     let type_id = source.header().glyph_type();
-    if type_id == GlyphType::Nothing {
-      return Ok(None);
+    if type_id == GlyphType::Unit {
+      let unit = UnitG::from_glyph(source)?;
+      if unit.type_id().eq(&UnitTypes::Nothing) {
+        Ok(None)
+      } else {
+        Err(err!(debug, GlyphErr::UnexpectedUnitType(*unit.type_id())))
+      }
     } else {
       let val = T::from_glyph(source)?;
       Ok(Some(val))
     }
-  }
-}
-
-impl ToGlyph for bool {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let bytes = match self {
-      true => [1u8, 0, 0, 0],
-      false => [0u8; 4],
-    };
-    GlyphHeader::new_short(GlyphType::Bool, bytes).bbwr(target, cursor)?;
-    Ok(())
-  }
-
-  fn glyph_len(&self) -> usize {
-    size_of::<GlyphHeader>()
-  }
-}
-
-impl<G> FromGlyph<G> for bool
-where
-  G: Glyph,
-{
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Bool)?;
-    let content = source.short_content();
-    let value = u32::from_le_bytes(*content);
-    Ok(value != 0)
-  }
-}
-
-/// A glyph containing a boolean value.
-///
-pub struct BoolG<G: Glyph>(G);
-
-impl<G: Glyph> BoolG<G> {
-  /// Fetches the glyph's truth value.
-  ///
-  /// `BoolGlyph`s are short glyphs, with the content stored in the length
-  /// filed of the [`GlyphHeader`].  If all of these bytes are zero, the truth
-  /// value will be `false`.  In all other conditions, it will be `true`.
-  pub fn get(&self) -> bool {
-    self.0.header().short_content() != &[0u8; 4]
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for BoolG<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::Bool)?;
-    Ok(BoolG(source))
-  }
-}
-
-impl<G: Glyph> Debug for BoolG<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    if !f.alternate() {
-      Debug::fmt(&self.get(), f)
-    } else {
-      let mut df = f.debug_tuple("BoolGlyph");
-      df.field(&self.0);
-      df.finish()
-    }
-  }
-}
-
-impl<G: Glyph> PartialEq for BoolG<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.get() == other.get()
-  }
-}
-
-impl<G: Glyph> Eq for BoolG<G> {}
-
-impl<G: Glyph> PartialOrd for BoolG<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for BoolG<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.get().cmp(&other.get())
   }
 }
 

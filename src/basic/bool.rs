@@ -1,13 +1,98 @@
 use crate::{
   glyph::glyph_close,
   util::debug::{HexDump, ShortHexDump},
-  zerocopy::{pad_to_word, round_to_word, ZeroCopy},
+  zerocopy::{round_to_word, ZeroCopy},
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
 };
+
+/// A glyph containing a boolean value.
+///
+pub struct BoolG<G: Glyph>(G);
+
+impl<G: Glyph> BoolG<G> {
+  /// Fetches the glyph's truth value.
+  ///
+  /// `BoolGlyph`s are short glyphs, with the content stored in the length
+  /// filed of the [`GlyphHeader`].  If all of these bytes are zero, the truth
+  /// value will be `false`.  In all other conditions, it will be `true`.
+  pub fn get(&self) -> bool {
+    self.0.header().short_content() != &[0u8; 4]
+  }
+}
+
+impl<G: Glyph> FromGlyph<G> for BoolG<G> {
+  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
+    source.confirm_type(GlyphType::Bool)?;
+    Ok(BoolG(source))
+  }
+}
+
+impl<G: Glyph> Debug for BoolG<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    if !f.alternate() {
+      Debug::fmt(&self.get(), f)
+    } else {
+      let mut df = f.debug_tuple("BoolGlyph");
+      df.field(&self.0);
+      df.finish()
+    }
+  }
+}
+
+impl<G: Glyph> PartialEq for BoolG<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.get() == other.get()
+  }
+}
+
+impl<G: Glyph> Eq for BoolG<G> {}
+
+impl<G: Glyph> PartialOrd for BoolG<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for BoolG<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.get().cmp(&other.get())
+  }
+}
+
+impl ToGlyph for bool {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let bytes = match self {
+      true => [1u8, 0, 0, 0],
+      false => [0u8; 4],
+    };
+    GlyphHeader::new_short(GlyphType::Bool, bytes).bbwr(target, cursor)?;
+    Ok(())
+  }
+
+  fn glyph_len(&self) -> usize {
+    size_of::<GlyphHeader>()
+  }
+}
+
+impl<G> FromGlyph<G> for bool
+where
+  G: Glyph,
+{
+  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
+    source.header().confirm_type(GlyphType::Bool)?;
+    let content = source.short_content();
+    let value = u32::from_le_bytes(*content);
+    Ok(value != 0)
+  }
+}
 
 /// A dense bit vector, with 8 bits per byte rather than a `[bool]`
 ///
@@ -461,8 +546,7 @@ impl ToGlyph for [bool] {
       let glyph_start = GlyphHeader::skip(cursor);
       let bit_padding = (8 - (self.len() % 8) as u8) & 0b0000_0111;
       bit_padding.bbwr(target, cursor)?;
-      let num_bytes = round_to_word((self.len() + 7) / 8);
-
+      let num_bytes = (self.len() + 7) / 8;
       // We're going to construct a mutable BitVector in place and set the bits.
       let bytes = u8::bbrfs_mut(target, cursor, num_bytes)?;
       if let Some(byte) = bytes.last_mut() {
@@ -472,8 +556,7 @@ impl ToGlyph for [bool] {
       for (i, bit) in self.iter().enumerate() {
         bv.set(i, *bit);
       }
-      pad_to_word(target, cursor)?;
-      glyph_close(GlyphType::VecBool, target, glyph_start, cursor, false)
+      glyph_close(GlyphType::VecBool, target, glyph_start, cursor, true)
     } else {
       GlyphHeader::new_short(GlyphType::VecBool, Default::default())
         .bbwr(target, cursor)?;
@@ -483,11 +566,11 @@ impl ToGlyph for [bool] {
 
   fn glyph_len(&self) -> usize {
     let num_bits = self.len();
+    let data_bytes = (num_bits + 7) / 8;
     match num_bits {
       0 => size_of::<GlyphHeader>(),
       _ => {
-        size_of::<GlyphHeader>()
-          + round_to_word(size_of::<u8>() + ((num_bits + 7) / 8))
+        size_of::<GlyphHeader>() + round_to_word(size_of::<u8>() + data_bytes)
       },
     }
   }
@@ -519,10 +602,20 @@ mod tests {
   use super::*;
   use crate::glyph_new;
   use alloc::vec::Vec;
-  use std::dbg;
+  use std::vec;
 
   #[test]
   fn bit_vec() {
+    // Vector of bool
+    let bools = vec![true, false, true, false, true, true, false, true];
+    let bools_g = glyph_new(&bools[..]).unwrap();
+    let bools_g = BitVecG::<_>::from_glyph(bools_g).unwrap();
+    for (bools_val, bools_g_val) in
+      bools.iter().zip(bools_g.bit_vector().iter())
+    {
+      assert_eq!(*bools_val, bools_g_val);
+    }
+
     // Basic BitVec ops, zero length
     let bvz = BitVec::new(0).unwrap();
     assert!(bvz.is_empty());

@@ -1723,6 +1723,11 @@ pub enum GlyphErr {
     expected: UnitTypes,
     observed: UnitTypes,
   },
+  /// An unexpected unit type was encountered
+  ///
+  /// Likely, this was caused by decoding an [`Option`] from a unit
+  /// type other than [`UnitTypes::Nothing`].
+  UnexpectedUnitType(UnitTypes),
 }
 
 impl Display for GlyphErr {
