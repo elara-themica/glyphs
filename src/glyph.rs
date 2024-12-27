@@ -786,7 +786,9 @@ impl ArcGlyph {
 #[cfg(feature = "alloc")]
 impl AsRef<[u8]> for ArcGlyph {
   fn as_ref(&self) -> &[u8] {
-    unsafe { &*self.0.as_ref().get() }
+    unsafe {
+      (&*self.0.as_ref().get()).get_unchecked(size_of::<HeapGlyphHeader>()..)
+    }
   }
 }
 
@@ -1044,7 +1046,6 @@ where
 pub enum GlyphType {
   //=== Primitives
   Unit,
-}
   Bool,
   SignedInt,
   UnsignedInt,
