@@ -3,7 +3,6 @@
 use crate::{
   crypto::GlyphHash,
   glyph_close, glyph_read,
-  util::MemoizedInvariant,
   zerocopy::{ZeroCopy, U16},
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphPtr, GlyphType, ParsedGlyph,
   ToGlyph,
@@ -47,6 +46,32 @@ impl DocGlyphHeader {
   }
 }
 
+/// A Specific Version of a Document in a Collection.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+pub struct DocVer {
+  document: GlyphHash,
+  from_tx:  GlyphHash,
+}
+
+unsafe impl ZeroCopy for DocVer {}
+
+impl DocVer {
+  /// Creates a new `DocVer` instance.
+  pub fn new(document: GlyphHash, from_tx: GlyphHash) -> Self {
+    DocVer { document, from_tx }
+  }
+
+  /// Returns a reference to the document's `GlyphHash`.
+  pub fn document(&self) -> &GlyphHash {
+    &self.document
+  }
+
+  /// Returns a reference to the transaction's `GlyphHash` from which it originated.
+  pub fn from_tx(&self) -> &GlyphHash {
+    &self.from_tx
+  }
+}
+
 /// A simple document type suitable for encoding into (and decoding from) a
 /// [`DocGlyph`].
 ///
@@ -61,7 +86,7 @@ impl DocGlyphHeader {
 #[derive(Debug)]
 pub struct Document<I, B> {
   id:            I,
-  prev_versions: SmallVec<GlyphHash, 2>,
+  prev_versions: SmallVec<DocVer, 2>,
   body:          B,
 }
 
@@ -81,9 +106,9 @@ where
   }
 
   /// Create a new document to replace older versions.
-  pub fn replace(id: I, body: B, replaces: &[GlyphHash]) -> Document<I, B> {
+  pub fn replace(id: I, body: B, replaces: &[DocVer]) -> Document<I, B> {
     let mut prev_versions =
-      SmallVec::<GlyphHash, 2>::with_capacity(replaces.len());
+      SmallVec::<DocVer, 2>::with_capacity(replaces.len());
     for ver in replaces {
       prev_versions.push(*ver);
     }
@@ -129,8 +154,9 @@ impl<I, B> Document<I, B> {
   //     println!("Next: {:?}", &prev_glyph);
   //   }
   //   ```
-  pub fn update<'a, G>(
+  pub fn update<'a, 'b, G>(
     parent: &'a DocGlyph<G>,
+    previous_versions: impl Iterator<Item = &'b DocVer>,
   ) -> Result<Document<I, B>, GlyphErr>
   where
     G: Glyph,
@@ -143,8 +169,8 @@ impl<I, B> Document<I, B> {
     let id = I::from_glyph(id_glyph)?;
     let body = B::from_glyph(body_glyph)?;
 
-    let mut prev_versions = SmallVec::new();
-    prev_versions.push(*parent.version());
+    let prev_versions: SmallVec<DocVer, 2> =
+      previous_versions.map(|v| *v).collect();
     Ok(Document {
       id,
       prev_versions,
@@ -170,7 +196,7 @@ impl<I, B> Document<I, B> {
   }
 
   /// Returns a reference to the vector of previous versions, if any.
-  pub fn prev_versions(&self) -> &[GlyphHash] {
+  pub fn prev_versions(&self) -> &[DocVer] {
     self.prev_versions.borrow()
   }
 
@@ -206,20 +232,20 @@ where
     let dgh = DocGlyphHeader::new(self.prev_versions().len())?;
     dgh.bbwr(target, cursor)?;
 
-    GlyphHash::bbwrs(self.prev_versions(), target, cursor)?;
+    DocVer::bbwrs(self.prev_versions(), target, cursor)?;
 
     // Write ID and body.
     self.id.glyph_encode(target, cursor)?;
     self.body.glyph_encode(target, cursor)?;
 
     // Write the glyph header.
-    glyph_close(GlyphType::DocumentGlyph, target, offset, cursor, false)
+    glyph_close(GlyphType::Document, target, offset, cursor, false)
   }
 
   fn glyph_len(&self) -> usize {
     size_of::<GlyphHeader>()
       + size_of::<DocGlyphHeader>()
-      + size_of::<GlyphHash>() * self.prev_versions.len()
+      + size_of::<DocVer>() * self.prev_versions.len()
       + self.id.glyph_len()
       + self.body.glyph_len()
   }
@@ -243,8 +269,7 @@ where
 //   `DocGlyph`'s buffer.
 pub struct DocGlyph<G: Glyph> {
   glyph:   G,
-  own_ver: MemoizedInvariant<GlyphHash>,
-  parents: NonNull<[GlyphHash]>,
+  parents: NonNull<[DocVer]>,
   // SAFETY: These aren't actually 'static; they're internal self-references.
   id:      GlyphPtr,
   body:    GlyphPtr,
@@ -252,7 +277,7 @@ pub struct DocGlyph<G: Glyph> {
 
 impl<G: Glyph> DocGlyph<G> {
   /// Returns a slice of hashes of previous versions of this document.
-  pub fn previous_versions(&self) -> &[GlyphHash] {
+  pub fn previous_versions(&self) -> &[DocVer] {
     // SAFETY: Self-reference to self.glyph, which is immutable.
     unsafe { self.parents.as_ref() }
   }
@@ -267,11 +292,6 @@ impl<G: Glyph> DocGlyph<G> {
   pub fn body_glyph(&self) -> ParsedGlyph {
     // SAFETY: Binds to lifetime of self.
     unsafe { self.body.deref() }
-  }
-
-  /// Returns the document's version (i.e., its [`GlyphHash`]).
-  pub fn version(&self) -> &GlyphHash {
-    self.own_ver.get(|| self.glyph.glyph_hash())
   }
 }
 
@@ -291,13 +311,13 @@ impl<'a> DocGlyph<ParsedGlyph<'a>> {
 
 impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::DocumentGlyph)?;
+    source.header().confirm_type(GlyphType::Document)?;
     let content = source.content_padded();
     let cursor = &mut 0;
 
     let dgh = DocGlyphHeader::bbrf(content, cursor)?;
     let nov = u16::from(dgh.num_old_versions) as usize;
-    let ov = GlyphHash::bbrfs(content, cursor, nov)?;
+    let ov = DocVer::bbrfs(content, cursor, nov)?;
     // SAFETY: This internal self-reference must not escape without being bound
     // to the lifetime of 'self, and
     let id = GlyphPtr::from_parsed(glyph_read(content, cursor)?);
@@ -307,7 +327,6 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
 
     Ok(DocGlyph {
       glyph: source,
-      own_ver: MemoizedInvariant::empty(),
       parents,
       id,
       body,
@@ -318,9 +337,8 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
 impl<G: Glyph> Debug for DocGlyph<G> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut b = f.debug_struct("DocGlyph");
+    b.field("replaces", &self.previous_versions());
     b.field("id", &self.id_glyph());
-    b.field("own_ver", &self.version());
-    b.field("parents", &self.previous_versions());
     b.field("body", &self.body_glyph());
     b.finish()
   }
@@ -335,7 +353,7 @@ mod test {
   };
   use ::test::Bencher;
   use alloc::string::String;
-  use std::{dbg, println};
+  use std::{dbg, iter, println};
 
   #[bench]
   fn glyph_doc_merkle_chain(b: &mut Bencher) -> Result<(), GlyphErr> {
@@ -346,7 +364,8 @@ mod test {
     dbg!(&rg);
     let rg = DocGlyph::from_glyph(rg)?;
     dbg!(&rg);
-    let updated = Document::<(), ()>::update(&rg)?;
+    let updated =
+      Document::<(), ()>::update(&rg, iter::once(&Default::default()))?;
     let ug = glyph_new(&updated)?;
     dbg!(&ug);
     let ug_len = ug.glyph_len();
@@ -360,13 +379,17 @@ mod test {
       let cursor = &mut 0usize;
       let prev_offset = &mut 0usize;
 
-      let updated = Document::<(), ()>::update(&ug)?;
+      let updated =
+        Document::<(), ()>::update(&ug, iter::once(&Default::default()))?;
       updated.glyph_encode(target, cursor)?;
 
       while *cursor + ug_len < BENCH_BUF_SIZE {
         let prev_glyph = glyph_read(target, prev_offset)?;
         let prev_glyph = DocGlyph::from_glyph(prev_glyph)?;
-        let updated = Document::<(), ()>::update(&prev_glyph)?;
+        let updated = Document::<(), ()>::update(
+          &prev_glyph,
+          iter::once(&Default::default()),
+        )?;
         updated.glyph_encode(target, cursor)?;
       }
 
@@ -384,23 +407,27 @@ mod test {
 
     let first_doc_glyph = DocGlyph::from_glyph(first_glyph)?;
 
-    println!(
-      "Version of the first glyph is {:?}",
-      first_doc_glyph.version()
-    );
+    // println!(
+    //   "Version of the first glyph is {:?}",
+    //   first_doc_glyph.version()
+    // );
     println!(
       "It has {:?} parents",
       first_doc_glyph.previous_versions().len()
     );
 
-    let mut second_doc = Document::<u32, String>::update(&first_doc_glyph)?;
+    let mut second_doc = Document::<u32, String>::update(
+      &first_doc_glyph,
+      iter::once(&Default::default()),
+    )?;
     second_doc.set_body(String::from("7 (good) times 6 (evil)"));
 
     let second_glyph = glyph_new(&second_doc)?;
     println!("Second glyph encoded as: \n {:?}", &second_glyph);
 
     let second_doc_glyph = DocGlyph::from_glyph(second_glyph)?;
-    println!("Its version is: {:?}", second_doc_glyph.version());
+    std::dbg!(&second_doc_glyph);
+    // println!("Its version is: {:?}", second_doc_glyph.glyph());
 
     Ok(())
   }
