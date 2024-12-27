@@ -421,7 +421,7 @@ macro_rules! gen_prim_slice_to_glyph {
           // Consolidated bounds check for writing glyph of primitives
           $crate::zerocopy::bounds_check(target, *cursor + self.glyph_len())?;
           let header = $crate::GlyphHeader::new(
-            $crate::GlyphType::BasicVecGlyph,
+            $crate::GlyphType::VecBasic,
             size_of::<$crate::basic::ZcVecGHeader>()
               + size_of::<$source_type>() * self.len(),
           )?;
@@ -455,7 +455,7 @@ macro_rules! gen_prim_slice_to_glyph {
           // Consolidated bounds check for writing glyph of primitives
           $crate::zerocopy::bounds_check(target, *cursor + self.glyph_len())?;
           let header = $crate::GlyphHeader::new(
-            $crate::GlyphType::BasicVecGlyph,
+            $crate::GlyphType::VecBasic,
             size_of::<$crate::basic::ZcVecGHeader>()
               + size_of::<$zc_type>() * self.len(),
           )?;

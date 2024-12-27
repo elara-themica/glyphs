@@ -1,9 +1,9 @@
 //! Glyph (de-)serialization for arrays, slices, and vectors, as well as the
-//! dynamic [`VecGlyph`].
+//! dynamic [`VecG`].
 //!
 //! The format of vector glyphs is as follows:
 //! - A [`GlyphHeader`]
-//! - A [`VecGlyphHeader`], which includes the number of items in the
+//! - A [`VecGHeader`], which includes the number of items in the
 //!   vector glyph.
 //! - An array of [`U32`]s, giving the offset of each item from the start
 //!   of the items buffer.  Note that this array is the official list of
@@ -14,7 +14,7 @@
 use crate::{
   glyph_close, glyph_read,
   util::debug::CloneDebugIterator,
-  zerocopy::{ZeroCopy, U32},
+  zerocopy::{round_to_word, ZeroCopy, U32},
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
   ToGlyph,
 };
@@ -31,26 +31,22 @@ use core::{
 /// - `num_items` indicates the number of glyphs contained in the `VecGlyph`.
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
-pub(crate) struct VecGlyphHeader {
-  format_version: u8,
-  reserved:       [u8; 3],
-  num_items:      U32,
+pub(crate) struct VecGHeader {
+  num_items: U32,
 }
 
-unsafe impl ZeroCopy for VecGlyphHeader {}
+unsafe impl ZeroCopy for VecGHeader {}
 
-impl VecGlyphHeader {
-  /// Creates a new type-specific header for a [`VecGlyph`].
+impl VecGHeader {
+  /// Creates a new type-specific header for a [`VecG`].
   ///
   /// As the values for `format_version` and `reserved` are fixed, only the
   /// number of glyphs present in the `VecGlyph` must be specified.
-  pub fn new(num_items: usize) -> Result<VecGlyphHeader, GlyphErr> {
+  pub fn new(num_items: usize) -> Result<VecGHeader, GlyphErr> {
     let num_items = u32::try_from(num_items)
       .map_err(|_e| GlyphErr::VecGlyphLenOverflow { num_items })?;
-    Ok(VecGlyphHeader {
-      format_version: 0,
-      reserved:       [0; 3],
-      num_items:      U32::from(num_items),
+    Ok(VecGHeader {
+      num_items: U32::from(num_items),
     })
   }
 
@@ -89,7 +85,7 @@ where
 }
 
 /// A glyph that contains a vector of other glyphs.
-pub struct VecGlyph<G>
+pub struct VecG<G>
 where
   G: Glyph,
 {
@@ -100,7 +96,7 @@ where
   offsets: NonNull<[GlyphOffset]>,
 }
 
-impl<G> VecGlyph<G>
+impl<G> VecG<G>
 where
   G: Glyph,
 {
@@ -158,7 +154,7 @@ where
   }
 }
 
-impl<'a> VecGlyph<ParsedGlyph<'a>> {
+impl<'a> VecG<ParsedGlyph<'a>> {
   /// Returns the `index`-th glyph in the vector.
   pub fn get_parsed(&self, index: usize) -> Option<ParsedGlyph<'a>> {
     let offset = self.offsets().get(index)?;
@@ -195,15 +191,15 @@ impl<'a> VecGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<G> FromGlyph<G> for VecGlyph<G>
+impl<G> FromGlyph<G> for VecG<G>
 where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::VecGlyph)?;
+    source.header().confirm_type(GlyphType::Vec)?;
     let contents = source.content_padded();
     let mut cursor = 0;
-    let header = VecGlyphHeader::bbrf(contents, &mut cursor)?;
+    let header = VecGHeader::bbrf(contents, &mut cursor)?;
     let offsets = NonNull::from(GlyphOffset::bbrfs(
       contents,
       &mut cursor,
@@ -218,7 +214,7 @@ where
 
 // impl<'a, 'b> IntoIterator for &'a VecGlyph<>
 
-impl<G> Debug for VecGlyph<G>
+impl<G> Debug for VecG<G>
 where
   G: Glyph,
 {
@@ -266,7 +262,7 @@ where
   }
 }
 
-/// An iterator through the items of a [`VecGlyph`].
+/// An iterator through the items of a [`VecG`].
 #[derive(Copy, Clone)]
 struct IterVec<'a> {
   offsets: &'a [GlyphOffset],
@@ -322,8 +318,9 @@ impl VecGlyphLenCalc {
 
   pub fn finish(self) -> usize {
     size_of::<GlyphHeader>()
-      + size_of::<VecGlyphHeader>()
-      + GlyphOffset::table_len(self.num_items)
+      + round_to_word(
+        size_of::<VecGHeader>() + size_of::<GlyphOffset>() * self.num_items,
+      )
       + self.items_len
   }
 }
@@ -344,7 +341,7 @@ impl<'a> VecGlyphSerializer<'a> {
   ) -> Result<Self, GlyphErr> {
     let glyph_start = GlyphHeader::skip(cursor);
     let content_start = *cursor;
-    VecGlyphHeader::new(len)?.bbwr(target, cursor)?;
+    VecGHeader::new(len)?.bbwr(target, cursor)?;
     let offsets_cursor = GlyphOffset::skip(target, cursor, len, true)?;
     Ok(Self {
       target,
@@ -363,7 +360,7 @@ impl<'a> VecGlyphSerializer<'a> {
 
   pub fn finish(self) -> Result<(), GlyphErr> {
     glyph_close(
-      GlyphType::VecGlyph,
+      GlyphType::Vec,
       self.target,
       self.glyph_start,
       self.cursor,
@@ -376,7 +373,7 @@ impl<'a> VecGlyphSerializer<'a> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{glyph::glyph_new, util::BENCH_BUF_SIZE};
+  use crate::{basic::ZcVecGHeader, glyph::glyph_new, util::BENCH_BUF_SIZE};
   use ::test::Bencher;
   use alloc::vec::Vec;
   use std::{dbg, println, vec};
@@ -397,7 +394,7 @@ mod test {
     let glyph = glyph_new(&to_encode)?;
     println!("{:?}", &glyph);
 
-    let vg = VecGlyph::from_glyph(glyph)?;
+    let vg = VecG::from_glyph(glyph)?;
     for (i, glyph) in vg.iter().enumerate() {
       let dec = <&str>::from_glyph(glyph)?;
       assert_eq!(dec, to_encode[i]);
@@ -476,7 +473,7 @@ mod test {
     let glyph = glyph_new(&to_encode)?;
     dbg!(&glyph);
 
-    let vg = VecGlyph::from_glyph(glyph.borrow())?;
+    let vg = VecG::from_glyph(glyph.borrow())?;
     let g0 = u8::from_glyph(vg.get(0).unwrap())?;
     assert_eq!(g0, 42);
     let g1 = i64::from_glyph(vg.get(1).unwrap())?;

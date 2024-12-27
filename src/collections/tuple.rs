@@ -1,4 +1,4 @@
-//! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
+//! Glyph (de-)serialization for tuples and the dynamic [`TupleG`].
 
 use crate::{
   glyph_close, glyph_read, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
@@ -165,11 +165,11 @@ where
 /// table to facilitate quick access for large vectors, whereas the random
 /// access overhead for a `TupleGlyph` is `O(n)`, like a linked list, due to
 /// the variable length of each contained item.
-pub struct TupleGlyph<T>(T)
+pub struct TupleG<T>(T)
 where
   T: Glyph;
 
-impl<T> TupleGlyph<T>
+impl<T> TupleG<T>
 where
   T: Glyph,
 {
@@ -306,7 +306,7 @@ where
   }
 }
 
-impl<'a> TupleGlyph<ParsedGlyph<'a>> {
+impl<'a> TupleG<ParsedGlyph<'a>> {
   /// Iterate through the elements of the tuple, but with the resulting
   /// lifetimes bound to the underlying byte buffer.
   pub fn iter_parsed(&self) -> impl Iterator<Item = ParsedGlyph<'a>> {
@@ -436,7 +436,7 @@ impl<'a> TupleGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<T> Debug for TupleGlyph<T>
+impl<T> Debug for TupleG<T>
 where
   T: Glyph,
 {
@@ -449,13 +449,13 @@ where
   }
 }
 
-impl<T> FromGlyph<T> for TupleGlyph<T>
+impl<T> FromGlyph<T> for TupleG<T>
 where
   T: Glyph,
 {
   fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
-    Ok(TupleGlyph(source))
+    source.header().confirm_type(GlyphType::Tuple)?;
+    Ok(TupleG(source))
   }
 }
 
@@ -465,7 +465,7 @@ where
   B: FromGlyph<ParsedGlyph<'a>>,
 {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
+    source.header().confirm_type(GlyphType::Tuple)?;
 
     let content = source.content_parsed();
     let cursor = &mut 0;
@@ -486,7 +486,7 @@ where
   C: FromGlyph<ParsedGlyph<'a>>,
 {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
+    source.header().confirm_type(GlyphType::Tuple)?;
 
     let content = source.content_parsed();
     let cursor = &mut 0;
@@ -510,7 +510,7 @@ where
   D: FromGlyph<ParsedGlyph<'a>>,
 {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
+    source.header().confirm_type(GlyphType::Tuple)?;
 
     let content = source.content_parsed();
     let cursor = &mut 0;
@@ -537,7 +537,7 @@ where
   E: FromGlyph<ParsedGlyph<'a>>,
 {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
+    source.header().confirm_type(GlyphType::Tuple)?;
 
     let content = source.content_parsed();
     let cursor = &mut 0;
@@ -567,7 +567,7 @@ where
   F: FromGlyph<ParsedGlyph<'a>>,
 {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::TupleGlyph)?;
+    source.header().confirm_type(GlyphType::Tuple)?;
 
     let content = source.content_parsed();
     let cursor = &mut 0;
@@ -589,7 +589,7 @@ where
   }
 }
 
-/// An iterator through the glyphs in a [`TupleGlyph`].
+/// An iterator through the glyphs in a [`TupleG`].
 pub(crate) struct IterTuple<'a>(&'a [u8], usize);
 
 impl<'a> Iterator for IterTuple<'a> {
@@ -645,7 +645,7 @@ impl<'a> TupleGlyphSerializer<'a> {
 
   pub fn finish(self) -> Result<(), GlyphErr> {
     glyph_close(
-      GlyphType::TupleGlyph,
+      GlyphType::Tuple,
       self.target,
       self.glyph_start,
       self.cursor,
@@ -688,7 +688,7 @@ mod test {
       <(i32, i32, i32, i32, i32, i32)>::from_glyph(abcdef.borrow())?;
     assert_eq!((aa, bb, cc, dd, ee, ff), (a, b, c, d, e, f));
 
-    let tg = TupleGlyph::from_glyph(abcdef)?;
+    let tg = TupleG::from_glyph(abcdef)?;
 
     // Test `TupleGlyph::get()`
     assert_eq!(i32::from_glyph(tg.get(0)?), Ok(8));

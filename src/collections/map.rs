@@ -1,9 +1,9 @@
 //! Glyph (de-)serialization for the [`BTreeMap`] type and the dynamic
-//! [`MapGlyph`].
+//! [`MapG`].
 
 use crate::{
   glyph_close, glyph_read,
-  zerocopy::{ZeroCopy, U32},
+  zerocopy::{round_to_word, ZeroCopy, U32},
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
   ToGlyph,
 };
@@ -23,14 +23,11 @@ use core::{
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(packed)]
 pub(crate) struct MapGlyphHeader {
-  /// The version of the map glyph, currently must be 0.
-  format_version: u8,
-  reserved:       [u8; 3],
-  num_items:      U32,
+  num_items: U32,
 }
 
 impl MapGlyphHeader {
-  /// Creates a new type-specific header for a [`MapGlyph`].
+  /// Creates a new type-specific header for a [`MapG`].
   ///
   /// As the values for `format_version` and `reserved` are fixed, only the
   /// number of glyphs present in the `VecGlyph` must be specified.
@@ -38,9 +35,7 @@ impl MapGlyphHeader {
     let num_items = u32::try_from(num_items)
       .map_err(|_e| GlyphErr::MapLenOverflow { num_items })?;
     Ok(MapGlyphHeader {
-      format_version: 0,
-      reserved:       Default::default(),
-      num_items:      U32::from(num_items),
+      num_items: U32::from(num_items),
     })
   }
 
@@ -80,21 +75,20 @@ where
 }
 
 /// A glyph-based associative array.
-pub struct MapGlyph<G>
+pub struct MapG<G>
 where
   G: Glyph,
 {
   glyph:   G,
-  header:  NonNull<MapGlyphHeader>,
   offsets: NonNull<[GlyphOffset]>,
 }
 
-impl<G> FromGlyph<G> for MapGlyph<G>
+impl<G> FromGlyph<G> for MapG<G>
 where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::MapGlyph)?;
+    source.confirm_type(GlyphType::Map)?;
 
     let content = source.content_padded();
     let cursor = &mut 0;
@@ -103,17 +97,15 @@ where
     let offsets = GlyphOffset::bbrfs(content, cursor, mgh.num_items())?;
 
     // Keep internal self references
-    let header = NonNull::from(mgh);
     let offsets = NonNull::from(offsets);
     Ok(Self {
       glyph: source,
-      header,
       offsets,
     })
   }
 }
 
-impl<G> MapGlyph<G>
+impl<G> MapG<G>
 where
   G: Glyph,
 {
@@ -161,7 +153,7 @@ where
   }
 }
 
-impl<'a> MapGlyph<ParsedGlyph<'a>> {
+impl<'a> MapG<ParsedGlyph<'a>> {
   /// Returns the _index_-th Key/Value pair with lifetimes bound only to the
   /// glyph's backing buffer.
   pub fn get_parsed(
@@ -196,7 +188,7 @@ impl<'a> MapGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<G> Debug for MapGlyph<G>
+impl<G> Debug for MapG<G>
 where
   G: Glyph,
 {
@@ -210,7 +202,7 @@ where
   }
 }
 
-/// Iterates through the entries of a [`MapGlyph`]
+/// Iterates through the entries of a [`MapG`]
 #[derive(Copy, Clone)]
 pub(crate) struct IterMap<'a> {
   offsets: &'a [GlyphOffset],
@@ -282,11 +274,12 @@ impl MapGlyphLenCalc {
     self.items_len = self.items_len.saturating_add(value_len);
   }
 
-  /// Returns the total length of the [`MapGlyph`]
+  /// Returns the total length of the [`MapG`]
   pub fn finish(self) -> usize {
     size_of::<GlyphHeader>()
-      + size_of::<MapGlyphHeader>()
-      + GlyphOffset::table_len(self.num_items)
+      + round_to_word(
+        size_of::<MapGlyphHeader>() + size_of::<GlyphOffset>() * self.num_items,
+      )
       + self.items_len
   }
 }
@@ -339,7 +332,7 @@ impl<'a> MapGlyphSerializer<'a> {
 
   pub fn finish(self) -> Result<(), GlyphErr> {
     glyph_close(
-      GlyphType::MapGlyph,
+      GlyphType::Map,
       self.target,
       self.glyph_start,
       self.cursor,
@@ -370,7 +363,7 @@ mod test {
     let glyph = glyph_new(&map)?;
     // std::dbg!(&glyph);
 
-    let decoded = MapGlyph::from_glyph(glyph)?;
+    let decoded = MapG::from_glyph(glyph)?;
     // std::dbg!(&map_glyph);
 
     // Checking Values (and sorted order)

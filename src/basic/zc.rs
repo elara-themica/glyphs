@@ -74,19 +74,24 @@ impl<'a, T: ZeroCopyGlyph> ZcG<ParsedGlyph<'a>, T> {
 #[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Debug)]
 #[repr(packed)]
 pub(crate) struct ZcVecGHeader {
+  reserved: u8,
+
+  /// The number of dimensions in a multidimensional array.
+  pub tensor_rank: u8,
+
   /// A type identifier.  See [`ZeroCopyTypeID`].
   pub basic_type_id: U16,
 
   /// The length of the basic type, in bytes.
   pub type_len: U16,
 
-  /// Allows the specification of arbitrary dimensionality.
-  ///
-  /// See the documentation on [`ZcVecG`].
-  pub tensor_rank: u8,
+  reserved2: [u8; 2],
+}
 
-  /// Reserved for future use.
-  pub _reserved: [u8; 3],
+impl ZcVecGHeader {
+  pub(crate) fn tensor_rank(&self) -> usize {
+    self.tensor_rank as usize
+  }
 }
 
 impl ZcVecGHeader {
@@ -97,10 +102,11 @@ impl ZcVecGHeader {
     );
 
     Ok(Self {
+      reserved: Default::default(),
       basic_type_id: T::ZERO_COPY_ID.into(),
       type_len,
-      tensor_rank: 0,
-      _reserved: Default::default(),
+      tensor_rank: Default::default(),
+      reserved2: Default::default(),
     })
   }
 
@@ -140,19 +146,51 @@ unsafe impl ZeroCopy for ZcVecGHeader {}
 /// from the glyph header.
 ///
 
-pub struct ZcVecG<G: Glyph, T: ZeroCopy>(G, NonNull<[T]>);
+pub struct ZcVecG<G: Glyph, T: ZeroCopy> {
+  glyph:          G,
+  header:         NonNull<ZcVecGHeader>,
+  tensor_lengths: NonNull<[U32]>,
+  data:           NonNull<[T]>,
+}
+
+impl<G: Glyph, T: ZeroCopy> ZcVecG<G, T> {
+  /// Returns the ZeroCopy type contained in the glyph.
+  pub fn type_id(&self) -> ZeroCopyTypeID {
+    unsafe { self.header.as_ref().basic_type_id.into() }
+  }
+
+  /// Returns the length of the zero copy type contained in the glyph.
+  pub fn type_len(&self) -> usize {
+    unsafe { self.header.as_ref().type_len.get() as usize }
+  }
+
+  /// Returns the number of dimensions if this is a tensor
+  pub fn tensor_rank(&self) -> usize {
+    unsafe { self.header.as_ref().tensor_rank as usize }
+  }
+}
 
 impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for ZcVecG<G, T> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::BasicVecGlyph)?;
+    glyph.confirm_type(GlyphType::VecBasic)?;
     let cursor = &mut 0;
     let content = glyph.content();
     let header = ZcVecGHeader::bbrf(content, cursor)?;
     header.confirm_zero_copy_type(T::ZERO_COPY_ID)?;
-    *cursor += header.tensor_rank as usize * size_of::<U32>();
+    let tensor_lengths = NonNull::from(U32::bbrfs(
+      content,
+      cursor,
+      header.tensor_rank().saturating_sub(1),
+    )?);
     *cursor = round_to_word(*cursor);
-    let slice_ptr = NonNull::from(T::bbrfs_i(content, cursor));
-    Ok(Self(glyph, slice_ptr))
+    let data = NonNull::from(T::bbrfs_i(content, cursor));
+    let header = NonNull::from(header);
+    Ok(Self {
+      glyph,
+      header,
+      tensor_lengths,
+      data,
+    })
   }
 }
 
@@ -161,7 +199,7 @@ impl<G: Glyph, T: ZeroCopy> Deref for ZcVecG<G, T> {
 
   fn deref(&self) -> &Self::Target {
     // SAFETY: Glyph referenced is immutable and pinned.
-    unsafe { self.1.as_ref() }
+    unsafe { self.data.as_ref() }
   }
 }
 
@@ -171,7 +209,7 @@ impl<'a, T: ZeroCopy> ZcVecG<ParsedGlyph<'a>, T> {
   pub fn get_parsed(&self) -> &'a [T] {
     // SAFETY: Glyph referenced is immutable, pinned, and result's lifetime is
     //         bound by that of the underlying buffer.
-    unsafe { self.1.as_ref() }
+    unsafe { self.data.as_ref() }
   }
 }
 
@@ -180,8 +218,11 @@ impl<G: Glyph, T: ZeroCopy + Debug> Debug for ZcVecG<G, T> {
     if !f.alternate() {
       core::fmt::Debug::fmt(self.deref(), f)
     } else {
-      let mut df = f.debug_tuple(core::any::type_name::<Self>());
-      df.field(&self.0);
+      let mut df = f.debug_struct(core::any::type_name::<Self>());
+      df.field("type_id", &self.type_id());
+      df.field("type_len", &self.type_len());
+      df.field("tensor_rank", &self.tensor_rank());
+      df.field("data", &self.deref());
       df.finish()
     }
   }
