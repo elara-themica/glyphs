@@ -1,6 +1,8 @@
 use crate::{
-  basic::{BitVecG, ZcVecG, ZcVecGHeader},
-  collections::{MapGlyph, TupleGlyph, VecGlyph},
+  basic::{
+    BitVecG, FloatG, IntG, UIntG, UnitG, UnitTypes, ZcVecG, ZcVecGHeader,
+  },
+  collections::{MapG, TupleG, VecG},
   serde::SerdeGlyphErr,
   structured::ObjGlyph,
   zerocopy::{
@@ -28,10 +30,10 @@ use serde::{
 /// - _Options_.  When deserializing an option, a [`NothingGlyph`] will be
 ///   deserialized as `None`, otherwise it will be a `Some` of the type present.
 /// - _Sequences_.  Sequence types can be deserialized from either a
-///   [`VecGlyph`] or the various specialized vector glyph types containing
+///   [`VecG`] or the various specialized vector glyph types containing
 ///   primitives, such as [`VecU32Glyph`].
-/// - _Tuples_.  Deserialized from [`TupleGlyph`]s.
-/// - _Maps_.  Deserialized from [`MapGlyph`]s.
+/// - _Tuples_.  Deserialized from [`TupleG`]s.
+/// - _Maps_.  Deserialized from [`MapG`]s.
 /// - _Structs_.  Deserialized from [`ObjGlyph`]s with matching type names.
 ///   Unit structs must have no fields, tuple structs must have unnamed fields,
 ///   and regular structs must have named fields.  Newtype structs are
@@ -120,7 +122,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   {
     let type_id = self.0.glyph_type();
     match type_id {
-      GlyphType::ObjGlyph => {
+      GlyphType::Object => {
         // Both various enums and structs
         let og = ObjGlyph::from_glyph(self.0)?;
         if og.variant_name().is_some() {
@@ -150,34 +152,36 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
           }
         }
       },
-      GlyphType::Nothing => visitor.visit_none(),
-      GlyphType::Redacted => visitor.visit_none(),
+      GlyphType::Unit => {
+        let ug = UnitG::from_glyph(self.0)?;
+        if ug.type_id().eq(&UnitTypes::Nothing) {
+          visitor.visit_none()
+        } else {
+          visitor.visit_unit()
+        }
+      },
       GlyphType::Bool => {
         let value = bool::from_glyph(self.0)?;
         visitor.visit_bool(value)
       },
       GlyphType::UnicodeChar => self.deserialize_char(visitor),
-      GlyphType::U32 => self.deserialize_u32(visitor),
-      GlyphType::U64 => self.deserialize_u64(visitor),
-      GlyphType::U128 => self.deserialize_u128(visitor),
-      GlyphType::I32 => self.deserialize_i32(visitor),
-      GlyphType::I64 => self.deserialize_i64(visitor),
-      GlyphType::I128 => self.deserialize_i128(visitor),
-      GlyphType::F32 => self.deserialize_f64(visitor),
-      GlyphType::F64 => self.deserialize_f64(visitor),
-      GlyphType::VecGlyph => self.deserialize_seq(visitor),
-      GlyphType::VecU8 => self.deserialize_seq(visitor),
-      GlyphType::VecU16 => self.deserialize_seq(visitor),
-      GlyphType::VecU32 => self.deserialize_seq(visitor),
-      GlyphType::VecU64 => self.deserialize_seq(visitor),
-      GlyphType::VecU128 => self.deserialize_seq(visitor),
-      GlyphType::VecI8 => self.deserialize_seq(visitor),
-      GlyphType::VecI16 => self.deserialize_seq(visitor),
-      GlyphType::VecI32 => self.deserialize_seq(visitor),
-      GlyphType::VecI64 => self.deserialize_seq(visitor),
-      GlyphType::VecI128 => self.deserialize_seq(visitor),
-      GlyphType::StringUTF8 => self.deserialize_str(visitor),
-      GlyphType::MapGlyph => self.deserialize_map(visitor),
+      GlyphType::UnsignedInt => {
+        let int = UIntG::from_glyph(self.0)?;
+        visitor.visit_u128(*int)
+      },
+      GlyphType::SignedInt => {
+        let int = IntG::from_glyph(self.0)?;
+        visitor.visit_i128(*int)
+      },
+      GlyphType::Float => {
+        let float = FloatG::from_glyph(self.0)?;
+        visitor.visit_f64(*float)
+      },
+      GlyphType::Vec => self.deserialize_seq(visitor),
+      GlyphType::VecBasic => self.deserialize_seq(visitor),
+      GlyphType::VecBool => self.deserialize_seq(visitor),
+      GlyphType::String => self.deserialize_str(visitor),
+      GlyphType::Map => self.deserialize_map(visitor),
       _ => Err(SerdeGlyphErr::InvalidSourceGlyphType(type_id)),
     }
   }
@@ -331,8 +335,13 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   where
     V: Visitor<'de>,
   {
-    if self.0.glyph_type() == GlyphType::Nothing {
-      visitor.visit_none()
+    if self.0.glyph_type() == GlyphType::Unit {
+      let unit = UnitG::from_glyph(self.0)?;
+      if unit.type_id().eq(&UnitTypes::Nothing) {
+        visitor.visit_none()
+      } else {
+        visitor.visit_some(self)
+      }
     } else {
       visitor.visit_some(self)
     }
@@ -383,14 +392,14 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   {
     let type_id = self.0.glyph_type();
     match type_id {
-      GlyphType::VecGlyph => {
-        let vg = VecGlyph::from_glyph(self.0)?;
+      GlyphType::Vec => {
+        let vg = VecG::from_glyph(self.0)?;
         let mut iter = vg.iter_parsed();
         let ds = VecDeserializer::VecGlyph(&mut iter);
         visitor.visit_seq(ds)
       },
-      GlyphType::TupleGlyph => {
-        let vg = TupleGlyph::from_glyph(self.0)?;
+      GlyphType::Tuple => {
+        let vg = TupleG::from_glyph(self.0)?;
         let mut iter = vg.iter_parsed();
         let ds = VecDeserializer::VecGlyph(&mut iter);
         visitor.visit_seq(ds)
@@ -401,7 +410,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
         let ds = VecDeserializer::BoolIt(&mut it);
         visitor.visit_seq(ds)
       },
-      GlyphType::BasicVecGlyph => {
+      GlyphType::VecBasic => {
         let content = self.0.content_padded();
         let vgh = ZcVecGHeader::bbrf(content, &mut 0)?;
         let zct = vgh.get_zero_copy_type_id();
@@ -481,7 +490,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   where
     V: Visitor<'de>,
   {
-    let tg = TupleGlyph::from_glyph(self.0)?;
+    let tg = TupleG::from_glyph(self.0)?;
     let mut iter = tg.iter_parsed();
     let gd = IterSeqDeserializer(&mut iter);
     let value = visitor.visit_seq(gd)?;
@@ -514,7 +523,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   where
     V: Visitor<'de>,
   {
-    let map = MapGlyph::from_glyph(self.0)?;
+    let map = MapG::from_glyph(self.0)?;
     visitor.visit_map(MapGlyphAccess {
       iter:       &mut map.iter_parsed(),
       next_value: None,
