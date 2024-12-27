@@ -26,6 +26,13 @@ use std::ops::Deref;
 #[derive(Copy, Clone, Debug)]
 pub struct IntG<G: Glyph>(G, i128);
 
+impl<G: Glyph> IntG<G> {
+  /// Returns the value in the glyph.
+  pub fn get(&self) -> &i128 {
+    &self.1
+  }
+}
+
 impl<G: Glyph> FromGlyph<G> for IntG<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(SignedInt)?;
@@ -109,6 +116,13 @@ impl<G: Glyph> TryFrom<IntG<G>> for i8 {
 /// implementations for the smaller unsigned integer types.
 pub struct UIntG<G: Glyph>(G, u128);
 
+impl<G: Glyph> UIntG<G> {
+  /// Gets the value in the glyph.
+  pub fn get(&self) -> &u128 {
+    &self.1
+  }
+}
+
 impl<G: Glyph> FromGlyph<G> for UIntG<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(UnsignedInt)?;
@@ -191,6 +205,13 @@ impl<G: Glyph> TryFrom<UIntG<G>> for u8 {
 /// returned by [`Deref`].  However, note that there is also a direct [`From`]
 /// implementation from this type into a `f32`.
 pub struct FloatG<G: Glyph>(G, f64);
+
+impl<G: Glyph> FloatG<G> {
+  /// Returns the value in the glyph.
+  pub fn get(&self) -> &f64 {
+    &self.1
+  }
+}
 
 impl<G: Glyph> FromGlyph<G> for FloatG<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
