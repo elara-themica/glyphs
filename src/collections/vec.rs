@@ -409,7 +409,8 @@ mod test {
     let vg = glyph_new(&num_vec)?;
     assert_eq!(
       vg.glyph_len(),
-      size_of::<GlyphHeader>() + size_of::<VecGlyphHeader>() + num_vec.len()
+      size_of::<GlyphHeader>()
+        + round_to_word(size_of::<ZcVecGHeader>() + num_vec.len())
     );
     Ok(())
   }
