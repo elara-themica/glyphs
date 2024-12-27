@@ -236,6 +236,12 @@ impl From<u16> for EncryptedPasswordTypes {
   }
 }
 
+impl From<U16> for EncryptedPasswordTypes {
+  fn from(value: U16) -> Self {
+    value.get().into()
+  }
+}
+
 impl From<EncryptedPasswordTypes> for u16 {
   fn from(src: EncryptedPasswordTypes) -> Self {
     src as u16

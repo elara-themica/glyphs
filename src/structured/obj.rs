@@ -206,7 +206,7 @@ where
   B: Glyph,
 {
   fn from_glyph(source: B) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::ObjGlyph)?;
+    source.confirm_type(GlyphType::Object)?;
     let content = source.content_padded();
     let cursor = &mut 0;
 
@@ -807,7 +807,7 @@ impl<'a> ObjGlyphSerializer<'a> {
 
   pub fn finish(self) -> Result<(), GlyphErr> {
     glyph_close(
-      GlyphType::ObjGlyph,
+      GlyphType::Object,
       self.target,
       self.glyph_start,
       self.cursor,

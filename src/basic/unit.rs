@@ -1,6 +1,6 @@
 use crate::{
-  zerocopy::ZeroCopy, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ToGlyph,
+  zerocopy::{ZeroCopy, U32},
+  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use core::mem::transmute;
 
@@ -37,16 +37,48 @@ impl<G: Glyph> FromGlyph<G> for UnitG<G> {
 ///
 /// See the Wikipedia article [Unit Types](https://en.wikipedia.org/wiki/Unit_type)
 /// for more information.
+///
+// SAFETY: For safe conversions from u32 values, this list must be (1)
+//         contiguous and (2) end with `UnknownType` as the highest value.
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 #[repr(u32)]
 #[non_exhaustive]
+#[allow(missing_docs)]
 pub enum UnitTypes {
-  /// Represents the absence of something, e.g., [`Option::None`].
   Nothing = 0x0000_0000,
-  /// Represents some information that is unknown
   Unknown = 0x0000_0001,
-  /// Represents some information that has been redacted
   Redacted = 0x0000_0002,
+  UnknownType = 0x0000_0003,
+}
+
+impl From<u32> for UnitTypes {
+  fn from(value: u32) -> Self {
+    unsafe {
+      if value > UnitTypes::UnknownType as u32 {
+        UnitTypes::UnknownType
+      } else {
+        transmute::<u32, UnitTypes>(value)
+      }
+    }
+  }
+}
+
+impl From<U32> for UnitTypes {
+  fn from(value: U32) -> Self {
+    value.get().into()
+  }
+}
+
+impl From<UnitTypes> for u32 {
+  fn from(value: UnitTypes) -> Self {
+    value as u32 // If no compile, use transmute--should be safe.
+  }
+}
+
+impl From<UnitTypes> for U32 {
+  fn from(value: UnitTypes) -> Self {
+    U32::from(value as u32)
+  }
 }
 
 impl ToGlyph for UnitTypes {
@@ -55,8 +87,7 @@ impl ToGlyph for UnitTypes {
     target: &mut [u8],
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
-    // SAFETY: repr(u32)
-    let type_id: u32 = unsafe { transmute::<_, _>(*self) };
+    let type_id = u32::from(*self);
     let bytes = type_id.to_le_bytes();
     GlyphHeader::new_short(GlyphType::Unit, bytes).bbwr(target, cursor)?;
     Ok(())

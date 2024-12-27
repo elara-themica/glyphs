@@ -84,7 +84,7 @@ macro_rules! hash_impls {
         cursor: &mut usize,
       ) -> Result<(), $crate::GlyphErr> {
         let glyph_header = $crate::GlyphHeader::new(
-          $crate::GlyphType::HashGlyph,
+          $crate::GlyphType::CryptoHash,
           core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
             + core::mem::size_of::<$hash_name>(),
         )?;
@@ -124,7 +124,7 @@ macro_rules! hash_impls {
         cursor: &mut usize,
       ) -> Result<(), $crate::GlyphErr> {
         let glyph_header = $crate::GlyphHeader::new(
-          $crate::GlyphType::HashGlyph,
+          $crate::GlyphType::CryptoHash,
           core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
             + core::mem::size_of::<$hash_name>() * self.len(),
         )?;
@@ -223,14 +223,25 @@ pub enum CryptoHashType {
 
 impl From<u16> for CryptoHashType {
   fn from(value: u16) -> Self {
-    // SAFETY: target is #[repr(u16)]
-    unsafe { core::mem::transmute::<u16, CryptoHashType>(value) }
+    unsafe {
+      if value > CryptoHashType::Unknown as u16 {
+        CryptoHashType::Unknown
+      } else {
+        transmute::<u16, CryptoHashType>(value)
+      }
+    }
   }
 }
 
 impl From<U16> for CryptoHashType {
   fn from(value: U16) -> Self {
-    Self::from(value.get())
+    value.get().into()
+  }
+}
+
+impl From<CryptoHashType> for u16 {
+  fn from(value: CryptoHashType) -> Self {
+    value as u16
   }
 }
 
@@ -302,7 +313,7 @@ impl<G: Glyph, H: CryptographicHash> HashGlyph<G, H> {}
 
 impl<G: Glyph, H: CryptographicHash> FromGlyph<G> for HashGlyph<G, H> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::HashGlyph)?;
+    glyph.confirm_type(GlyphType::CryptoHash)?;
     let content = glyph.content();
     let cursor = &mut 0;
     CryptoHashHeader::bbrf(content, cursor)?

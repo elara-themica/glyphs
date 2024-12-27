@@ -94,7 +94,7 @@ pub enum CryptoKeyTypes {
   /// An X25519 Key Pair
   X25519KeyPair = 0x0008,
   /// An unknown key type.
-  Unknown = 0x000A,
+  Unknown = 0x0009,
 }
 
 impl From<u16> for CryptoKeyTypes {
@@ -106,6 +106,24 @@ impl From<u16> for CryptoKeyTypes {
       // left in that code.
       unsafe { transmute::<u16, Self>(type_id) }
     }
+  }
+}
+
+impl From<U16> for CryptoKeyTypes {
+  fn from(value: U16) -> Self {
+    value.get().into()
+  }
+}
+
+impl From<CryptoKeyTypes> for u16 {
+  fn from(value: CryptoKeyTypes) -> Self {
+    value as u16
+  }
+}
+
+impl From<CryptoKeyTypes> for U16 {
+  fn from(value: CryptoKeyTypes) -> Self {
+    U16::from(value as u16)
   }
 }
 

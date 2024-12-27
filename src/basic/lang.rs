@@ -175,7 +175,7 @@ pub enum Locale {
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::StringUTF8)?;
+    source.header().confirm_type(GlyphType::String)?;
     let str_bytes = source.content_parsed();
     let valid_str = from_utf8(str_bytes)?;
     Ok(valid_str)
@@ -191,7 +191,7 @@ impl ToGlyph for str {
     // SAFETY: So we can do one bounds check.
     unsafe {
       let str_bytes = self.as_bytes();
-      let header = GlyphHeader::new(GlyphType::StringUTF8, str_bytes.len())?;
+      let header = GlyphHeader::new(GlyphType::String, str_bytes.len())?;
       let bounds =
         round_to_word(*cursor + size_of::<GlyphHeader>() + str_bytes.len());
       bounds_check(target, bounds)?;
@@ -216,7 +216,7 @@ where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::StringUTF8)?;
+    source.header().confirm_type(GlyphType::String)?;
     let bytes = source.content();
     let bytes_v = u8::bbrds_i(bytes, &mut 0)?;
     let valid_string = alloc::string::String::from_utf8(bytes_v)?;
@@ -270,7 +270,7 @@ where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::StringUTF8)?;
+    source.header().confirm_type(GlyphType::String)?;
     // Check for valid UTF-8 string.
     let _ = from_utf8(source.content())?;
     Ok(StringGlyph(source))

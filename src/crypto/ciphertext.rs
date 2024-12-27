@@ -316,6 +316,24 @@ impl From<u16> for EncryptionSchemes {
   }
 }
 
+impl From<U16> for EncryptionSchemes {
+  fn from(src: U16) -> Self {
+    src.get().into()
+  }
+}
+
+impl From<EncryptionSchemes> for u16 {
+  fn from(value: EncryptionSchemes) -> Self {
+    value as u16
+  }
+}
+
+impl From<EncryptionSchemes> for U16 {
+  fn from(value: EncryptionSchemes) -> Self {
+    U16::from(value as u16)
+  }
+}
+
 /// A type used to create a glyph containing an encrypted glyph.
 pub struct GlyphCrypter<G, K, KT>
 where

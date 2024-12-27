@@ -110,19 +110,30 @@ impl FingerprintKey for CryptoSignature {
 // SAFETY WARNING: If making changes here, update the related `impl From<U16>`
 #[repr(u16)]
 pub enum CryptoSignatureTypes {
-  Unknown = 0x0000,
-  Ed25519 = 0x0001,
+  Ed25519 = 0x0000,
+  Unknown = 0x0001,
+}
+
+impl From<u16> for CryptoSignatureTypes {
+  fn from(src: u16) -> Self {
+    if src > CryptoSignatureTypes::Unknown as u16 {
+      CryptoSignatureTypes::Unknown
+    } else {
+      // SAFETY: Checked value
+      unsafe { core::mem::transmute::<u16, CryptoSignatureTypes>(src) }
+    }
+  }
 }
 
 impl From<U16> for CryptoSignatureTypes {
   fn from(src: U16) -> Self {
-    let val: u16 = src.into();
-    if val > CryptoSignatureTypes::Ed25519 as u16 {
-      CryptoSignatureTypes::Unknown
-    } else {
-      // SAFETY: Checked value
-      unsafe { core::mem::transmute::<u16, CryptoSignatureTypes>(val) }
-    }
+    src.get().into()
+  }
+}
+
+impl From<CryptoSignatureTypes> for u16 {
+  fn from(src: CryptoSignatureTypes) -> Self {
+    src as u16
   }
 }
 

@@ -603,6 +603,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
 #[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum ZeroCopyTypeID {
   U8 = 0x0000,
   U16 = 0x0001,
@@ -638,21 +639,33 @@ pub enum ZeroCopyTypeID {
   Unknown = 0x0025,
 }
 
-impl From<ZeroCopyTypeID> for U16 {
-  fn from(value: ZeroCopyTypeID) -> Self {
-    U16::from(value as u16)
-  }
-}
-
 impl From<u16> for ZeroCopyTypeID {
   fn from(value: u16) -> Self {
-    unsafe { transmute::<u16, ZeroCopyTypeID>(value) }
+    unsafe {
+      if value > ZeroCopyTypeID::Unknown as u16 {
+        ZeroCopyTypeID::Unknown
+      } else {
+        transmute::<u16, ZeroCopyTypeID>(value)
+      }
+    }
   }
 }
 
 impl From<U16> for ZeroCopyTypeID {
   fn from(value: U16) -> Self {
-    unsafe { transmute::<u16, ZeroCopyTypeID>(value.get()) }
+    value.get().into()
+  }
+}
+
+impl From<ZeroCopyTypeID> for u16 {
+  fn from(value: ZeroCopyTypeID) -> Self {
+    value as u16
+  }
+}
+
+impl From<ZeroCopyTypeID> for U16 {
+  fn from(value: ZeroCopyTypeID) -> Self {
+    U16::from(value as u16)
   }
 }
 

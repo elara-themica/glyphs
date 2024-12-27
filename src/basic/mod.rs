@@ -1,8 +1,10 @@
 //! Numbers, strings, boolean, nothing, option, etc...
+#[allow(unused_imports)]
 use crate::{
   zerocopy::{F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
   FromGlyph, Glyph, GlyphErr, GlyphType, ToGlyph,
 };
+#[allow(unused_imports)]
 use core::str::from_utf8;
 
 mod bool;

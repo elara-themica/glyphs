@@ -105,10 +105,7 @@ impl GlyphHeader {
   /// Returns the numerical glyph type id.  See [`GlyphType`].
   #[inline(always)]
   pub fn glyph_type(self) -> GlyphType {
-    unsafe {
-      let id = u16::from_le_bytes(self.type_id);
-      transmute::<u16, GlyphType>(id)
-    }
+    u16::from_le_bytes(self.type_id).into()
   }
 
   /// Returns `GlyphErr::UnexpectedType` if the header's type does not match
@@ -200,7 +197,10 @@ impl Debug for GlyphHeader {
     let mut builder = f.debug_struct("GlyphHeader");
     builder.field("version", &format_args!("0x{:X}", self.version()));
     builder.field("type", &self.glyph_type());
-    builder.field("type_id", &format_args!("0x{:X}", self.glyph_type() as u16));
+    builder.field(
+      "type_id",
+      &format_args!("0x{:X}", &u16::from_le_bytes(self.type_id)),
+    );
     builder.field("short", &self.is_short());
     if self.is_short() {
       builder.field("content", &ShortHexDump(&self.len_data, 4));
@@ -1040,379 +1040,78 @@ where
 #[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum GlyphType {
-  // =========================
-  // === Fundamental Types ===
-  // =========================
-  /// A glyph signifying the concept of "nothing".
-  Nothing = 0x0000u16,
-
-  /// A glyph indicating that something is "unknown" or
-  Unknown = 0x0001,
-
-  /// A glyph indicating that a value was available in principle but was
-  /// kept secret, or "redacted".
-  Redacted = 0x0002,
-
-  // ==============================
-  // === GLIFS Filesystem Types ===
-  // ==============================
-  /// A glyph containing a command issued to a GLIFS node, e.g., to read an object.
-  ///
-  /// See the suite of binary formats defined [here](http://www.glifs.org/docs/books/format/commands.html)
-  GlifsRequest = 0x0010,
-
-  /// A glyph containing a command issued to a GLIFS node, e.g., to read an object.
-  ///
-  /// See the suite of binary formats defined [here](http://www.glifs.org/docs/books/format/commands.html)
-  GlifsResponse = 0x0011,
-
-  /// A record of a single transaction
-  GlifsTxLog = 0x0012,
-
-  // ==================
-  // === Containers ===
-  // ==================
-  /// A glyph that contains a series of other glyphs.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/tuple_vec.html)
-  TupleGlyph = 0x0020,
-
-  /// A glyph that contains a series of other glyphs.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/tuple_vec.html)
-  VecGlyph = 0x0021,
-
-  /// A glyph that contains an associative map of unique keys to values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/map.html)
-  MapGlyph = 0x0022,
-
-  /// A glyph that contains a single key/value pair, apart from a map.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/map.html)
-  MapEntry = 0x0023,
-
-  /// A glyph that contains a (specific version of a) document.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/containers/document.html)
-  DocumentGlyph = 0x0024,
-
-  /// A user-defined structured data type.
-  ///
-  /// TODO: Reference binary format documentation (after written!)
-  ObjGlyph = 0x0025,
-
-  /// Vectors of basic types.  See [`BasicType`].
-  BasicVecGlyph = 0x0028,
-
-  // ==================
-  // === Primitives ===
-  // ==================
-  /// A glyph containing a binary value (`bool`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  Bool = 0x0040,
-
-  /// A glyph containing a signed 32-bit little-endian integer (`i32`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  I32 = 0x0041,
-
-  /// A glyph containing a signed 64-bit little-endian integer (`i64`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  I64 = 0x0042,
-
-  /// A glyph containing a signed 128-bit little-endian integer (`i128`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  I128 = 0x0043,
-
-  /// A glyph containing an unsigned 32-bit little-endian integer (`u32`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  U32 = 0x0044,
-
-  /// A glyph containing an unsigned 64-bit little-endian integer (`u64`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  U64 = 0x0045,
-
-  /// A glyph containing an unsigned 128-bit little-endian integer (`u128`).
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  U128 = 0x0046,
-
-  /// A glyph containing a 32-bit floating point number.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  F32 = 0x0047,
-
-  /// A glyph containing a 64-bit floating point number.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  F64 = 0x0048,
-
-  /// A glyph containing a 128-bit floating point number.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  F128 = 0x0049,
-
-  /// A glyph containing a 256-bit floating point number.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  F256 = 0x004a,
-
-  /// Signed Integer
-  SignedInt = 0x004b,
-
-  /// Unsigned Integer
-  UnsignedInt = 0x004c,
-
-  /// Floating Point Number (IEEE-754)
-  Float = 0x004d,
-
-  // =============================
-  // === Vectors of Primitives ===
-  // =============================
-  /// A glyph containing a dense vector of bits.
-  ///
-  /// See the [`BitVector`] type and the binary format defined
-  /// [here](http://www.glifs.org/docs/books/format/primitives.html#bit-vectors)
-  VecBool = 0x0050,
-
-  /// A glyph containing a vector of signed 8-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecI8 = 0x0051,
-
-  /// A glyph containing a vector of signed little-endian 16-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecI16 = 0x0052,
-
-  /// A glyph containing a vector of signed little-endian 32-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecI32 = 0x0053,
-
-  /// A glyph containing a vector of signed little-endian 64-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecI64 = 0x0054,
-
-  /// A glyph containing a vector of signed little-endian 128-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecI128 = 0x0055,
-
-  /// A glyph containing a vector of unsigned 8-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecU8 = 0x0056,
-
-  /// A glyph containing a vector of unsigned little-endian 16-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecU16 = 0x0057,
-
-  /// A glyph containing a vector of unsigned little-endian 32-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecU32 = 0x0058,
-
-  /// A glyph containing a vector of unsigned little-endian 64-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecU64 = 0x0059,
-
-  /// A glyph containing a vector of unsigned little-endian 128-bit integers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecU128 = 0x005a,
-
-  /// A glyph containing a vector of 16-bit floating point numbers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecF16 = 0x005b,
-
-  /// A glyph containing a vector of 32-bit floating point numbers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecF32 = 0x005c,
-
-  /// A glyph containing a vector of 64-bit floating point numbers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecF64 = 0x005d,
-
-  /// A glyph containing a vector of 128-bit floating point numbers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecF128 = 0x005e,
-
-  /// A glyph containing a vector of 256-bit floating point numbers.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/primitives.html)
-  VecF256 = 0x005f,
-
-  // ======================
-  // === Human Language ===
-  // ======================
-  /// A glyph containing a single Unicode code point.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/language.html)
-  UnicodeChar = 0x0060,
-
-  /// A glyph containing a string encoded in UTF-8.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/language.html)
-  StringUTF8 = 0x0061,
-
-  /// A glyph containing a string encoded in UTF-16.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/language.html)
-  StringUTF16 = 0x0062,
-
-  /// A glyph containing a string encoded in UTF-32.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/language.html)
-  StringUTF32 = 0x0063,
-
-  // ============================
-  // === Common Complex Types ===
-  // ============================
-  /// A glyph containing a UUID.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/uuid.html)
-  UUID = 0x0070,
-
-  /// A glyph containing a vector of UUIDs.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/uuid.html)
-  VecUUID = 0x0071,
-
-  /// A glyph specifying an instant in time.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/time.html)
-  DateTime = 0x0072,
-
-  /// A glyph specifying a length of time.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/time.html)
-  Duration = 0x0073,
-
-  /// A glyph specifying an IPv4 Internet address.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/network.html)
-  IpAddrV4 = 0x0074,
-
-  /// A glyph specifying an IPv6 Internet address
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/network.html)
-  IpAddrV6 = 0x0075,
-
-  // ============================
-  // === Cryptographic Hashes ===
-  // ============================
-  /// A glyph specifying an MD5 hash value.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  HashMD5 = 0x00a0,
-
-  /// A glyph specifying an SHA1 hash value.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  HashSha1 = 0x00a1,
-
-  /// A glyph specifying an SHA2-256 hash value.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  HashSha2 = 0x00a2,
-
-  /// A glyph specifying an SHA3-256 hash value.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  HashSha3 = 0x00a3,
-
-  /// A glyph specifying an SHA3-512 hash value.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  HashBlake3 = 0x00a4,
-
-  // === Vectors of Cryptographic Hashes ===
-  /// A glyph containing a vector of MD5 hash values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  VecHashMd5 = 0x00b0,
-
-  /// A glyph containing a vector of SHA1 hash values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  VecHashSha1 = 0x00b1,
-
-  /// A glyph containing a vector of SHA2-256 hash values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  VecHashSha2 = 0x00b2,
-
-  /// A glyph containing a vector of SHA3-256 hash values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  VecHashSha3 = 0x00b3,
-
-  /// A glyph containing a vector of Blake3 hash values.
-  ///
-  /// See the binary format [here](http://www.glifs.org/docs/books/format/types/hash.html)
-  #[allow(non_camel_case_types)]
-  VecHashBlake3 = 0x00b4,
-
-  /// One or more cryptographic hashes.
-  HashGlyph = 0x00b5,
-
-  // ====================
-  // === Crypto Types ===
-  // ====================
-  EncryptedPassword = 0x00c0,
-  PublicKey = 0x00c1,
-  PrivateKey = 0x00c2,
-  KeyPair = 0x00c3,
-  Signature = 0x00c4,
-  SignedExtent = 0x00c5,
-  SignedGlyph = 0x00c6,
-  EncryptedExtent = 0x00c7,
-  EncryptedGlyph = 0x00c8,
-
-  /// Information about a ciphertext (e.g., initialization vectors, ephemeral
-  /// keys, etc...)
-  CiphertextMetadata = 0x00c9,
-
-  /// === Merkle Structures ===
-  CLiMBTreeNode = 0x0100,
+  //=== Primitives
   Unit,
 }
+  Bool,
+  SignedInt,
+  UnsignedInt,
+  Float,
 
-impl From<U16> for GlyphType {
-  fn from(value: U16) -> Self {
-    unsafe { transmute(value.get()) }
-  }
+  //=== Collections
+  Tuple,
+  Vec,
+  VecBasic,
+  VecBool,
+  Map,
+  Object,
+  Document,
+
+  //=== Language
+  String,
+  UnicodeChar,
+
+  //=== Other
+  UUID,
+
+  // === Crypto
+  CryptoHash,
+  EncryptedPassword,
+  PublicKey,
+  PrivateKey,
+  KeyPair,
+  Signature,
+  SignedExtent,
+  SignedGlyph,
+  EncryptedExtent,
+  EncryptedGlyph,
+  CiphertextMetadata,
+
+  //=== GLIFS
+  GlifsTxLog,
+
+  Unknown,
 }
 
 impl From<u16> for GlyphType {
   fn from(value: u16) -> Self {
-    unsafe { transmute(value) }
+    unsafe {
+      if value > GlyphType::Unknown as u16 {
+        GlyphType::Unknown
+      } else {
+        transmute(value)
+      }
+    }
+  }
+}
+
+impl From<U16> for GlyphType {
+  fn from(value: U16) -> Self {
+    value.get().into()
   }
 }
 
 impl From<GlyphType> for U16 {
   fn from(value: GlyphType) -> Self {
     U16::from(value as u16)
+  }
+}
+
+impl From<GlyphType> for u16 {
+  fn from(value: GlyphType) -> Self {
+    value as u16
   }
 }
 
