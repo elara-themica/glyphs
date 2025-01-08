@@ -2,47 +2,7 @@
 //! in sorted order.
 
 use alloc::vec::Vec;
-use core::{borrow::Borrow, cmp::Ordering, ops::Deref};
-
-/// A simple collation ordering function for [`f32`].
-///
-/// For full collation, we need a consistent ordering for `NaN`s.  We order them
-/// as `Equal` to each other and `Less` than all other values.
-#[inline]
-pub(crate) fn collate_f32(a: &f32, b: &f32) -> Ordering {
-  let partial = a.partial_cmp(&b);
-  if let Some(ordering) = partial {
-    ordering
-  } else {
-    let a_nan = a.is_nan();
-    let b_nan = b.is_nan();
-    match (a_nan, b_nan) {
-      (false, true) => Ordering::Less,
-      (true, false) => Ordering::Greater,
-      _ => Ordering::Equal,
-    }
-  }
-}
-
-/// A simple collation ordering function for [`f32`].
-///
-/// For full collation, we need a consistent ordering for `NaN`s.  We order them
-/// as `Equal` to each other and `Less` than all other values.
-#[inline]
-pub(crate) fn collate_f64(a: &f64, b: &f64) -> Ordering {
-  let partial = a.partial_cmp(&b);
-  if let Some(ordering) = partial {
-    ordering
-  } else {
-    let a_nan = a.is_nan();
-    let b_nan = b.is_nan();
-    match (a_nan, b_nan) {
-      (false, true) => Ordering::Less,
-      (true, false) => Ordering::Greater,
-      _ => Ordering::Equal,
-    }
-  }
-}
+use core::{borrow::Borrow, ops::Deref};
 
 pub struct SortedErr;
 

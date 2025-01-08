@@ -45,10 +45,7 @@
 //! with otherwise generic code.  There's also a [`ZeroCopyGlyph`] trait for
 //! those types which have a regular glyph type associated with them as well.
 //! See the documentation for [`BasicGlyph`] for more details.
-use crate::{
-  util::{collate_f32, collate_f64},
-  GlyphErr, GlyphType,
-};
+use crate::{GlyphErr, GlyphType};
 use core::{
   fmt::Debug,
   hint::unreachable_unchecked,
@@ -766,7 +763,7 @@ gen_zc_prim!(
   F32,
   f32::from_le_bytes,
   f32::to_le_bytes,
-  collate_f32,
+  f32::total_cmp,
   F32,
   Float
 );
@@ -775,7 +772,7 @@ gen_zc_prim!(
   F64,
   f64::from_le_bytes,
   f64::to_le_bytes,
-  collate_f64,
+  f64::total_cmp,
   F64,
   Float
 );
