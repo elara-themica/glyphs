@@ -35,8 +35,8 @@ use core::{
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct GlyphHeader {
-  flags:    u8,
-  reserved: u8,
+  version:  u8,
+  padding:  u8,
   type_id:  [u8; 2],
   len_data: [u8; 4],
 }
@@ -55,7 +55,7 @@ impl GlyphHeader {
   const PADDING_BITS: u8 = 0b0000_0111;
   /// Bits to store the glyph version, for future compatibility.  Currently,
   /// these bits must be zero.
-  const VERSION_BITS: u8 = 0b1111_0000;
+  const VERSION_BITS: u8 = 0b0000_1111;
 
   /// Creates a new glyph header, containing content_len bytes.
   ///
@@ -70,11 +70,11 @@ impl GlyphHeader {
     if content_len as u64 <= Self::MAX_CONTENT_LEN {
       let padded_len = (content_len + 7) & !7;
       let padding = padded_len - content_len; // always 0-7.
-      let flags = (padding as u8) | Self::LONG_BIT; // ver0, long, padding
+      let padding = (padding as u8) | Self::LONG_BIT; // add long bit
       let word_len = (padded_len >> 3) as u32;
       Ok(GlyphHeader {
-        flags,
-        reserved: 0,
+        version: 0,
+        padding,
         type_id: (glyph_type as u16).to_le_bytes(),
         len_data: word_len.to_le_bytes(),
       })
@@ -89,8 +89,8 @@ impl GlyphHeader {
     content: [u8; 4],
   ) -> GlyphHeader {
     GlyphHeader {
-      flags:    0, // ver0, padding0, long0
-      reserved: 0,
+      version:  0,
+      padding:  0,
       type_id:  (glyph_type as u16).to_le_bytes(),
       len_data: content,
     }
@@ -99,7 +99,7 @@ impl GlyphHeader {
   /// Returns the GLIFS version specified in the header.
   #[inline(always)]
   pub const fn version(self) -> u8 {
-    (self.flags & Self::VERSION_BITS) >> 4
+    self.version & Self::VERSION_BITS
   }
 
   /// Returns the numerical glyph type id.  See [`GlyphType`].
@@ -129,7 +129,7 @@ impl GlyphHeader {
   /// Returns `true` iff this header describes a short glyph.
   #[inline(always)]
   pub const fn is_short(self) -> bool {
-    (self.flags & Self::LONG_BIT) == 0
+    (self.padding & Self::LONG_BIT) == 0
   }
 
   /// Returns the length of the glyph's content, in bytes.
@@ -141,7 +141,7 @@ impl GlyphHeader {
   /// - The content length for short glyphs will be zero.
   #[inline(always)]
   pub const fn content_len(self) -> usize {
-    let len_factor = (self.flags & Self::LONG_BIT) as u64;
+    let len_factor = (self.padding & Self::LONG_BIT) as u64;
     let content_words = u32::from_le_bytes(self.len_data) as u64;
     (content_words * len_factor) as usize
   }
@@ -151,7 +151,7 @@ impl GlyphHeader {
   /// This value is typically needed for types which require their length to
   /// be specified in exact number of bytes, such as a string.
   pub const fn padding(self) -> usize {
-    (self.flags & Self::PADDING_BITS) as usize
+    (self.padding & Self::PADDING_BITS) as usize
   }
 
   /// Returns the length of the glyph, in bytes, including the header.
