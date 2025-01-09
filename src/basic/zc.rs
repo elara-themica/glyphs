@@ -25,9 +25,9 @@ use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 /// from the glyph header.
 ///
 // TODO: Write doc example.
-pub struct ZcG<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
+pub struct BasicGlyph<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
 
-impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for ZcG<G, T> {
+impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(T::GLYPH_TYPE_ID)?;
     if size_of::<T>() > 4 {
@@ -39,7 +39,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for ZcG<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Deref for ZcG<G, T> {
+impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
   type Target = T;
 
   fn deref(&self) -> &Self::Target {
@@ -55,7 +55,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> Deref for ZcG<G, T> {
   }
 }
 
-impl<'a, T: ZeroCopyGlyph> ZcG<ParsedGlyph<'a>, T> {
+impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
   /// Returns a reference to the target type from the underlying buffer (i.e.,
   /// not also this `BasicGlyph`.
   pub fn get_parsed(&self) -> &'a T {
@@ -73,7 +73,7 @@ impl<'a, T: ZeroCopyGlyph> ZcG<ParsedGlyph<'a>, T> {
 
 #[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Debug)]
 #[repr(packed)]
-pub(crate) struct ZcVecGHeader {
+pub(crate) struct BasicVecGlyphHeader {
   reserved: u8,
 
   /// The number of dimensions in a multidimensional array.
@@ -88,13 +88,13 @@ pub(crate) struct ZcVecGHeader {
   reserved2: [u8; 2],
 }
 
-impl ZcVecGHeader {
+impl BasicVecGlyphHeader {
   pub(crate) fn tensor_rank(&self) -> usize {
     self.tensor_rank as usize
   }
 }
 
-impl ZcVecGHeader {
+impl BasicVecGlyphHeader {
   pub fn new_vec<T: HasZeroCopyID>() -> Result<Self, GlyphErr> {
     let type_len = U16::from(
       u16::try_from(size_of::<T>())
@@ -127,7 +127,7 @@ impl ZcVecGHeader {
   }
 }
 
-unsafe impl ZeroCopy for ZcVecGHeader {}
+unsafe impl ZeroCopy for BasicVecGlyphHeader {}
 
 /// A vector of a basic zero-copy type, e.g., a [`U32`].
 ///
@@ -146,14 +146,14 @@ unsafe impl ZeroCopy for ZcVecGHeader {}
 /// from the glyph header.
 ///
 
-pub struct ZcVecG<G: Glyph, T: ZeroCopy> {
+pub struct BasicVecGlyph<G: Glyph, T: ZeroCopy> {
   glyph:          G,
-  header:         NonNull<ZcVecGHeader>,
+  header:         NonNull<BasicVecGlyphHeader>,
   tensor_lengths: NonNull<[U32]>,
   data:           NonNull<[T]>,
 }
 
-impl<G: Glyph, T: ZeroCopy> ZcVecG<G, T> {
+impl<G: Glyph, T: ZeroCopy> BasicVecGlyph<G, T> {
   /// Returns the ZeroCopy type contained in the glyph.
   pub fn type_id(&self) -> ZeroCopyTypeID {
     unsafe { self.header.as_ref().basic_type_id.into() }
@@ -170,12 +170,12 @@ impl<G: Glyph, T: ZeroCopy> ZcVecG<G, T> {
   }
 }
 
-impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for ZcVecG<G, T> {
+impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for BasicVecGlyph<G, T> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(GlyphType::VecBasic)?;
     let cursor = &mut 0;
     let content = glyph.content();
-    let header = ZcVecGHeader::bbrf(content, cursor)?;
+    let header = BasicVecGlyphHeader::bbrf(content, cursor)?;
     header.confirm_zero_copy_type(T::ZERO_COPY_ID)?;
     let tensor_lengths = NonNull::from(U32::bbrfs(
       content,
@@ -194,7 +194,7 @@ impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for ZcVecG<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopy> Deref for ZcVecG<G, T> {
+impl<G: Glyph, T: ZeroCopy> Deref for BasicVecGlyph<G, T> {
   type Target = [T];
 
   fn deref(&self) -> &Self::Target {
@@ -203,7 +203,7 @@ impl<G: Glyph, T: ZeroCopy> Deref for ZcVecG<G, T> {
   }
 }
 
-impl<'a, T: ZeroCopy> ZcVecG<ParsedGlyph<'a>, T> {
+impl<'a, T: ZeroCopy> BasicVecGlyph<ParsedGlyph<'a>, T> {
   /// Get a reference to the contained array, but with a lifetime bound by
   /// the underlying byte buffer.
   pub fn get_parsed(&self) -> &'a [T] {
@@ -213,7 +213,7 @@ impl<'a, T: ZeroCopy> ZcVecG<ParsedGlyph<'a>, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopy + Debug> Debug for ZcVecG<G, T> {
+impl<G: Glyph, T: ZeroCopy + Debug> Debug for BasicVecGlyph<G, T> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     if !f.alternate() {
       core::fmt::Debug::fmt(self.deref(), f)

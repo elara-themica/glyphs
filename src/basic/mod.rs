@@ -53,7 +53,7 @@ where
   fn from_glyph(source: B) -> Result<Self, GlyphErr> {
     let type_id = source.header().glyph_type();
     if type_id == GlyphType::Unit {
-      let unit = UnitG::from_glyph(source)?;
+      let unit = UnitGlyph::from_glyph(source)?;
       if unit.type_id().eq(&UnitTypes::Nothing) {
         Ok(None)
       } else {
@@ -198,7 +198,7 @@ mod test {
       let cursor = &mut 0;
       loop {
         let glyph = glyph_read(&buf, cursor)?;
-        let decoded = IntG::from_glyph(glyph)?;
+        let decoded = IntGlyph::from_glyph(glyph)?;
         outside = *decoded;
       }
       #[allow(unreachable_code)]

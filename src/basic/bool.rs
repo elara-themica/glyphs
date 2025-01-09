@@ -11,9 +11,9 @@ use core::{
 
 /// A glyph containing a boolean value.
 ///
-pub struct BoolG<G: Glyph>(G);
+pub struct BooleanGlyph<G: Glyph>(G);
 
-impl<G: Glyph> BoolG<G> {
+impl<G: Glyph> BooleanGlyph<G> {
   /// Fetches the glyph's truth value.
   ///
   /// `BoolGlyph`s are short glyphs, with the content stored in the length
@@ -24,14 +24,14 @@ impl<G: Glyph> BoolG<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for BoolG<G> {
+impl<G: Glyph> FromGlyph<G> for BooleanGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.confirm_type(GlyphType::Bool)?;
-    Ok(BoolG(source))
+    Ok(BooleanGlyph(source))
   }
 }
 
-impl<G: Glyph> Debug for BoolG<G> {
+impl<G: Glyph> Debug for BooleanGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     if !f.alternate() {
       Debug::fmt(&self.get(), f)
@@ -43,21 +43,21 @@ impl<G: Glyph> Debug for BoolG<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for BoolG<G> {
+impl<G: Glyph> PartialEq for BooleanGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.get() == other.get()
   }
 }
 
-impl<G: Glyph> Eq for BoolG<G> {}
+impl<G: Glyph> Eq for BooleanGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for BoolG<G> {
+impl<G: Glyph> PartialOrd for BooleanGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for BoolG<G> {
+impl<G: Glyph> Ord for BooleanGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
   }
@@ -456,14 +456,14 @@ where
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for BitVec<&'a [u8]> {
   fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    let bvg = BitVecG::<ParsedGlyph<'a>>::from_glyph(source)?;
+    let bvg = BitVecGlyph::<ParsedGlyph<'a>>::from_glyph(source)?;
     let bv = bvg.bit_vector_parsed();
     Ok(bv)
   }
 }
 
 /// A glyph containing a dense (8 bits per byte) bit vector.
-pub struct BitVecG<G: Glyph> {
+pub struct BitVecGlyph<G: Glyph> {
   // SAFETY: bit_vector references this.
   #[allow(dead_code)]
   glyph:      G,
@@ -471,7 +471,7 @@ pub struct BitVecG<G: Glyph> {
   bit_vector: BitVec<&'static [u8]>,
 }
 
-impl<G: Glyph> BitVecG<G> {
+impl<G: Glyph> BitVecGlyph<G> {
   const BIT_PADDING_MASK: u8 = 0b0000_0111;
 
   /// Returns the actual bit vector contained in this glyph.
@@ -483,7 +483,7 @@ impl<G: Glyph> BitVecG<G> {
   }
 }
 
-impl<'a> BitVecG<ParsedGlyph<'a>> {
+impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
   /// Returns the actual bit vector contained in this glyph, but with a lifetime
   /// bound only to the underlying buffer.
   ///
@@ -494,7 +494,7 @@ impl<'a> BitVecG<ParsedGlyph<'a>> {
   }
 }
 
-impl<G: Glyph> Debug for BitVecG<G> {
+impl<G: Glyph> Debug for BitVecGlyph<G> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut df = f.debug_struct("BitVectorGlyph");
     df.field("num_bits", &self.bit_vector.len());
@@ -507,7 +507,7 @@ impl<G: Glyph> Debug for BitVecG<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for BitVecG<G> {
+impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, GlyphErr> {
     source.header().confirm_type(GlyphType::VecBool)?;
     let content = source.content();
@@ -576,21 +576,21 @@ impl ToGlyph for [bool] {
   }
 }
 
-impl<G: Glyph> PartialEq for BitVecG<G> {
+impl<G: Glyph> PartialEq for BitVecGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> Eq for BitVecG<G> {}
+impl<G: Glyph> Eq for BitVecGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for BitVecG<G> {
+impl<G: Glyph> PartialOrd for BitVecGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for BitVecG<G> {
+impl<G: Glyph> Ord for BitVecGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.bit_vector.cmp(&other.bit_vector)
   }
@@ -609,7 +609,7 @@ mod tests {
     // Vector of bool
     let bools = vec![true, false, true, false, true, true, false, true];
     let bools_g = glyph_new(&bools[..]).unwrap();
-    let bools_g = BitVecG::<_>::from_glyph(bools_g).unwrap();
+    let bools_g = BitVecGlyph::<_>::from_glyph(bools_g).unwrap();
     for (bools_val, bools_g_val) in
       bools.iter().zip(bools_g.bit_vector().iter())
     {
@@ -625,7 +625,7 @@ mod tests {
     // Basic BitVecG ops
     let bvz_g = glyph_new(&bvz).unwrap();
     // dbg!(&bvz_g);
-    let bvz_g = BitVecG::<_>::from_glyph(bvz_g).unwrap();
+    let bvz_g = BitVecGlyph::<_>::from_glyph(bvz_g).unwrap();
     assert_eq!(bvz_g.bit_vector(), &bvz);
 
     // Test with varying bit lengths covering every value modulo 8

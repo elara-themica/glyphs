@@ -155,7 +155,13 @@ pub enum Language {
 
 /// These are full locales, language + region.  Currently, unimplemented.
 ///
-/// TODO: To populate this enum will depend on the encoding of the [`StringG`]
+// Populating this enum will require some care.  The first (least) significant
+// byte will come from the language field, while the most significant two bits
+// of the second byte will specify the encoding (and thus be masked off before
+// reading this.  This means the value assigned to the full locale should match
+// the language, leaving the upper byte to vary
+///
+/// Populating this enum will depend on the encoding of the [`StringG`]
 /// type for the `u16` values and an external reference source for the list of
 /// active language / location pairs.
 #[allow(missing_docs, non_camel_case_types)]

@@ -10,30 +10,30 @@ use core::mem::transmute;
 /// further information, e.g., [`()`] or [`Option::None`].  For the list of
 /// known unit types, see `enum` [`UnitTypes`] .
 #[derive(Copy, Clone, Debug)]
-pub struct UnitG<G: Glyph>(G, UnitTypes);
+pub struct UnitGlyph<G: Glyph>(G, UnitTypes);
 
-impl<G: Glyph> UnitG<G> {
+impl<G: Glyph> UnitGlyph<G> {
   /// Returns the specific unit type represented by the glyph.
   pub fn type_id(&self) -> &UnitTypes {
     &self.1
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for UnitG<G> {
+impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(GlyphType::Unit)?;
     if glyph.header().is_short() {
       let type_id = u32::from_le_bytes(*glyph.header().short_content());
       // SAFETY: repr(u32)
       let type_id: UnitTypes = unsafe { transmute::<_, _>(type_id) };
-      Ok(UnitG(glyph, type_id))
+      Ok(UnitGlyph(glyph, type_id))
     } else {
       err!(debug, Err(GlyphErr::UnitLength(glyph.content().len())))
     }
   }
 }
 
-/// A list of unit types that can be represented by a unit glyph ([`UnitG`]).
+/// A list of unit types that can be represented by a unit glyph ([`UnitGlyph`]).
 ///
 /// See the Wikipedia article [Unit Types](https://en.wikipedia.org/wiki/Unit_type)
 /// for more information.
@@ -157,7 +157,7 @@ mod tests {
     std::dbg!(&nothing_glyph);
     let ut = UnitTypes::from_glyph(nothing_glyph.borrow()).unwrap();
     assert_eq!(ut, UnitTypes::Nothing);
-    let ug = UnitG::from_glyph(nothing_glyph.borrow()).unwrap();
+    let ug = UnitGlyph::from_glyph(nothing_glyph.borrow()).unwrap();
     assert_eq!(ug.type_id(), &UnitTypes::Nothing);
   }
 }

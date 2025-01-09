@@ -148,7 +148,7 @@ where
 mod test {
 
   use super::*;
-  use crate::{basic::ZcVecG, glyph_new};
+  use crate::{basic::BasicVecGlyph, glyph_new};
   use alloc::vec::Vec;
   use std::dbg;
 
@@ -178,7 +178,7 @@ mod test {
     dbg!(&glyph);
     let uuids_decoded = <&[Uuid]>::from_glyph(glyph.borrow())?;
     assert_eq!(uuids_decoded, &uuids);
-    let vec_uuid_glyph = ZcVecG::<_, Uuid>::from_glyph(glyph.borrow())?;
+    let vec_uuid_glyph = BasicVecGlyph::<_, Uuid>::from_glyph(glyph.borrow())?;
     assert_eq!(&*vec_uuid_glyph, &uuids[..]);
     let uuids_parsed = vec_uuid_glyph.get_parsed();
     drop(vec_uuid_glyph);

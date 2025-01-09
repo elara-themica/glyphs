@@ -1,5 +1,5 @@
 //! Glyph (de-)serialization for the [`BTreeMap`] type and the dynamic
-//! [`MapG`].
+//! [`MapGlyph`].
 
 use crate::{
   glyph_close, glyph_read,
@@ -27,7 +27,7 @@ pub(crate) struct MapGlyphHeader {
 }
 
 impl MapGlyphHeader {
-  /// Creates a new type-specific header for a [`MapG`].
+  /// Creates a new type-specific header for a [`MapGlyph`].
   ///
   /// As the values for `format_version` and `reserved` are fixed, only the
   /// number of glyphs present in the `VecGlyph` must be specified.
@@ -75,7 +75,7 @@ where
 }
 
 /// A glyph-based associative array.
-pub struct MapG<G>
+pub struct MapGlyph<G>
 where
   G: Glyph,
 {
@@ -83,7 +83,7 @@ where
   offsets: NonNull<[GlyphOffset]>,
 }
 
-impl<G> FromGlyph<G> for MapG<G>
+impl<G> FromGlyph<G> for MapGlyph<G>
 where
   G: Glyph,
 {
@@ -105,7 +105,7 @@ where
   }
 }
 
-impl<G> MapG<G>
+impl<G> MapGlyph<G>
 where
   G: Glyph,
 {
@@ -153,7 +153,7 @@ where
   }
 }
 
-impl<'a> MapG<ParsedGlyph<'a>> {
+impl<'a> MapGlyph<ParsedGlyph<'a>> {
   /// Returns the _index_-th Key/Value pair with lifetimes bound only to the
   /// glyph's backing buffer.
   pub fn get_parsed(
@@ -188,7 +188,7 @@ impl<'a> MapG<ParsedGlyph<'a>> {
   }
 }
 
-impl<G> Debug for MapG<G>
+impl<G> Debug for MapGlyph<G>
 where
   G: Glyph,
 {
@@ -202,7 +202,7 @@ where
   }
 }
 
-/// Iterates through the entries of a [`MapG`]
+/// Iterates through the entries of a [`MapGlyph`]
 #[derive(Copy, Clone)]
 pub(crate) struct IterMap<'a> {
   offsets: &'a [GlyphOffset],
@@ -274,7 +274,7 @@ impl MapGlyphLenCalc {
     self.items_len = self.items_len.saturating_add(value_len);
   }
 
-  /// Returns the total length of the [`MapG`]
+  /// Returns the total length of the [`MapGlyph`]
   pub fn finish(self) -> usize {
     size_of::<GlyphHeader>()
       + round_to_word(
@@ -363,7 +363,7 @@ mod test {
     let glyph = glyph_new(&map)?;
     // std::dbg!(&glyph);
 
-    let decoded = MapG::from_glyph(glyph)?;
+    let decoded = MapGlyph::from_glyph(glyph)?;
     // std::dbg!(&map_glyph);
 
     // Checking Values (and sorted order)
