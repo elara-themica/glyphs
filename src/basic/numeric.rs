@@ -1,9 +1,11 @@
 use crate::{
   zerocopy::{ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
-  FromGlyph, Glyph, GlyphErr,
+  EncodedGlyph, FromGlyph, Glyph, GlyphErr,
   GlyphType::{Float, SignedInt, UnsignedInt},
+  ParsedGlyph,
 };
-use std::ops::Deref;
+use core::fmt::{Debug, Formatter};
+use std::{cmp::Ordering, ops::Deref};
 
 /// Signed integers
 ///
@@ -109,6 +111,32 @@ impl<G: Glyph> TryFrom<IntGlyph<G>> for i8 {
   }
 }
 
+impl<G: Glyph> PartialEq for IntGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.1 == other.1
+  }
+}
+
+impl<G: Glyph> Eq for IntGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for IntGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for IntGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for IntGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
 /// A glyph containing an unsigned integer.
 ///
 /// Currently, values up to a `u128` are supported, which is what will be
@@ -199,6 +227,38 @@ impl<G: Glyph> TryFrom<UIntGlyph<G>> for u8 {
   }
 }
 
+impl<G: Glyph> PartialEq for UIntGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.1 == other.1
+  }
+}
+
+impl<G: Glyph> Eq for UIntGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for UIntGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for UIntGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
+  }
+}
+
+impl<G: Glyph> Debug for UIntGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    self.1.fmt(f)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for UIntGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
 /// A glyph containing a floating point number.
 ///
 /// Currently, only `f32` and `f64` are supported, the latter of which is
@@ -244,6 +304,38 @@ impl<G: Glyph> Deref for FloatGlyph<G> {
 impl<G: Glyph> From<FloatGlyph<G>> for f32 {
   fn from(value: FloatGlyph<G>) -> Self {
     value.1 as f32
+  }
+}
+
+impl<G: Glyph> PartialEq for FloatGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for FloatGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for FloatGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for FloatGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    f64::total_cmp(&self.1, &other.1)
+  }
+}
+
+impl<G: Glyph> Debug for FloatGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    self.1.fmt(f)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for FloatGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    todo!()
   }
 }
 

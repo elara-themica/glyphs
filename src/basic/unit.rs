@@ -1,8 +1,10 @@
 use crate::{
   zerocopy::{ZeroCopy, U32},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::mem::transmute;
+use std::cmp::Ordering;
 
 /// Glyph for Unit Types
 ///
@@ -143,6 +145,32 @@ where
         })
       )
     }
+  }
+}
+
+impl<G: Glyph> PartialEq for UnitGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for UnitGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for UnitGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for UnitGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for UnitGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
