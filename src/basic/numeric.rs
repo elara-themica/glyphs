@@ -335,7 +335,7 @@ impl<G: Glyph> Debug for FloatGlyph<G> {
 
 impl<G: Glyph> EncodedGlyph for FloatGlyph<G> {
   fn glyph(&self) -> ParsedGlyph<'_> {
-    todo!()
+    self.0.borrow()
   }
 }
 

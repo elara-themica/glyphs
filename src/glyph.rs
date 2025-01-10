@@ -1051,7 +1051,7 @@ where
 /// The mapping of glyph types to `u16` values for the `type_id` field of
 /// [`GlyphHeader`].
 #[allow(missing_docs)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u16)]
 #[non_exhaustive]
 pub enum GlyphType {

@@ -127,7 +127,9 @@ pub trait HasZeroCopyID: ZeroCopy {
 }
 
 /// [`ZeroCopy`] types with a corresponding glyph.
-pub trait ZeroCopyGlyph: ZeroCopy {
+pub trait ZeroCopyGlyph:
+  Debug + Eq + PartialEq + PartialOrd + Ord + ZeroCopy
+{
   /// The [`GlyphType`] used when a zero-copy type is written as a glyph.
   ///
   /// E.g., [`U64`] has a glyph type of [`GlyphType::UnsignedInt`].

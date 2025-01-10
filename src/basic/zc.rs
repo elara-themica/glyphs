@@ -3,10 +3,10 @@ use crate::{
     bounds_check, round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyGlyph,
     ZeroCopyTypeID, U16, U32,
   },
-  FromGlyph, Glyph, GlyphErr, GlyphType, ParsedGlyph,
+  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphType, ParsedGlyph,
 };
 use core::fmt::{Debug, Formatter};
-use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
+use std::{cmp::Ordering, marker::PhantomData, ops::Deref, ptr::NonNull};
 
 /// A single instance of a basic zero-copy type, e.g., a [`U32`].
 ///
@@ -68,6 +68,42 @@ impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
       };
       T::bbrf_u(buf, &mut 0)
     }
+  }
+}
+
+impl<G: Glyph, T: ZeroCopyGlyph> PartialEq for BasicGlyph<G, T> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph, T: ZeroCopyGlyph> Eq for BasicGlyph<G, T> {}
+
+impl<G: Glyph, T: ZeroCopyGlyph> PartialOrd for BasicGlyph<G, T> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph, T: ZeroCopyGlyph> Ord for BasicGlyph<G, T> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self
+      .glyph()
+      .glyph_type()
+      .cmp(&other.glyph().glyph_type())
+      .then_with(|| self.deref().cmp(other.deref()))
+  }
+}
+
+impl<G: Glyph, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    Debug::fmt(self.deref(), f)
+  }
+}
+
+impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph for BasicGlyph<G, T> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
@@ -170,7 +206,11 @@ impl<G: Glyph, T: ZeroCopy> BasicVecGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: HasZeroCopyID> FromGlyph<G> for BasicVecGlyph<G, T> {
+impl<G, T> FromGlyph<G> for BasicVecGlyph<G, T>
+where
+  G: Glyph,
+  T: Debug + Eq + PartialEq + PartialOrd + Ord + ZeroCopy + HasZeroCopyID,
+{
   fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
     glyph.confirm_type(GlyphType::VecBasic)?;
     let cursor = &mut 0;
