@@ -194,15 +194,13 @@ mod test {
 
     // Read all the glyphs from the buffer
     b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
+    b.iter::<_, _>(|| -> Result<(), GlyphErr> {
       let cursor = &mut 0;
       loop {
         let glyph = glyph_read(&buf, cursor)?;
         let decoded = IntGlyph::from_glyph(glyph)?;
         outside = *decoded;
       }
-      #[allow(unreachable_code)]
-      Ok::<(), GlyphErr>(())
     });
     Ok(())
   }
@@ -238,13 +236,11 @@ mod test {
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
 
     b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
+    b.iter(|| -> Result<(), GlyphErr> {
       let cursor = &mut 0;
       loop {
         value.glyph_encode(target, cursor)?
       }
-      #[allow(unreachable_code)]
-      Result::<(), GlyphErr>::Ok(())
     });
 
     let cursor = &mut 0;
@@ -301,13 +297,11 @@ mod test {
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
 
     b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
+    b.iter(|| -> Result<(), GlyphErr> {
       let cursor = &mut 0;
       loop {
         value.glyph_encode(buf.as_mut(), cursor)?
       }
-      #[allow(unreachable_code)]
-      Ok::<(), GlyphErr>(())
     });
 
     let cursor = &mut 0;
