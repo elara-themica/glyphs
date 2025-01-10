@@ -434,6 +434,17 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
   }
 }
 
+/// Glyphs that have been encoded.
+///
+/// These types represent glyphs which have been encoded / serialized.  They
+/// may be _partially_ decoded, but this typically involves just a type ID check
+/// and minimal metadata processing (i.e., keeping a reference to an array of
+/// offsets).
+pub trait EncodedGlyph: PartialEq + Eq + PartialOrd + Ord + Debug {
+  /// Returns a reference to the underlying glyph
+  fn glyph(&self) -> ParsedGlyph<'_>;
+}
+
 /// A glyph parsed from a byte buffer
 #[derive(Clone, Copy)]
 pub struct ParsedGlyph<'a> {

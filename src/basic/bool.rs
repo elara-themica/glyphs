@@ -2,7 +2,8 @@ use crate::{
   glyph::glyph_close,
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{round_to_word, ZeroCopy},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::{
   cmp::Ordering,
@@ -60,6 +61,12 @@ impl<G: Glyph> PartialOrd for BooleanGlyph<G> {
 impl<G: Glyph> Ord for BooleanGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for BooleanGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
@@ -533,6 +540,12 @@ impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
         bit_vector,
       })
     }
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for BitVecGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
   }
 }
 

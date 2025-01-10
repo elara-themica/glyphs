@@ -221,7 +221,7 @@ mod test {
     assert_eq!(read_string.as_str(), text);
 
     let str_glyph = StringGlyph::from_glyph(glyph.borrow())?;
-    assert_eq!(str_glyph.get(), text);
+    assert_eq!(str_glyph.get_str(), text);
 
     Ok(())
   }

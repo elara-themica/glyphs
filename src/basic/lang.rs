@@ -1,6 +1,7 @@
 use crate::{
   zerocopy::{bounds_check, round_to_word, ZeroCopy, U32, U64},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use alloc::boxed::Box;
 use core::{
@@ -255,10 +256,15 @@ where
   G: Glyph,
 {
   /// The string contained in the glyph.
-  pub fn get(&self) -> &str {
+  pub fn get_str(&self) -> &str {
     let bytes = self.0.content();
     // Validity was already checked during `glyph_decode`.
     unsafe { core::str::from_utf8_unchecked(bytes) }
+  }
+
+  /// Returns the raw bytes of the string
+  pub fn get_bytes(&self) -> &[u8] {
+    self.0.content()
   }
 }
 
@@ -267,7 +273,7 @@ where
   G: Glyph,
 {
   fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "Utf8Glyph(\"{}\")", self.get())
+    write!(f, "Utf8Glyph(\"{}\")", self.get_str())
   }
 }
 
@@ -285,7 +291,7 @@ where
 
 impl<G: Glyph> PartialEq for StringGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
-    self.get() == other.get()
+    self.get_str() == other.get_str()
   }
 }
 
@@ -299,9 +305,16 @@ impl<G: Glyph> PartialOrd for StringGlyph<G> {
 
 impl<G: Glyph> Ord for StringGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
-    let a = self.get();
-    let b = other.get();
-    a.cmp(b)
+    let a = self.get_bytes();
+    let b = other.get_bytes();
+    let c = COLLATOR.get();
+    c.compare_utf8(a, b)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for StringGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
@@ -381,6 +394,12 @@ impl<G: Glyph> PartialOrd for CharGlyph<G> {
 impl<G: Glyph> Ord for CharGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for CharGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
