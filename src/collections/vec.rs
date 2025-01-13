@@ -14,7 +14,9 @@
 use crate::{
   glyph_close, glyph_read,
   util::debug::CloneDebugIterator,
-  zerocopy::{round_to_word, ZeroCopy, U32},
+  zerocopy::{
+    round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16, U32,
+  },
   FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
   ToGlyph,
 };
@@ -370,11 +372,193 @@ impl<'a> VecGlyphSerializer<'a> {
   }
 }
 
+#[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Debug)]
+#[repr(packed)]
+pub(crate) struct BasicVecGlyphHeader {
+  /// A type identifier.  See [`ZeroCopyTypeID`].
+  pub basic_type_id: U16,
+
+  /// The number of dimensions in a multidimensional array.
+  pub tensor_rank: u8,
+
+  reserved: u8,
+}
+
+impl BasicVecGlyphHeader {
+  pub(crate) fn tensor_rank(&self) -> usize {
+    self.tensor_rank as usize
+  }
+}
+
+impl BasicVecGlyphHeader {
+  pub fn new<T: HasZeroCopyID>(tensor_rank: usize) -> Result<Self, GlyphErr> {
+    let tensor_rank = u8::try_from(tensor_rank)
+      .map_err(|_t| GlyphErr::TensorRankOverflow(tensor_rank))?;
+
+    Ok(Self {
+      basic_type_id: T::ZERO_COPY_ID.into(),
+      tensor_rank,
+      reserved: Default::default(),
+    })
+  }
+
+  pub fn confirm_zero_copy_type(
+    &self,
+    expected: ZeroCopyTypeID,
+  ) -> Result<(), GlyphErr> {
+    let observed = self.get_zero_copy_type_id();
+    if observed == expected {
+      Ok(())
+    } else {
+      Err(GlyphErr::UnexpectedZeroCopyType { expected, observed })
+    }
+  }
+
+  pub fn get_zero_copy_type_id(&self) -> ZeroCopyTypeID {
+    self.basic_type_id.into()
+  }
+}
+
+unsafe impl ZeroCopy for BasicVecGlyphHeader {}
+
+/// A vector of a basic zero-copy type, e.g., a [`U32`].
+///
+/// The type is generic over the type of glyph `G`, allowing it to be
+/// constructed from borrowed or owned data, and over the corresponding type
+/// `T`, which must implement [`ZeroCopyGlyph`].  This requires that the type
+/// be readable directly from a string of bytes (i.e., is [`ZeroCopy`]) as well
+/// as providing an associated [`GlyphType`].
+///
+/// This type can only be constructed via the [`FromGlyph`] trait, which will
+/// check that (1) type ID of the source glyph matches that of the target type,
+/// and (2) will perform a bounds check to ensure the glyph is large enough to
+/// contain an instance of `T`.
+///
+/// Types with a size of <= 4 bytes will be written as short glyphs and read
+/// from the glyph header.
+///
+pub struct BasicVecGlyph<G: Glyph> {
+  glyph:          G,
+  header:         NonNull<BasicVecGlyphHeader>,
+  tensor_lengths: NonNull<[U32]>,
+  data:           NonNull<[u8]>,
+}
+
+impl<G: Glyph> BasicVecGlyph<G> {
+  /// Returns the glyph's type-specific header.
+  fn header(&self) -> BasicVecGlyphHeader {
+    unsafe { self.header.as_ref().clone() }
+  }
+
+  /// Returns the ZeroCopy type contained in the glyph.
+  pub fn type_id(&self) -> ZeroCopyTypeID {
+    self.header().basic_type_id.into()
+  }
+
+  /// Returns `Err` the glyph does not contain a vector of the specified type.
+  pub fn confirm_type<T: HasZeroCopyID>(&self) -> Result<(), GlyphErr> {
+    self.header().confirm_zero_copy_type(T::ZERO_COPY_ID)
+  }
+
+  /// Returns the array's tensor rank.
+  ///
+  /// A tensor's rank is the number of dimensions into which the vector is
+  /// split.
+  ///
+  /// - A scalar is a tensor of rank 0.
+  /// - A vector is a tensor of rank 1.
+  /// - A matrix is a tensor of rank 2.
+  /// - And so on...
+  pub fn tensor_rank(&self) -> usize {
+    self.header().tensor_rank as usize
+  }
+
+  /// Returns the size of each dimension of the tensor.
+  pub fn dimension_lengths(&self) -> &[U32] {
+    unsafe { self.tensor_lengths.as_ref() }
+  }
+
+  /// Returns the raw bytes from the vector.
+  ///
+  /// This is the entire contents of the glyph, minus the header and tensor
+  /// dimension lengths.
+  pub fn as_bytes(&self) -> &[u8] {
+    unsafe { self.data.as_ref() }
+  }
+
+  /// Returns a reference to the vector of the specified type.
+  ///
+  /// Returns an error if the type ID of `[T]` does not match the type ID
+  /// stored in the glyph.
+  pub fn get<T: HasZeroCopyID>(&self) -> Result<&[T], GlyphErr> {
+    self.confirm_type::<T>()?;
+    let bytes = self.as_bytes();
+    let slice = T::bbrfs_i(bytes, &mut 0);
+    Ok(slice)
+  }
+}
+
+impl<G> FromGlyph<G> for BasicVecGlyph<G>
+where
+  G: Glyph,
+{
+  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
+    glyph.confirm_type(GlyphType::VecBasic)?;
+    let cursor = &mut 0;
+    let content = glyph.content();
+    let header = BasicVecGlyphHeader::bbrf(content, cursor)?;
+    let tensor_lengths =
+      NonNull::from(U32::bbrfs(content, cursor, header.tensor_rank())?);
+    *cursor = round_to_word(*cursor);
+    let data = NonNull::from(u8::bbrfs_i(content, cursor));
+    let header = NonNull::from(header);
+    Ok(Self {
+      glyph,
+      header,
+      tensor_lengths,
+      data,
+    })
+  }
+}
+
+impl<'a> BasicVecGlyph<ParsedGlyph<'a>> {
+  /// Get a reference to the contained array, but with a lifetime bound by
+  /// the underlying byte buffer.
+  pub fn as_bytes_parsed(&self) -> &'a [u8] {
+    // SAFETY: Glyph referenced is immutable, pinned, and result's lifetime is
+    //         bound by that of the underlying buffer.
+    unsafe { self.data.as_ref() }
+  }
+
+  /// Returns a reference to the vector of the specified type.
+  ///
+  /// Returns an error if the type ID of `[T]` does not match the type ID
+  /// stored in the glyph.
+  pub fn get_parsed<T: HasZeroCopyID>(&self) -> Result<&'a [T], GlyphErr> {
+    self.confirm_type::<T>()?;
+    let bytes = self.as_bytes_parsed();
+    let slice = T::bbrfs_i(bytes, &mut 0);
+    Ok(slice)
+  }
+}
+
+impl<G: Glyph> Debug for BasicVecGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    let mut df = f.debug_struct(core::any::type_name::<Self>());
+    df.field("type_id", &self.type_id());
+    df.field("tensor_rank", &self.tensor_rank());
+    df.field("dimension_lengths", &self.dimension_lengths());
+    df.field("bytes", &self.as_bytes());
+    df.finish()
+  }
+}
+
 #[cfg(test)]
 mod test {
   use super::*;
   use crate::{
-    basic::BasicVecGlyphHeader, glyph::glyph_new, util::BENCH_BUF_SIZE,
+    collections::vec::BasicVecGlyphHeader, glyph::glyph_new,
+    util::BENCH_BUF_SIZE,
   };
   use ::test::Bencher;
   use alloc::vec::Vec;

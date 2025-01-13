@@ -176,6 +176,7 @@ where
   let array = [ZCT::from(value); L];
   let slice = &array[..];
   let vg = crate::glyph_new(slice).unwrap();
+  std::dbg!(&vg);
   let decoded = <&[ZCT]>::from_glyph(vg.borrow()).unwrap();
   assert_eq!(slice, decoded);
 }

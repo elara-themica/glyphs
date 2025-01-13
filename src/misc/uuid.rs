@@ -56,7 +56,6 @@ impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a Uuid {
 }
 
 gen_prim_slice_to_glyph!(Uuid);
-
 gen_prim_slice_from_glyph_parsed!(Uuid);
 
 /// Glyph containing a UUID.
@@ -148,7 +147,7 @@ where
 mod test {
 
   use super::*;
-  use crate::{basic::BasicVecGlyph, glyph_new};
+  use crate::{collections::BasicVecGlyph, glyph_new};
   use alloc::vec::Vec;
   use std::dbg;
 
@@ -178,9 +177,9 @@ mod test {
     dbg!(&glyph);
     let uuids_decoded = <&[Uuid]>::from_glyph(glyph.borrow())?;
     assert_eq!(uuids_decoded, &uuids);
-    let vec_uuid_glyph = BasicVecGlyph::<_, Uuid>::from_glyph(glyph.borrow())?;
-    assert_eq!(&*vec_uuid_glyph, &uuids[..]);
-    let uuids_parsed = vec_uuid_glyph.get_parsed();
+    let vec_uuid_glyph = BasicVecGlyph::<_>::from_glyph(glyph.borrow())?;
+    assert_eq!(vec_uuid_glyph.get::<Uuid>()?, &uuids[..]);
+    let uuids_parsed = vec_uuid_glyph.get_parsed::<Uuid>()?;
     drop(vec_uuid_glyph);
     assert_eq!(uuids_parsed, &uuids[..]);
     drop(glyph);

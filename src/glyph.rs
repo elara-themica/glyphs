@@ -1439,6 +1439,7 @@ pub enum GlyphErr {
   /// Likely, this was caused by decoding an [`Option`] from a unit
   /// type other than [`UnitTypes::Nothing`].
   UnexpectedUnitType(UnitTypes),
+  TensorRankOverflow(usize),
 }
 
 impl Display for GlyphErr {
