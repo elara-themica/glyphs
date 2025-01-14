@@ -24,6 +24,7 @@ use core::{
 #[repr(packed)]
 pub(crate) struct MapGlyphHeader {
   num_items: U32,
+  reserved:  [u8; 4],
 }
 
 impl MapGlyphHeader {
@@ -36,6 +37,7 @@ impl MapGlyphHeader {
       .map_err(|_e| GlyphErr::MapLenOverflow { num_items })?;
     Ok(MapGlyphHeader {
       num_items: U32::from(num_items),
+      reserved:  Default::default(),
     })
   }
 
