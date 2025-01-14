@@ -21,6 +21,7 @@ use alloc::{
 };
 use core::{
   cell::UnsafeCell,
+  cmp::Ordering,
   fmt::{Debug, Display, Formatter},
   mem::{size_of, transmute, MaybeUninit},
   num::TryFromIntError,
@@ -443,6 +444,44 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
 pub trait EncodedGlyph: PartialEq + Eq + PartialOrd + Ord + Debug {
   /// Returns a reference to the underlying glyph
   fn glyph(&self) -> ParsedGlyph<'_>;
+
+  /// Sorting order for glyphs
+  ///
+  /// See [`GlyphSorting`] for more details.
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        GlyphSorting::byte_ord(self.glyph().borrow(), other.glyph().borrow())
+      },
+      GlyphSorting::Experimental => self.cmp(other),
+    }
+  }
+}
+
+/// Sorting methods used for glyphs.
+#[repr(u16)]
+pub enum GlyphSorting {
+  /// Sort glyphs first by Type ID, then as raw byte arrays.
+  ///
+  /// This is a simple fallback sorting, in contexts where more sophisticated
+  /// sorting is unavailable.
+  ByteOrder = 0,
+
+  /// Initial content-aware sorting efforts during PoC development.
+  Experimental = 1,
+}
+
+impl GlyphSorting {
+  /// Sort glyphs based on type ID and
+  pub fn byte_ord(a: ParsedGlyph<'_>, b: ParsedGlyph<'_>) -> Ordering {
+    let a_type = a.header().type_id;
+    let b_type = b.header().type_id;
+    if a_type != b_type {
+      a_type.cmp(&b_type)
+    } else {
+      a.content().cmp(b.content())
+    }
+  }
 }
 
 /// A glyph parsed from a byte buffer
