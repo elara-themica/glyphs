@@ -26,8 +26,7 @@ impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
     glyph.confirm_type(GlyphType::Unit)?;
     if glyph.header().is_short() {
       let type_id = u32::from_le_bytes(*glyph.header().short_content());
-      // SAFETY: repr(u32)
-      let type_id: UnitTypes = unsafe { transmute::<_, _>(type_id) };
+      let type_id = UnitTypes::from(type_id);
       Ok(UnitGlyph(glyph, type_id))
     } else {
       err!(debug, Err(GlyphErr::UnitLength(glyph.content().len())))
