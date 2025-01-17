@@ -13,8 +13,7 @@ use crate::{
 };
 use core::{
   fmt::{Debug, Formatter},
-  marker::PhantomData,
-  mem::{size_of, transmute},
+  mem::transmute,
 };
 
 // TODO: Test implementing these from another crate, and fully convert trait
@@ -83,15 +82,14 @@ macro_rules! hash_impls {
         target: &mut [u8],
         cursor: &mut usize,
       ) -> Result<(), $crate::GlyphErr> {
-        let glyph_header = $crate::GlyphHeader::new(
-          $crate::GlyphType::CryptoHash,
+        let content_len = $crate::zerocopy::round_to_word(
           core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
             + core::mem::size_of::<$hash_name>(),
-        )?;
-        $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
-        let hash_header = $crate::crypto::CryptoHashHeader::new(
-          $crate::crypto::CryptoHashType::$hash_tid,
         );
+        let glyph_header =
+          $crate::GlyphHeader::new($crate::GlyphType::CryptoHash, content_len)?;
+        $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
+        let hash_header = $crate::crypto::CryptoHashHeader::new::<$hash_name>();
         $crate::zerocopy::ZeroCopy::bbwr(&hash_header, target, cursor)?;
         $crate::zerocopy::ZeroCopy::bbwr(self, target, cursor)?;
         $crate::zerocopy::pad_to_word(target, cursor)?;
@@ -100,68 +98,33 @@ macro_rules! hash_impls {
 
       fn glyph_len(&self) -> usize {
         core::mem::size_of::<$crate::GlyphHeader>()
-          + core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
-          + $crate::zerocopy::round_to_word(core::mem::size_of::<$hash_name>())
+          + $crate::zerocopy::round_to_word(
+            core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
+              + core::mem::size_of::<$hash_name>(),
+          )
       }
     }
 
     impl<G: $crate::Glyph> $crate::FromGlyph<G> for $hash_name {
       fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
-        let hg = match $crate::crypto::HashGlyph::<_, $hash_name>::from_glyph(
-          glyph.borrow(),
-        ) {
-          Ok(hg) => hg,
-          Err(err) => {
-            let (_glyph, err) = err.into_parts();
-            return Err(err.into_fge(glyph));
-          },
-        };
-        let first =
-          match (*hg).get(0).ok_or($crate::GlyphErr::CryptoHashOverflow {
-            expected: 1usize,
-            observed: hg.len(),
-          }) {
-            Ok(first) => first,
-            Err(err) => return Err(err.into_fge(glyph)),
+        let hg =
+          match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.borrow()) {
+            Ok(hg) => hg,
+            Err(err) => {
+              let (_glyph, err) = err.into_parts();
+              return Err(err.into_fge(glyph));
+            },
           };
-        Ok(*first)
+        let hash = match hg.get::<$hash_name>() {
+          Ok(hash) => hash,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
+        Ok(*hash)
       }
     }
 
-    impl $crate::ToGlyph for [$hash_name] {
-      fn glyph_encode(
-        &self,
-        target: &mut [u8],
-        cursor: &mut usize,
-      ) -> Result<(), $crate::GlyphErr> {
-        let glyph_header = $crate::GlyphHeader::new(
-          $crate::GlyphType::CryptoHash,
-          core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
-            + core::mem::size_of::<$hash_name>() * self.len(),
-        )?;
-        $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
-        let hash_header = CryptoHashHeader::new(CryptoHashType::$hash_tid);
-        hash_header.bbwr(target, cursor)?;
-        $hash_name::bbwrs(self, target, cursor)?;
-        $crate::zerocopy::pad_to_word(target, cursor)?;
-        Ok(())
-      }
-
-      fn glyph_len(&self) -> usize {
-        core::mem::size_of::<$crate::GlyphHeader>()
-          + core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
-          + crate::zerocopy::round_to_word(size_of::<$hash_name>() * self.len())
-      }
-    }
-
-    impl<'a> $crate::FromGlyph<$crate::ParsedGlyph<'a>> for &'a [$hash_name] {
-      fn from_glyph(
-        glyph: ParsedGlyph<'a>,
-      ) -> Result<Self, $crate::FromGlyphErr<ParsedGlyph<'a>>> {
-        let hg = $crate::crypto::HashGlyph::<_, $hash_name>::from_glyph(glyph)?;
-        Ok($crate::crypto::HashGlyph::get_parsed(&hg))
-      }
-    }
+    gen_prim_slice_to_glyph!($hash_name);
+    gen_prim_slice_from_glyph_parsed!($hash_name);
   };
 }
 
@@ -175,14 +138,14 @@ pub type GlyphHashContext = blake3::Blake3Context;
 #[derive(Copy, Clone)]
 pub struct CryptoHashHeader {
   hash_type_id: U16,
-  reserved:     [u8; 6],
+  reserved:     [u8; 2],
 }
 
 impl CryptoHashHeader {
   /// Creates a new header.
-  pub fn new(hash_type: CryptoHashType) -> Self {
+  pub fn new<H: CryptographicHash>() -> Self {
     Self {
-      hash_type_id: hash_type.into(),
+      hash_type_id: H::HASH_TYPE_ID.into(),
       reserved:     Default::default(),
     }
   }
@@ -309,45 +272,63 @@ pub trait CryptographicHash:
 }
 
 /// Glyph containing one or more cryptographic hashes.
-pub struct HashGlyph<G: Glyph, H: CryptographicHash>(G, PhantomData<H>);
+pub struct HashGlyph<G: Glyph>(G, *const [u8]);
 
-impl<'a, H: CryptographicHash> HashGlyph<ParsedGlyph<'a>, H> {
-  pub(crate) fn get_parsed(&self) -> &'a [H] {
-    let content = self.0.content_parsed();
-    let cursor = &mut 0;
-    *cursor += size_of::<CryptoHashHeader>();
-    H::bbrfs_i(content, cursor)
+impl<G: Glyph> HashGlyph<G> {
+  /// The crypto hash header.
+  fn header(&self) -> &CryptoHashHeader {
+    // SAFETY: `from_glyph` creation guarantees valid header.
+    unsafe {
+      let content = self.0.content();
+      let cursor = &mut 0;
+      CryptoHashHeader::bbrf_u(content, cursor)
+    }
+  }
+
+  /// Returns the type of hash stored in the glyph.
+  pub fn hash_type(&self) -> CryptoHashType {
+    self.header().hash_type()
+  }
+
+  pub fn digest_bytes(&self) -> &[u8] {
+    unsafe { &*self.1 }
+  }
+
+  pub fn get<H: CryptographicHash>(&self) -> Result<&H, GlyphErr> {
+    self.header().confirm_hash_type(H::HASH_TYPE_ID)?;
+    let hash = H::bbrf(self.digest_bytes(), &mut 0)?;
+    Ok(hash)
   }
 }
 
-impl<G: Glyph, H: CryptographicHash> HashGlyph<G, H> {}
-
-impl<G: Glyph, H: CryptographicHash> FromGlyph<G> for HashGlyph<G, H> {
+impl<G: Glyph> FromGlyph<G> for HashGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    /* SAFETY: We're going to guarantee that contents contain at least a header,
+               to avoid duplicate bounds checks.
+    */
     if let Err(err) = glyph.confirm_type(GlyphType::CryptoHash) {
       return Err(err.into_fge(glyph));
     }
     let content = glyph.content();
     let cursor = &mut 0;
-    let header = match CryptoHashHeader::bbrf(content, cursor) {
+    let _header = match CryptoHashHeader::bbrf(content, cursor) {
       Ok(header) => header,
       Err(err) => return Err(err.into_fge(glyph)),
     };
-    if let Err(err) = header.confirm_hash_type(H::HASH_TYPE_ID) {
-      return Err(err.into_fge(glyph));
-    }
-    Ok(Self(glyph, Default::default()))
+    let digest_bytes = &content[*cursor..] as *const [u8];
+    Ok(Self(glyph, digest_bytes))
   }
 }
 
-impl<G: Glyph, H: CryptographicHash> std::ops::Deref for HashGlyph<G, H> {
-  type Target = [H];
+impl<'a> HashGlyph<ParsedGlyph<'a>> {
+  pub fn digest_bytes_parsed(&self) -> &'a [u8] {
+    unsafe { &*self.1 }
+  }
 
-  fn deref(&self) -> &Self::Target {
-    let content = self.0.content();
-    let cursor = &mut 0;
-    *cursor += core::mem::size_of::<CryptoHashHeader>();
-    H::bbrfs_i(content, cursor)
+  pub fn get_parsed<H: CryptographicHash>(&self) -> Result<&'a H, GlyphErr> {
+    self.header().confirm_hash_type(H::HASH_TYPE_ID)?;
+    let hash = H::bbrf(self.digest_bytes_parsed(), &mut 0)?;
+    Ok(hash)
   }
 }
 
