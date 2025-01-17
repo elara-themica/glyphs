@@ -20,6 +20,7 @@ mod unit;
 pub use unit::*;
 
 mod zc;
+use crate::FromGlyphErr;
 pub use zc::*;
 
 impl<T> ToGlyph for Option<T>
@@ -50,14 +51,23 @@ where
   B: Glyph,
   T: FromGlyph<B>,
 {
-  fn from_glyph(source: B) -> Result<Self, GlyphErr> {
+  fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
     let type_id = source.header().glyph_type();
     if type_id == GlyphType::Unit {
-      let unit = UnitGlyph::from_glyph(source)?;
+      let unit = match UnitGlyph::from_glyph(source.borrow()) {
+        Ok(unit) => unit,
+        Err(err) => {
+          let (_glyph, err) = err.into_parts();
+          return Err(err.into_fge(source));
+        },
+      };
       if unit.type_id().eq(&UnitTypes::Nothing) {
         Ok(None)
       } else {
-        Err(err!(debug, GlyphErr::UnexpectedUnitType(*unit.type_id())))
+        Err(err!(
+          debug,
+          GlyphErr::UnexpectedUnitType(*unit.type_id()).into_fge(source)
+        ))
       }
     } else {
       let val = T::from_glyph(source)?;

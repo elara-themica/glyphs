@@ -53,7 +53,7 @@ pub(crate) mod de;
 #[warn(missing_docs)]
 pub(crate) mod ser;
 
-use crate::{GlyphErr, GlyphType};
+use crate::{FromGlyphErr, Glyph, GlyphErr, GlyphType};
 use alloc::string::{String, ToString};
 use core::fmt::{Debug, Display, Formatter};
 
@@ -167,6 +167,13 @@ impl From<SerdeGlyphErr> for GlyphErr {
 impl From<GlyphErr> for SerdeGlyphErr {
   fn from(src: GlyphErr) -> Self {
     Self::GlyphErr(src)
+  }
+}
+
+impl<G: Glyph> From<FromGlyphErr<G>> for SerdeGlyphErr {
+  fn from(value: FromGlyphErr<G>) -> Self {
+    let (_glyph, err) = value.into_parts();
+    err.into()
   }
 }
 

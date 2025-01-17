@@ -7,7 +7,7 @@ use crate::{
   glyph_close,
   util::LogErr,
   zerocopy::ZeroCopy,
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use core::mem::size_of;
 use ed25519_dalek::{SigningKey as ed25519_SigningKey, Verifier, VerifyingKey};
@@ -53,20 +53,30 @@ impl<T> FromGlyph<T> for VerifyingKey
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph
-      .confirm_type(GlyphType::PublicKey)
-      .log_err(Level::Debug)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::PublicKey) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let ckh = CryptoKeyHeader::bbrf(source, cursor).log_err(Level::Debug)?;
-    ckh
-      .confirm_type(CryptoKeyTypes::Ed25519Public)
-      .log_err(Level::Debug)?;
-    let pk_bytes = u8::bbrda::<_, 32>(source, cursor)?;
-    let pk = ::ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
+    let ckh = match CryptoKeyHeader::bbrf(source, cursor).log_err(Level::Debug)
+    {
+      Ok(ckh) => ckh,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if let Err(err) = ckh.confirm_type(CryptoKeyTypes::Ed25519Public) {
+      return Err(err.into_fge(glyph));
+    }
+    let pk_bytes = match u8::bbrda::<_, 32>(source, cursor) {
+      Ok(pk_bytes) => pk_bytes,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let pk = match ::ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes)
       .map_err(|_err| GlyphErr::Ed25519VerificationKeyInvalid)
-      .log_err(Level::Debug)?;
+    {
+      Ok(pk) => pk,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
     Ok(pk)
   }
 }
@@ -112,14 +122,24 @@ impl<T> FromGlyph<T> for ed25519_SigningKey
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::PrivateKey)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::PrivateKey) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let ckh = CryptoKeyHeader::bbrf(source, cursor)?;
-    ckh.confirm_type(CryptoKeyTypes::Ed25519Private)?;
+    let ckh = match CryptoKeyHeader::bbrf(source, cursor) {
+      Ok(ckh) => ckh,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if let Err(err) = ckh.confirm_type(CryptoKeyTypes::Ed25519Private) {
+      return Err(err.into_fge(glyph));
+    }
     let sk_bytes: &[u8; ::ed25519_dalek::SECRET_KEY_LENGTH] =
-      u8::bbrfa(source, cursor)?;
+      match u8::bbrfa(source, cursor) {
+        Ok(sk_bytes) => sk_bytes,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
     let sk = ed25519_SigningKey::from_bytes(sk_bytes);
     Ok(sk)
   }

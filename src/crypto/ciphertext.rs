@@ -10,7 +10,7 @@ use crate::{
   },
   util::debug::ShortHexDump,
   zerocopy::{round_to_word, ZeroCopy, U16},
-  BoxGlyph, BoxGlyphBuf,
+  BoxGlyph, BoxGlyphBuf, FromGlyphErr,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -233,29 +233,47 @@ impl<B> FromGlyph<B> for CiphertextMetadata
 where
   B: Glyph,
 {
-  fn from_glyph(source: B) -> Result<Self, GlyphErr> {
-    let source = source.content_padded();
+  fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
+    let source = glyph.content_padded();
     let cursor = &mut 0;
-    let ctm_header = CiphertextMetadataHeader::bbrf(source, cursor)?;
-    let fingerprint = Sha3Hash::bbrd(source, cursor)?;
+    let ctm_header = match CiphertextMetadataHeader::bbrf(source, cursor) {
+      Ok(ctm_header) => ctm_header,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let fingerprint = match Sha3Hash::bbrd(source, cursor) {
+      Ok(fingerprint) => fingerprint,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
     match ctm_header.scheme() {
       EncryptionSchemes::Aes256Ctr => {
-        let iv = AesIv::bbrd(source, cursor)?;
-        let mac = AesMac::bbrd(source, cursor)?;
+        let iv = match AesIv::bbrd(source, cursor) {
+          Ok(iv) => iv,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
+        let mac = match AesMac::bbrd(source, cursor) {
+          Ok(mac) => mac,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
         Ok(CiphertextMetadata {
           fingerprint,
           inner: CiphertextMetadataInner::Aes256Ctr { iv, mac },
         })
       },
       EncryptionSchemes::X25519Aes256Ctr => {
-        let eph_pk: [u8; 32] = u8::bbrda(source, cursor)?;
-        let mac = AesMac::bbrd(source, cursor)?;
+        let eph_pk: [u8; 32] = match u8::bbrda(source, cursor) {
+          Ok(eph_pk) => eph_pk,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
+        let mac = match AesMac::bbrd(source, cursor) {
+          Ok(mac) => mac,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
         Ok(CiphertextMetadata {
           fingerprint,
           inner: CiphertextMetadataInner::X25519Aes256Ctr { eph_pk, mac },
         })
       },
-      _ => Err(err!(debug, GlyphErr::IllegalValue)),
+      _ => Err(FromGlyphErr::new(glyph, GlyphErr::UnknownCryptoScheme)),
     }
   }
 }
@@ -521,12 +539,23 @@ impl<T> FromGlyph<T> for EncryptedGlyph<T>
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::EncryptedGlyph)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::EncryptedGlyph) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content();
     let cursor = &mut 0;
-    let metadata = glyph_read(source, cursor)?;
-    let metadata = CiphertextMetadata::from_glyph(metadata)?;
+    let metadata_glyph = match glyph_read(source, cursor) {
+      Ok(metadata_glyph) => metadata_glyph,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let metadata = match CiphertextMetadata::from_glyph(metadata_glyph) {
+      Ok(metadata) => metadata,
+      Err(err) => {
+        let (_glyph, err) = err.into_parts();
+        return Err(FromGlyphErr::new(glyph, err));
+      },
+    };
     Ok(Self {
       glyph,
       metadata,
@@ -684,12 +713,23 @@ impl<T> FromGlyph<T> for EncryptedExtent<T>
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::EncryptedExtent)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::EncryptedExtent) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content();
     let cursor = &mut 0;
-    let metadata = glyph_read(source, cursor)?;
-    let metadata = CiphertextMetadata::from_glyph(metadata)?;
+    let metadata = match glyph_read(source, cursor) {
+      Ok(metadata) => metadata,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let metadata = match CiphertextMetadata::from_glyph(metadata) {
+      Ok(metadata) => metadata,
+      Err(err) => {
+        let (_glyph, err) = err.into_parts();
+        return Err(FromGlyphErr::new(glyph, err));
+      },
+    };
     Ok(Self {
       glyph,
       metadata,

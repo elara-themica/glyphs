@@ -24,12 +24,11 @@ use crate::{
     CryptographicHash, FingerprintKey, GlyphHash, KeyFingerprint, SigningKey,
   },
   glyph_close, glyph_read,
-  util::LogErr,
   zerocopy::{round_to_word, ZeroCopy, U16, U32},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::{mem::size_of, ops::Deref};
-use log::Level;
 
 /// The expected length of a signature glyph with the given parameters,
 /// in bytes.
@@ -497,15 +496,32 @@ impl<B> FromGlyph<B> for SignatureGlyph<B>
 where
   B: Glyph,
 {
-  fn from_glyph(glyph: B) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::Signature)?;
+  fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::Signature) {
+      return Err(err.into_fge(glyph));
+    }
+
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let header = SignatureGlyphHeader::bbrf(source, cursor)?;
+    let header = match SignatureGlyphHeader::bbrf(source, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
     let signed_start = *cursor;
-    let signed_hash = GlyphHash::bbrf(source, cursor)? as *const GlyphHash;
+    let signed_hash = match GlyphHash::bbrf(source, cursor) {
+      Ok(hash) => hash,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let signed_hash = signed_hash as *const GlyphHash;
+
     let statement = if header.has_statement() {
-      let glyph = unsafe { glyph_read(source, cursor)?.detach() };
+      let glyph = unsafe {
+        let glyph = match glyph_read(source, cursor) {
+          Ok(g) => g,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
+        glyph.detach()
+      };
       Some(glyph)
     } else {
       None
@@ -513,16 +529,25 @@ where
     let signed = &source[signed_start..*cursor];
     let (cs, valid_for) = match header.sig_type() {
       CryptoSignatureTypes::Unknown => {
-        return Err(err!(debug, GlyphErr::WrongCryptoScheme))
+        return Err(err!(debug, GlyphErr::WrongCryptoScheme).into_fge(glyph))
       },
       CryptoSignatureTypes::Ed25519 => {
         let pk_bytes: &[u8; ::ed25519_dalek::PUBLIC_KEY_LENGTH] =
-          u8::bbrfa(source, cursor)?;
+          match u8::bbrfa(source, cursor) {
+            Ok(pk) => pk,
+            Err(err) => return Err(err.into_fge(glyph)),
+          };
         let sig_bytes: &[u8; ::ed25519_dalek::SIGNATURE_LENGTH] =
-          u8::bbrfa(source, cursor)?;
-        let pk = ::ed25519_dalek::VerifyingKey::from_bytes(pk_bytes)
+          match u8::bbrfa(source, cursor) {
+            Ok(sig) => sig,
+            Err(err) => return Err(err.into_fge(glyph)),
+          };
+        let pk = match ::ed25519_dalek::VerifyingKey::from_bytes(pk_bytes)
           .map_err(|_err| GlyphErr::Ed25519VerificationKeyInvalid)
-          .log_err(Level::Error)?;
+        {
+          Ok(pk) => pk,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
         let sig = ::ed25519_dalek::Signature::from_bytes(sig_bytes);
         let cs = CryptoSignature::new_ed25519(pk, sig);
         let valid_for = cs.valid_for(signed);
@@ -574,13 +599,27 @@ impl<B> FromGlyph<B> for SignedExtent<B>
 where
   B: Glyph,
 {
-  fn from_glyph(glyph: B) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::SignedExtent)?;
+  fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::SignedExtent) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content();
 
     let cursor = &mut 0;
-    let signature = unsafe { glyph_read(source, cursor)?.detach() };
-    let signature = SignatureGlyph::from_glyph(signature)?;
+    let signature = unsafe {
+      let glyph = match glyph_read(source, cursor) {
+        Ok(g) => g,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
+      glyph.detach()
+    };
+    let signature = match SignatureGlyph::from_glyph(signature) {
+      Ok(signature) => signature,
+      Err(err) => {
+        let (_sig_glyph, err) = err.into_parts();
+        return Err(err.into_fge(glyph));
+      },
+    };
     let extent = &source[*cursor..];
     let signed_hash_computed = GlyphHash::new(extent);
     let signed_hash_stored = signature.signed_hash();
@@ -636,13 +675,33 @@ impl<B> FromGlyph<B> for SignedGlyph<B>
 where
   B: Glyph,
 {
-  fn from_glyph(glyph: B) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::SignedGlyph)?;
+  fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::SignedGlyph) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let signed = unsafe { glyph_read(source, cursor)?.detach() };
-    let signature = unsafe { glyph_read(source, cursor)?.detach() };
-    let signature = SignatureGlyph::from_glyph(signature)?;
+    let signed = unsafe {
+      let glyph = match glyph_read(source, cursor) {
+        Ok(g) => g,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
+      glyph.detach()
+    };
+    let signature = unsafe {
+      let sig_glyph = match glyph_read(source, cursor) {
+        Ok(g) => g,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
+      sig_glyph.detach()
+    };
+    let signature = match SignatureGlyph::from_glyph(signature) {
+      Ok(sig_glyph) => sig_glyph,
+      Err(err) => {
+        let (_sig_glyph, err) = err.into_parts();
+        return Err(err.into_fge(glyph));
+      },
+    };
     let signed_hash_computed = GlyphHash::new(signed.as_ref());
     let signed_hash_stored = signature.signed_hash();
     let valid = {

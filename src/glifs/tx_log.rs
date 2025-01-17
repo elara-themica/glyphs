@@ -1,9 +1,9 @@
 use crate::{
   crypto::GlyphHash,
   glyph_close,
-  util::{debug::ShortHexDump, LogErr, SortedSliceRef},
+  util::{debug::ShortHexDump, SortedSliceRef},
   zerocopy::{ZeroCopy, U16},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -14,7 +14,6 @@ use ed25519_dalek::{
   Signature, Signer, SigningKey, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH,
   SIGNATURE_LENGTH,
 };
-use log::Level;
 
 #[derive(Copy, Clone, Eq, Debug, Ord, PartialEq, PartialOrd)]
 #[repr(packed)]
@@ -168,32 +167,68 @@ impl<B> FromGlyph<B> for TxLogGlyph<B>
 where
   B: Glyph,
 {
-  fn from_glyph(glyph: B) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::GlifsTxLog)?;
+  fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::GlifsTxLog) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
 
-    let header = TxLogHeader::bbrf(source, cursor)?;
-    let collection = GlyphHash::bbrf(source, cursor)?;
-    let pk_bytes: &[u8; 32] = u8::bbrfa(source, cursor)?;
-    let previous_tx =
-      GlyphHash::bbrfs(source, cursor, header.num_previous_transactions())?;
+    let header = match TxLogHeader::bbrf(source, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let collection = match GlyphHash::bbrf(source, cursor) {
+      Ok(collection) => collection,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let pk_bytes: &[u8; 32] = match u8::bbrfa(source, cursor) {
+      Ok(pk_bytes) => pk_bytes,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let previous_tx = match GlyphHash::bbrfs(
+      source,
+      cursor,
+      header.num_previous_transactions(),
+    ) {
+      Ok(previous_tx) => previous_tx,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
 
     let glyphs_added =
-      GlyphHash::bbrfs(source, cursor, header.num_glyphs_added())?;
+      match GlyphHash::bbrfs(source, cursor, header.num_glyphs_added()) {
+        Ok(glyphs_added) => glyphs_added,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
     let glyphs_deleted =
-      GlifsDelete::bbrfs(source, cursor, header.num_glyphs_deleted())?;
+      match GlifsDelete::bbrfs(source, cursor, header.num_glyphs_deleted()) {
+        Ok(glyphs_deleted) => glyphs_deleted,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
     let extents_added =
-      GlyphHash::bbrfs(source, cursor, header.num_extents_added())?;
+      match GlyphHash::bbrfs(source, cursor, header.num_extents_added()) {
+        Ok(extents_added) => extents_added,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
     let extents_deleted =
-      GlifsDelete::bbrfs(source, cursor, header.num_extents_deleted())?;
+      match GlifsDelete::bbrfs(source, cursor, header.num_extents_deleted()) {
+        Ok(extents_deleted) => extents_deleted,
+        Err(err) => return Err(err.into_fge(glyph)),
+      };
     let signed_content = &source[..*cursor];
 
-    let sig_bytes: &[u8; 64] = u8::bbrfa(source, cursor)?;
+    let sig_bytes: &[u8; 64] = match u8::bbrfa(source, cursor) {
+      Ok(sig_bytes) => sig_bytes,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
 
-    let pk = VerifyingKey::from_bytes(&pk_bytes)
-      .map_err(|_err| GlyphErr::Ed25519VerificationKeyInvalid)
-      .log_err(Level::Error)?;
+    let pk = match VerifyingKey::from_bytes(&pk_bytes) {
+      Ok(pk) => pk,
+      Err(_err) => {
+        return Err(GlyphErr::Ed25519VerificationKeyInvalid.into_fge(glyph))
+      },
+    };
+
     let sig = Signature::from_bytes(&sig_bytes);
     let sig_valid = pk.verify(signed_content, &sig).is_ok();
 

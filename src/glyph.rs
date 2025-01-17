@@ -1049,7 +1049,7 @@ where
   // This is a `T` and not a `&T` because we want to be able to have something
   // like a `VectorGlyph` take a `HashGlyph` in which case the `VectorGlyph`'s
   // lifetime won't be bound to some other object.
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr>;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>>;
 }
 
 // /// A generic type for all decoded glyphs (e.g., [`DocGlyph`]) that allows
@@ -1479,6 +1479,14 @@ pub enum GlyphErr {
   /// type other than [`UnitTypes::Nothing`].
   UnexpectedUnitType(UnitTypes),
   TensorRankOverflow(usize),
+  UnknownCryptoScheme,
+}
+
+impl GlyphErr {
+  /// Translates into a [`FromGlyphErr`] during decoding.
+  pub fn into_fge<G: Glyph>(self, glyph: G) -> FromGlyphErr<G> {
+    FromGlyphErr(glyph, self)
+  }
 }
 
 impl Display for GlyphErr {
@@ -1522,6 +1530,40 @@ impl<T> From<std::sync::PoisonError<T>> for GlyphErr {
 impl From<AllocError> for GlyphErr {
   fn from(_err: AllocError) -> Self {
     GlyphErr::AllocationFailed
+  }
+}
+
+impl<G: Glyph> From<FromGlyphErr<G>> for GlyphErr {
+  fn from(value: FromGlyphErr<G>) -> Self {
+    // Just drops the original glyph.
+    value.1
+  }
+}
+
+/// Errors when decoding glyphs
+///
+/// Includes the original glyph which could not be decoded.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FromGlyphErr<G: Glyph>(G, GlyphErr);
+impl<G: Glyph> FromGlyphErr<G> {
+  /// Creates a new `FromGlyphErr` instance with the given glyph and error.
+  pub fn new(glyph: G, err: GlyphErr) -> Self {
+    FromGlyphErr(glyph, err)
+  }
+
+  /// Returns a reference to the inner glyph.
+  pub fn glyph(&self) -> &G {
+    &self.0
+  }
+
+  /// Returns a reference to the inner error.
+  pub fn error(&self) -> &GlyphErr {
+    &self.1
+  }
+
+  /// Consumes the `FromGlyphErr` and decomposes it into its constituent parts.
+  pub fn into_parts(self) -> (G, GlyphErr) {
+    (self.0, self.1)
   }
 }
 

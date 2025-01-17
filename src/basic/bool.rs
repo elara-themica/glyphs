@@ -2,8 +2,8 @@ use crate::{
   glyph::glyph_close,
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{round_to_word, ZeroCopy},
-  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   cmp::Ordering,
@@ -26,8 +26,10 @@ impl<G: Glyph> BooleanGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for BooleanGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::Bool)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.confirm_type(GlyphType::Bool) {
+      return Err(err.into_fge(source));
+    }
     Ok(BooleanGlyph(source))
   }
 }
@@ -93,8 +95,10 @@ impl<G> FromGlyph<G> for bool
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Bool)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Bool) {
+      return Err(err.into_fge(source));
+    }
     let content = source.short_content();
     let value = u32::from_le_bytes(*content);
     Ok(value != 0)
@@ -462,7 +466,9 @@ where
 }
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for BitVec<&'a [u8]> {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
     let bvg = BitVecGlyph::<ParsedGlyph<'a>>::from_glyph(source)?;
     let bv = bvg.bit_vector_parsed();
     Ok(bv)
@@ -515,26 +521,36 @@ impl<G: Glyph> Debug for BitVecGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::VecBool)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::VecBool) {
+      return Err(err.into_fge(source));
+    }
     let content = source.content();
 
     if content.len() == 0 {
-      let bit_vector = BitVec::from_bytes(&[][..], None)?;
-      Ok(Self {
-        glyph: source,
-        bit_vector,
-      })
+      match BitVec::from_bytes(&[][..], None) {
+        Ok(bit_vector) => Ok(Self {
+          glyph: source,
+          bit_vector,
+        }),
+        Err(err) => Err(err.into_fge(source)),
+      }
     } else {
       let cursor = &mut 0;
-      let first_bit = u8::bbrd(content, cursor)?;
+      let first_bit = match u8::bbrd(content, cursor) {
+        Ok(first_bit) => first_bit,
+        Err(err) => return Err(err.into_fge(source)),
+      };
       let bit_padding = first_bit & Self::BIT_PADDING_MASK;
       let data = &content[*cursor..];
       let num_bits = (data.len() * 8) - bit_padding as usize;
       let buf = unsafe { &*(data as *const [u8]) };
 
       // Don't need to zero because we're just going to overwrite every byte.
-      let bit_vector = BitVec::from_bytes(buf, Some(num_bits))?;
+      let bit_vector = match BitVec::from_bytes(buf, Some(num_bits)) {
+        Ok(bit_vector) => bit_vector,
+        Err(err) => return Err(err.into_fge(source)),
+      };
       Ok(Self {
         glyph: source,
         bit_vector,

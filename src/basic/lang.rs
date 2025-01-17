@@ -1,10 +1,12 @@
 use crate::{
   glyph::glyph_close,
   zerocopy::{bounds_check, round_to_word, ZeroCopy, U32, U64},
-  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use alloc::string::String;
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
@@ -283,10 +285,17 @@ fn str_glyph_len<S: AsRef<[u8]>>(content: &S) -> usize {
 }
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::String)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::String) {
+      return Err(err.into_fge(source));
+    }
     let str_bytes = source.content_parsed();
-    let valid_str = from_utf8(str_bytes)?;
+    let valid_str = match from_utf8(str_bytes) {
+      Ok(valid_str) => valid_str,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
     Ok(valid_str)
   }
 }
@@ -320,15 +329,23 @@ impl ToGlyph for str {
 }
 
 #[cfg(feature = "alloc")]
-impl<G> FromGlyph<G> for alloc::string::String
+impl<G> FromGlyph<G> for String
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::String)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::String) {
+      return Err(err.into_fge(source));
+    }
     let bytes = source.content();
-    let bytes_v = u8::bbrds_i(bytes, &mut 0)?;
-    let valid_string = alloc::string::String::from_utf8(bytes_v)?;
+    let bytes_v = match u8::bbrds_i(bytes, &mut 0) {
+      Ok(bytes_v) => bytes_v,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let valid_string = match String::from_utf8(bytes_v) {
+      Ok(valid_string) => valid_string,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
     Ok(valid_string)
   }
 }
@@ -383,10 +400,15 @@ impl<G> FromGlyph<G> for StringGlyph<G>
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::String)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::String) {
+      return Err(err.into_fge(source));
+    }
+
     // Check for valid UTF-8 string.
-    let _ = from_utf8(source.content())?;
+    if let Err(err) = from_utf8(source.content()) {
+      return Err(FromGlyphErr::new(source, err.into()));
+    }
     Ok(StringGlyph(source))
   }
 }
@@ -424,13 +446,18 @@ impl<G> FromGlyph<G> for char
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::UnicodeChar)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
+      return Err(err.into_fge(source));
+    }
     let value: u32 =
-      U32::bbrd(&source.header().short_content()[..], &mut 0)?.into();
+      match U32::bbrd(&source.header().short_content()[..], &mut 0) {
+        Ok(value) => value.into(),
+        Err(err) => return Err(err.into_fge(source)),
+      };
     match char::try_from(value) {
       Ok(c) => Ok(c),
-      Err(_err) => Err(GlyphErr::IllegalValue),
+      Err(_err) => Err(FromGlyphErr::new(source, GlyphErr::IllegalValue)),
     }
   }
 }
@@ -465,10 +492,16 @@ impl<G: Glyph> CharGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for CharGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::UnicodeChar)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
+      return Err(err.into_fge(source));
+    }
     // Check for valid unicode char.
-    let _value = <char>::from_glyph(source.borrow())?;
+    unsafe {
+      if let Err(err) = <char>::from_glyph(source.borrow().detach()) {
+        return Err(FromGlyphErr::new(source, err.into()));
+      }
+    }
     Ok(CharGlyph(source))
   }
 }

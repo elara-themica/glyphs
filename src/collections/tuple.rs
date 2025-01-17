@@ -1,8 +1,8 @@
 //! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
 
 use crate::{
-  glyph_close, glyph_read, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ParsedGlyph, ToGlyph,
+  glyph_close, glyph_read, FromGlyph, FromGlyphErr, Glyph, GlyphErr,
+  GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -453,9 +453,11 @@ impl<T> FromGlyph<T> for TupleGlyph<T>
 where
   T: Glyph,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
-    Ok(TupleGlyph(source))
+  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+    match source.header().confirm_type(GlyphType::Tuple) {
+      Ok(_) => Ok(TupleGlyph(source)),
+      Err(err) => Err(err.into_fge(source)),
+    }
   }
 }
 
@@ -464,13 +466,23 @@ where
   A: FromGlyph<ParsedGlyph<'a>>,
   B: FromGlyph<ParsedGlyph<'a>>,
 {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
+      return Err(err.into_fge(source));
+    };
 
     let content = source.content_parsed();
     let cursor = &mut 0;
-    let a = glyph_read(content, cursor)?;
-    let b = glyph_read(content, cursor)?;
+    let a = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let b = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     let a = A::from_glyph(a)?;
     let b = B::from_glyph(b)?;
@@ -485,14 +497,27 @@ where
   B: FromGlyph<ParsedGlyph<'a>>,
   C: FromGlyph<ParsedGlyph<'a>>,
 {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
+      return Err(err.into_fge(source));
+    };
 
     let content = source.content_parsed();
     let cursor = &mut 0;
-    let a = glyph_read(content, cursor)?;
-    let b = glyph_read(content, cursor)?;
-    let c = glyph_read(content, cursor)?;
+    let a = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let b = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let c = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     let a = A::from_glyph(a)?;
     let b = B::from_glyph(b)?;
@@ -509,15 +534,31 @@ where
   C: FromGlyph<ParsedGlyph<'a>>,
   D: FromGlyph<ParsedGlyph<'a>>,
 {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
+      return Err(err.into_fge(source));
+    };
 
     let content = source.content_parsed();
     let cursor = &mut 0;
-    let a = glyph_read(content, cursor)?;
-    let b = glyph_read(content, cursor)?;
-    let c = glyph_read(content, cursor)?;
-    let d = glyph_read(content, cursor)?;
+    let a = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let b = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let c = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let d = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     let a = A::from_glyph(a)?;
     let b = B::from_glyph(b)?;
@@ -536,16 +577,35 @@ where
   D: FromGlyph<ParsedGlyph<'a>>,
   E: FromGlyph<ParsedGlyph<'a>>,
 {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
+      return Err(err.into_fge(source));
+    };
 
     let content = source.content_parsed();
     let cursor = &mut 0;
-    let a = glyph_read(content, cursor)?;
-    let b = glyph_read(content, cursor)?;
-    let c = glyph_read(content, cursor)?;
-    let d = glyph_read(content, cursor)?;
-    let e = glyph_read(content, cursor)?;
+    let a = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let b = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let c = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let d = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let e = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     let a = A::from_glyph(a)?;
     let b = B::from_glyph(b)?;
@@ -566,17 +626,39 @@ where
   E: FromGlyph<ParsedGlyph<'a>>,
   F: FromGlyph<ParsedGlyph<'a>>,
 {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Tuple)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
+      return Err(err.into_fge(source));
+    };
 
     let content = source.content_parsed();
     let cursor = &mut 0;
-    let a = glyph_read(content, cursor)?;
-    let b = glyph_read(content, cursor)?;
-    let c = glyph_read(content, cursor)?;
-    let d = glyph_read(content, cursor)?;
-    let e = glyph_read(content, cursor)?;
-    let f = glyph_read(content, cursor)?;
+    let a = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let b = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let c = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let d = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let e = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let f = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     let a = A::from_glyph(a)?;
     let b = B::from_glyph(b)?;
@@ -691,12 +773,12 @@ mod test {
     let tg = TupleGlyph::from_glyph(abcdef)?;
 
     // Test `TupleGlyph::get()`
-    assert_eq!(i32::from_glyph(tg.get(0)?), Ok(8));
-    assert_eq!(i32::from_glyph(tg.get(1)?), Ok(6));
-    assert_eq!(i32::from_glyph(tg.get(2)?), Ok(7));
-    assert_eq!(i32::from_glyph(tg.get(3)?), Ok(5));
-    assert_eq!(i32::from_glyph(tg.get(4)?), Ok(3));
-    assert_eq!(i32::from_glyph(tg.get(5)?), Ok(0));
+    assert_eq!(i32::from_glyph(tg.get(0)?)?, 8);
+    assert_eq!(i32::from_glyph(tg.get(1)?)?, 6);
+    assert_eq!(i32::from_glyph(tg.get(2)?)?, 7);
+    assert_eq!(i32::from_glyph(tg.get(3)?)?, 5);
+    assert_eq!(i32::from_glyph(tg.get(4)?)?, 3);
+    assert_eq!(i32::from_glyph(tg.get(5)?)?, 0);
     assert!(tg.get(6).is_err());
 
     let mut sum = 0;

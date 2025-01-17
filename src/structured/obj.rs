@@ -11,8 +11,8 @@ use crate::{
   glyph_close, glyph_read,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
-  ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -205,44 +205,78 @@ impl<B> FromGlyph<B> for ObjGlyph<B>
 where
   B: Glyph,
 {
-  fn from_glyph(source: B) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::Object)?;
+  fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
+    if let Err(err) = source.confirm_type(GlyphType::Object) {
+      return Err(err.into_fge(source));
+    }
     let content = source.content_padded();
     let cursor = &mut 0;
 
-    let header = ObjGlyphHeader::bbrd(content, cursor)?;
+    let header = match ObjGlyphHeader::bbrd(content, cursor) {
+      Ok(header) => header,
+      Err(e) => return Err(e.into_fge(source)),
+    };
     let type_hash = if header.has_type_hash() {
-      let hash = GlyphHash::bbrf(content, cursor)?;
+      let hash = match GlyphHash::bbrf(content, cursor) {
+        Ok(hash) => hash,
+        Err(e) => return Err(e.into_fge(source)),
+      };
       Some(NonNull::from(hash))
     } else {
       None
     };
     let type_name = if header.has_type_name() {
-      let len = u8::bbrf(content, cursor)?;
-      let name_bytes = u8::bbrfs(content, cursor, *len as usize)?;
+      let len = match u8::bbrf(content, cursor) {
+        Ok(l) => l,
+        Err(e) => return Err(e.into_fge(source)),
+      };
+      let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
+        Ok(bytes) => bytes,
+        Err(e) => return Err(e.into_fge(source)),
+      };
       *cursor = round_to_word(*cursor);
-      let name = from_utf8(name_bytes)?;
+      let name = match from_utf8(name_bytes) {
+        Ok(n) => n,
+        Err(e) => return Err(FromGlyphErr::new(source, e.into())),
+      };
       Some(NonNull::from(name))
     } else {
       None
     };
     let variant_id = if header.has_variant_id() {
-      Some(U64::bbrd(content, cursor)?.get())
+      let id = match U64::bbrd(content, cursor) {
+        Ok(value) => value,
+        Err(e) => return Err(e.into_fge(source)),
+      };
+      Some(id.get())
     } else {
       None
     };
     let variant_name = if header.has_variant_name() {
-      let len = u8::bbrf(content, cursor)?;
-      let name_bytes = u8::bbrfs(content, cursor, *len as usize)?;
+      let len = match u8::bbrf(content, cursor) {
+        Ok(l) => l,
+        Err(e) => return Err(e.into_fge(source)),
+      };
+      let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
+        Ok(bytes) => bytes,
+        Err(e) => return Err(e.into_fge(source)),
+      };
       *cursor = round_to_word(*cursor);
-      let name = from_utf8(name_bytes)?;
+      let name = match from_utf8(name_bytes) {
+        Ok(n) => n,
+        Err(e) => return Err(FromGlyphErr::new(source, e.into())),
+      };
       Some(NonNull::from(name))
     } else {
       None
     };
 
     let field_offsets =
-      GlyphOffset::bbrfs(content, cursor, header.num_fields.get().into())?;
+      match GlyphOffset::bbrfs(content, cursor, header.num_fields.get().into())
+      {
+        Ok(offsets) => offsets,
+        Err(e) => return Err(e.into_fge(source)),
+      };
     let field_offsets = NonNull::from(field_offsets);
 
     Ok(Self {

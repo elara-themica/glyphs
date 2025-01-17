@@ -17,8 +17,8 @@ use crate::{
   zerocopy::{
     round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16, U32,
   },
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
-  ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -197,16 +197,22 @@ impl<G> FromGlyph<G> for VecGlyph<G>
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Vec)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
+      return Err(err.into_fge(source));
+    }
     let contents = source.content_padded();
     let mut cursor = 0;
-    let header = VecGlyphHeader::bbrf(contents, &mut cursor)?;
-    let offsets = NonNull::from(GlyphOffset::bbrfs(
-      contents,
-      &mut cursor,
-      header.num_items(),
-    )?);
+    let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let offsets =
+      match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
+        Ok(offsets) => offsets,
+        Err(err) => return Err(err.into_fge(source)),
+      };
+    let offsets = NonNull::from(offsets);
     Ok(Self {
       glyph: source,
       offsets,
@@ -502,13 +508,22 @@ impl<G> FromGlyph<G> for BasicVecGlyph<G>
 where
   G: Glyph,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::VecBasic)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::VecBasic) {
+      return Err(err.into_fge(glyph));
+    }
     let cursor = &mut 0;
     let content = glyph.content();
-    let header = BasicVecGlyphHeader::bbrf(content, cursor)?;
-    let tensor_lengths =
-      NonNull::from(U32::bbrfs(content, cursor, header.tensor_rank())?);
+    let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
+    {
+      Ok(tensor_lengths) => tensor_lengths,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    let tensor_lengths = NonNull::from(tensor_lengths);
     *cursor = round_to_word(*cursor);
     let data = NonNull::from(u8::bbrfs_i(content, cursor));
     let header = NonNull::from(header);

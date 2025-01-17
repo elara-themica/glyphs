@@ -1,7 +1,7 @@
 use crate::{
   zerocopy::{ZeroCopy, U32},
-  EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::mem::transmute;
 use std::cmp::Ordering;
@@ -22,14 +22,19 @@ impl<G: Glyph> UnitGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::Unit)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::Unit) {
+      return Err(err.into_fge(glyph));
+    }
     if glyph.header().is_short() {
       let type_id = u32::from_le_bytes(*glyph.header().short_content());
       let type_id = UnitTypes::from(type_id);
       Ok(UnitGlyph(glyph, type_id))
     } else {
-      err!(debug, Err(GlyphErr::UnitLength(glyph.content().len())))
+      err!(
+        debug,
+        Err(GlyphErr::UnitLength(glyph.content().len()).into_fge(glyph))
+      )
     }
   }
 }
@@ -103,12 +108,13 @@ impl<G> FromGlyph<G> for UnitTypes
 where
   G: Glyph,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::Unit)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::Unit) {
+      return Err(err.into_fge(glyph));
+    }
     let content = glyph.short_content();
     let type_id = u32::from_le_bytes(*content);
-    // SAFETY: repr(u32)
-    let type_id: UnitTypes = unsafe { transmute::<_, _>(type_id) };
+    let type_id = UnitTypes::from(type_id);
     Ok(type_id)
   }
 }
@@ -131,17 +137,26 @@ impl<G> FromGlyph<G> for ()
 where
   G: Glyph,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    let ug = UnitTypes::from_glyph(glyph)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    let ug = match UnitTypes::from_glyph(glyph.borrow()) {
+      Ok(unit_type) => unit_type,
+      Err(err) => {
+        let (_glyph, err) = err.into_parts();
+        return Err(err.into_fge(glyph));
+      },
+    };
     if ug.eq(&UnitTypes::Nothing) {
       Ok(())
     } else {
       err!(
         debug,
-        Err(GlyphErr::UnitTypeMismatch {
-          expected: UnitTypes::Nothing,
-          observed: ug,
-        })
+        Err(
+          GlyphErr::UnitTypeMismatch {
+            expected: UnitTypes::Nothing,
+            observed: ug,
+          }
+          .into_fge(glyph)
+        )
       )
     }
   }

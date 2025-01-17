@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{bounds_check, ZeroCopyGlyph},
-  EncodedGlyph, FromGlyph, Glyph, GlyphErr, ParsedGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, ParsedGlyph,
 };
 use core::fmt::{Debug, Formatter};
 use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
@@ -25,10 +25,16 @@ use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
 pub struct BasicGlyph<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
 
 impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(T::GLYPH_TYPE_ID)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(T::GLYPH_TYPE_ID) {
+      return Err(err.into_fge(glyph));
+    }
+
     if size_of::<T>() > 4 {
-      bounds_check(glyph.content_padded(), size_of::<T>())?;
+      if let Err(err) = bounds_check(glyph.content_padded(), size_of::<T>()) {
+        return Err(err.into_fge(glyph));
+      }
+
       Ok(Self(glyph, PhantomData::default()))
     } else {
       Ok(Self(glyph, PhantomData::default()))

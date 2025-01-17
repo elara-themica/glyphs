@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
-  EncodedGlyph, FromGlyph, Glyph, GlyphErr,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr,
   GlyphType::{Float, SignedInt, UnsignedInt},
   ParsedGlyph,
 };
@@ -36,8 +36,10 @@ impl<G: Glyph> IntGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(SignedInt)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(SignedInt) {
+      return Err(err.into_fge(glyph));
+    }
     let val = if glyph.header().is_short() {
       i32::from_le_bytes(*glyph.header().short_content()) as i128
     } else {
@@ -152,8 +154,10 @@ impl<G: Glyph> UIntGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(UnsignedInt)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(UnsignedInt) {
+      return Err(err.into_fge(glyph));
+    }
     let val = if glyph.header().is_short() {
       u32::from_le_bytes(*glyph.header().short_content()) as u128
     } else {
@@ -274,8 +278,10 @@ impl<G: Glyph> FloatGlyph<G> {
 }
 
 impl<G: Glyph> FromGlyph<G> for FloatGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(Float)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(Float) {
+      return Err(err.into_fge(glyph));
+    }
     let val = if glyph.header().is_short() {
       f32::from_le_bytes(*glyph.header().short_content()) as f64
     } else {
@@ -403,34 +409,38 @@ gen_prim_slice_to_glyph!(I128);
 gen_prim_slice_to_glyph!(F32);
 gen_prim_slice_to_glyph!(F64);
 
-gen_prim_from_glyph!(u8, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<G>| {
-  u8::try_from(*gl)
-});
-gen_prim_from_glyph!(u16, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<G>| {
-  u16::try_from(*gl)
-});
-gen_prim_from_glyph!(u32, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<G>| {
-  u32::try_from(*gl)
-});
-gen_prim_from_glyph!(u64, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<G>| {
-  u64::try_from(*gl)
-});
-gen_prim_from_glyph!(u128, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<G>| {
+gen_prim_from_glyph!(u8, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
+  ParsedGlyph,
+>| { u8::try_from(*gl) });
+gen_prim_from_glyph!(u16, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
+  ParsedGlyph,
+>| { u16::try_from(*gl) });
+gen_prim_from_glyph!(u32, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
+  ParsedGlyph,
+>| { u32::try_from(*gl) });
+gen_prim_from_glyph!(u64, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
+  ParsedGlyph,
+>| { u64::try_from(*gl) });
+gen_prim_from_glyph!(u128, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
+  ParsedGlyph,
+>| {
   u128::try_from(*gl)
 });
-gen_prim_from_glyph!(i8, try_conv_glyph, IntGlyph, |gl: IntGlyph<G>| {
-  i8::try_from(*gl)
-});
-gen_prim_from_glyph!(i16, try_conv_glyph, IntGlyph, |gl: IntGlyph<G>| {
-  i16::try_from(*gl)
-});
-gen_prim_from_glyph!(i32, try_conv_glyph, IntGlyph, |gl: IntGlyph<G>| {
-  i32::try_from(*gl)
-});
-gen_prim_from_glyph!(i64, try_conv_glyph, IntGlyph, |gl: IntGlyph<G>| {
-  i64::try_from(*gl)
-});
-gen_prim_from_glyph!(i128, try_conv_glyph, IntGlyph, |gl: IntGlyph<G>| {
+gen_prim_from_glyph!(i8, try_conv_glyph, IntGlyph, |gl: IntGlyph<
+  ParsedGlyph,
+>| { i8::try_from(*gl) });
+gen_prim_from_glyph!(i16, try_conv_glyph, IntGlyph, |gl: IntGlyph<
+  ParsedGlyph,
+>| { i16::try_from(*gl) });
+gen_prim_from_glyph!(i32, try_conv_glyph, IntGlyph, |gl: IntGlyph<
+  ParsedGlyph,
+>| { i32::try_from(*gl) });
+gen_prim_from_glyph!(i64, try_conv_glyph, IntGlyph, |gl: IntGlyph<
+  ParsedGlyph,
+>| { i64::try_from(*gl) });
+gen_prim_from_glyph!(i128, try_conv_glyph, IntGlyph, |gl: IntGlyph<
+  ParsedGlyph,
+>| {
   i128::try_from(*gl)
 });
 gen_prim_from_glyph!(f32, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| {

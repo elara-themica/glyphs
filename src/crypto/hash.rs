@@ -9,7 +9,7 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  FromGlyph, GlyphErr, ParsedGlyph,
+  FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -106,13 +106,24 @@ macro_rules! hash_impls {
     }
 
     impl<G: $crate::Glyph> $crate::FromGlyph<G> for $hash_name {
-      fn from_glyph(glyph: G) -> Result<Self, $crate::GlyphErr> {
-        let hg = $crate::crypto::HashGlyph::<_, $hash_name>::from_glyph(glyph)?;
+      fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
+        let hg = match $crate::crypto::HashGlyph::<_, $hash_name>::from_glyph(
+          glyph.borrow(),
+        ) {
+          Ok(hg) => hg,
+          Err(err) => {
+            let (_glyph, err) = err.into_parts();
+            return Err(err.into_fge(glyph));
+          },
+        };
         let first =
-          (*hg).get(0).ok_or($crate::GlyphErr::CryptoHashOverflow {
+          match (*hg).get(0).ok_or($crate::GlyphErr::CryptoHashOverflow {
             expected: 1usize,
             observed: hg.len(),
-          })?;
+          }) {
+            Ok(first) => first,
+            Err(err) => return Err(err.into_fge(glyph)),
+          };
         Ok(*first)
       }
     }
@@ -145,8 +156,8 @@ macro_rules! hash_impls {
 
     impl<'a> $crate::FromGlyph<$crate::ParsedGlyph<'a>> for &'a [$hash_name] {
       fn from_glyph(
-        glyph: $crate::ParsedGlyph<'a>,
-      ) -> Result<Self, $crate::GlyphErr> {
+        glyph: ParsedGlyph<'a>,
+      ) -> Result<Self, $crate::FromGlyphErr<ParsedGlyph<'a>>> {
         let hg = $crate::crypto::HashGlyph::<_, $hash_name>::from_glyph(glyph)?;
         Ok($crate::crypto::HashGlyph::get_parsed(&hg))
       }
@@ -312,12 +323,19 @@ impl<'a, H: CryptographicHash> HashGlyph<ParsedGlyph<'a>, H> {
 impl<G: Glyph, H: CryptographicHash> HashGlyph<G, H> {}
 
 impl<G: Glyph, H: CryptographicHash> FromGlyph<G> for HashGlyph<G, H> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::CryptoHash)?;
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::CryptoHash) {
+      return Err(err.into_fge(glyph));
+    }
     let content = glyph.content();
     let cursor = &mut 0;
-    CryptoHashHeader::bbrf(content, cursor)?
-      .confirm_hash_type(H::HASH_TYPE_ID)?;
+    let header = match CryptoHashHeader::bbrf(content, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if let Err(err) = header.confirm_hash_type(H::HASH_TYPE_ID) {
+      return Err(err.into_fge(glyph));
+    }
     Ok(Self(glyph, Default::default()))
   }
 }
@@ -497,7 +515,7 @@ impl HashPrefix {
   // TODO: Test and better docs
   pub fn lower_bound<H: CryptographicHash>(self) -> H
   where
-    [(); H::HASH_LEN]:,
+    [(); <H as CryptographicHash>::HASH_LEN]:,
   {
     let mut buf = [0u8; H::HASH_LEN];
     for (prefix, buf) in self.prefix.iter().zip(buf.iter_mut()) {
@@ -515,7 +533,7 @@ impl HashPrefix {
   // TODO: Test and better docs
   pub fn upper_bound<H: CryptographicHash>(self) -> H
   where
-    [(); H::HASH_LEN]:,
+    [(); <H as CryptographicHash>::HASH_LEN]:,
   {
     let prefix = self.as_u128();
     let prefix_mask = u128::MAX << 128 - self.prefix_len() as u128;

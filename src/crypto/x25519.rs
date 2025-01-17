@@ -7,7 +7,7 @@ use crate::{
   },
   glyph_close,
   zerocopy::ZeroCopy,
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use core::mem::size_of;
 use rand::{CryptoRng, RngCore};
@@ -38,13 +38,23 @@ impl<T> FromGlyph<T> for PublicKey
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::PublicKey)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::PublicKey) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let ckh = CryptoKeyHeader::bbrf(source, cursor)?;
-    ckh.confirm_type(CryptoKeyTypes::X25519Public)?;
-    let pk_bytes: [u8; X25519_KEY_LEN] = u8::bbrda(source, cursor)?;
+    let ckh = match CryptoKeyHeader::bbrf(source, cursor) {
+      Ok(ckh) => ckh,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if let Err(err) = ckh.confirm_type(CryptoKeyTypes::X25519Public) {
+      return Err(err.into_fge(glyph));
+    }
+    let pk_bytes: [u8; X25519_KEY_LEN] = match u8::bbrda(source, cursor) {
+      Ok(pk_bytes) => pk_bytes,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
     let pk = ::x25519_dalek::PublicKey::from(pk_bytes);
     Ok(pk)
   }
@@ -132,13 +142,23 @@ impl<T> FromGlyph<T> for StaticSecret
 where
   T: Glyph,
 {
-  fn from_glyph(glyph: T) -> Result<Self, GlyphErr> {
-    glyph.confirm_type(GlyphType::PrivateKey)?;
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::PrivateKey) {
+      return Err(err.into_fge(glyph));
+    }
     let source = glyph.content_padded();
     let cursor = &mut 0;
-    let ckh = CryptoKeyHeader::bbrf(source, cursor)?;
-    ckh.confirm_type(CryptoKeyTypes::X25519Private)?;
-    let sk_bytes: [u8; X25519_KEY_LEN] = u8::bbrda(source, cursor)?;
+    let ckh = match CryptoKeyHeader::bbrf(source, cursor) {
+      Ok(ckh) => ckh,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if let Err(err) = ckh.confirm_type(CryptoKeyTypes::X25519Private) {
+      return Err(err.into_fge(glyph));
+    }
+    let sk_bytes: [u8; X25519_KEY_LEN] = match u8::bbrda(source, cursor) {
+      Ok(bytes) => bytes,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
     let sk = ::x25519_dalek::StaticSecret::from(sk_bytes);
     Ok(sk)
   }

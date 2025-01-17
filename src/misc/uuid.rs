@@ -1,6 +1,7 @@
 use crate::{
   zerocopy::{bounds_check, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -35,20 +36,31 @@ impl<T> FromGlyph<T> for Uuid
 where
   T: Glyph,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::UUID)?;
+  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+      return Err(err.into_fge(source));
+    }
     let content = source.content_padded();
     let cursor = &mut 0;
-    let bytes = u8::bbrda::<[u8], 16>(content, cursor)?;
+    let bytes = match u8::bbrda::<[u8], 16>(content, cursor) {
+      Ok(bytes) => bytes,
+      Err(err) => return Err(err.into_fge(source)),
+    };
     Ok(Uuid::from_bytes(bytes))
   }
 }
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a Uuid {
-  fn from_glyph(source: ParsedGlyph<'a>) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::UUID)?;
+  fn from_glyph(
+    source: ParsedGlyph<'a>,
+  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+      return Err(err.into_fge(source));
+    }
     let content = source.content_parsed();
-    bounds_check(content, size_of::<Uuid>())?;
+    if let Err(err) = bounds_check(content, size_of::<Uuid>()) {
+      return Err(err.into_fge(source));
+    }
     // SAFETY: We just did a bounds check, and Uuid is guaranteed to have the
     // same ABI as [u8; 16]
     unsafe { Ok(&*(content.as_ptr() as *const Uuid)) }
@@ -88,9 +100,13 @@ impl<T> FromGlyph<T> for UuidGlyph<T>
 where
   T: Glyph,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::UUID)?;
-    bounds_check(source.content_padded(), size_of::<Uuid>())?;
+  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+      return Err(err.into_fge(source));
+    }
+    if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
+      return Err(err.into_fge(source));
+    }
     Ok(UuidGlyph(source))
   }
 }

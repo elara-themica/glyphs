@@ -4,8 +4,8 @@
 use crate::{
   glyph_close, glyph_read,
   zerocopy::{round_to_word, ZeroCopy, U32},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType, ParsedGlyph,
-  ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
+  GlyphType, ParsedGlyph, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -89,14 +89,22 @@ impl<G> FromGlyph<G> for MapGlyph<G>
 where
   G: Glyph,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::Map)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.confirm_type(GlyphType::Map) {
+      return Err(err.into_fge(source));
+    }
 
     let content = source.content_padded();
     let cursor = &mut 0;
 
-    let mgh = MapGlyphHeader::bbrf(content, cursor)?;
-    let offsets = GlyphOffset::bbrfs(content, cursor, mgh.num_items())?;
+    let mgh = match MapGlyphHeader::bbrf(content, cursor) {
+      Ok(mgh) => mgh,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
+      Ok(offsets) => offsets,
+      Err(err) => return Err(err.into_fge(source)),
+    };
 
     // Keep internal self references
     let offsets = NonNull::from(offsets);

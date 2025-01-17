@@ -9,6 +9,7 @@ use crate::{
   glyph::{FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph},
   util::debug::ShortHexDump,
   zerocopy::{ZeroCopy, U16},
+  FromGlyphErr,
 };
 use argon2::{hash_raw, Config};
 use core::{
@@ -170,22 +171,34 @@ impl<T> FromGlyph<T> for EncryptedPassword
 where
   T: Glyph,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-    source.confirm_type(GlyphType::EncryptedPassword)?;
-    let source = source.content_padded();
-    let cursor = &mut 0;
-    let eph = EncryptedPasswordHeader::bbrd(source, cursor)?;
-    if eph.pw_type != U16::from(EncryptedPasswordTypes::Argon2Default) {
-      return Err(err!(
-        error,
-        GlyphErr::UnexpectedSubType {
-          type_index:       0,
-          expected_type_id: EncryptedPasswordTypes::Argon2Default as u32,
-          observed_type_id: u32::from(u16::from(eph.pw_type)),
-        }
-      ));
+  fn from_glyph(glyph: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::EncryptedPassword) {
+      return Err(err.into_fge(glyph));
     }
-    Ok(Self::bbrd(source, cursor)?)
+    let source = glyph.content_padded();
+    let cursor = &mut 0;
+    let eph = match EncryptedPasswordHeader::bbrd(source, cursor) {
+      Ok(eph) => eph,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    if eph.pw_type != U16::from(EncryptedPasswordTypes::Argon2Default) {
+      return Err(
+        err!(
+          error,
+          GlyphErr::UnexpectedSubType {
+            type_index:       0,
+            expected_type_id: EncryptedPasswordTypes::Argon2Default as u32,
+            observed_type_id: u32::from(u16::from(eph.pw_type)),
+          }
+        )
+        .into_fge(glyph),
+      );
+    }
+    let password = match Self::bbrd(source, cursor) {
+      Ok(password) => password,
+      Err(err) => return Err(err.into_fge(glyph)),
+    };
+    Ok(password)
   }
 }
 
@@ -202,6 +215,7 @@ struct EncryptedPasswordHeader {
 }
 
 impl EncryptedPasswordHeader {
+  /// Creates a new encrypted password header.
   pub fn new(pw_type: EncryptedPasswordTypes) -> Self {
     Self {
       version:    0,
@@ -209,6 +223,12 @@ impl EncryptedPasswordHeader {
       pw_type:    pw_type.into(),
       reserved_1: Default::default(),
     }
+  }
+
+  /// Returns the type of password present in the glyph.
+  pub fn pw_type(&self) -> EncryptedPasswordTypes {
+    let value = self.pw_type.get();
+    value.into()
   }
 }
 
@@ -220,16 +240,17 @@ unsafe impl ZeroCopy for EncryptedPasswordHeader {}
 pub enum EncryptedPasswordTypes {
   Unknown = 0x0000,
   Argon2Default = 0x0001,
+  UnknownType = 0x0002,
+  // SAFETY: IDs must be continuous, and `UnknownType` must always be the one
+  // with the highest value.
 }
 
-impl EncryptedPasswordTypes {
-  const HIGHEST_KNOWN_ID: u16 = Self::Argon2Default as u16;
-}
+impl EncryptedPasswordTypes {}
 
 impl From<u16> for EncryptedPasswordTypes {
   fn from(src: u16) -> Self {
-    if src > Self::HIGHEST_KNOWN_ID {
-      Self::Unknown
+    if src > Self::UnknownType as u16 {
+      Self::UnknownType
     } else {
       unsafe { transmute::<u16, Self>(src) }
     }

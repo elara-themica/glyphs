@@ -4,8 +4,8 @@ use crate::{
   crypto::GlyphHash,
   glyph_close, glyph_read,
   zerocopy::{ZeroCopy, U16},
-  FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphPtr, GlyphType, ParsedGlyph,
-  ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphPtr, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -64,11 +64,6 @@ impl DocVer {
   /// Returns a reference to the document's `GlyphHash`.
   pub fn document(&self) -> &GlyphHash {
     &self.document
-  }
-
-  /// Returns a reference to the transaction's `GlyphHash` from which it originated.
-  pub fn from_tx(&self) -> &GlyphHash {
-    &self.from_tx
   }
 }
 
@@ -310,18 +305,34 @@ impl<'a> DocGlyph<ParsedGlyph<'a>> {
 }
 
 impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphErr> {
-    source.header().confirm_type(GlyphType::Document)?;
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Document) {
+      return Err(err.into_fge(source));
+    }
     let content = source.content_padded();
     let cursor = &mut 0;
 
-    let dgh = DocGlyphHeader::bbrf(content, cursor)?;
+    let dgh = match DocGlyphHeader::bbrf(content, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(err.into_fge(source)),
+    };
     let nov = u16::from(dgh.num_old_versions) as usize;
-    let ov = DocVer::bbrfs(content, cursor, nov)?;
+    let ov = match DocVer::bbrfs(content, cursor, nov) {
+      Ok(versions) => versions,
+      Err(err) => return Err(err.into_fge(source)),
+    };
     // SAFETY: This internal self-reference must not escape without being bound
     // to the lifetime of 'self, and
-    let id = GlyphPtr::from_parsed(glyph_read(content, cursor)?);
-    let body = GlyphPtr::from_parsed(glyph_read(content, cursor)?);
+    let id_glyph = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let id = GlyphPtr::from_parsed(id_glyph);
+    let body_glyph = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(err.into_fge(source)),
+    };
+    let body = GlyphPtr::from_parsed(body_glyph);
 
     let parents = NonNull::from(ov);
 
