@@ -11,6 +11,7 @@ edition = "2021"
 
 
 [dependencies]
+argon2 = { optional = true, version = "0.5" }
 aes = { optional = true, version = "0.8" }
 ctr = { optional = true, version = "0.9" }
 backtrace = { optional = true, version = "0.3" }
@@ -21,7 +22,6 @@ log = { optional = true, version = "0.4" }
 md5 = { default-features = false, optional = true, version = "0.7" }
 rand = { optional = true, version = "0.8.4" }
 rand_chacha = { optional = true, version = "0.3.1" }
-rust-argon2 = { optional = true, default-features = false, version = "2.1.0" }
 serde = { optional = true, version = "^1" }
 sha1 = { optional = true, version = "0.10" }
 sha2 = { optional = true, version = "0.10" }
@@ -41,7 +41,7 @@ serde_derive = "^1"
 [features]
 all_hashes = ["md5", "sha1", "sha2", "sha3"]
 alloc = ["ed25519-dalek/alloc"]
-crypto = ["aes", "rust-argon2", "ctr", "ed25519-dalek", "rand", "rand_chacha", "sha3", "x25519-dalek"]
+crypto = ["aes", "argon2", "ctr", "ed25519-dalek", "rand", "rand_chacha", "sha3", "x25519-dalek"]
 test = ["log", "crypto", "all_hashes"]
 rng = ["uuid/v4"]
 std = ["uuid/v1"]
@@ -54,6 +54,7 @@ glifs = []
 default = [
     "std",
     "alloc",
+    "argon2",
     "test_slow",
     "blake3",
     "uuid",

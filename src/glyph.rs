@@ -1480,6 +1480,21 @@ pub enum GlyphErr {
   UnexpectedUnitType(UnitTypes),
   TensorRankOverflow(usize),
   UnknownCryptoScheme,
+
+  /// Error working with an Argon2 password.
+  Argon2Error,
+  /// Invalid password salt length; it must be <= 255 bytes.
+  PasswordSaltLen(usize),
+  /// Invalid password digest length; it must be <= 255 bytes.
+  PasswordDigestLen(usize),
+  PasswordUnknownAlgorithm(u16),
+  PasswordInvalidByteLen {
+    algorithm:       u16,
+    salt_expected:   i32,
+    salt_actual:     usize,
+    digest_expected: i32,
+    digest_actual:   usize,
+  },
 }
 
 impl GlyphErr {

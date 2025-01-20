@@ -875,21 +875,6 @@ mod test {
     Ok(())
   }
 
-  // This is a deliberately slow password hash
-  #[cfg(all(feature = "rust-argon2", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_argon2(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let pw = b"hunter2";
-    let pw_hash = Blake3Hash::new(pw);
-
-    b.iter(|| {
-      ::argon2::hash_raw(pw, pw_hash.as_ref(), &::argon2::Config::default())
-        .unwrap()
-    });
-
-    Ok(())
-  }
-
   #[test]
   fn hash_prefix() {
     init_test_logger();
