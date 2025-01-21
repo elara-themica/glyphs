@@ -36,13 +36,8 @@ impl<G: Glyph> FromGlyph<G> for BooleanGlyph<G> {
 
 impl<G: Glyph> Debug for BooleanGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    if !f.alternate() {
-      Debug::fmt(&self.get(), f)
-    } else {
-      let mut df = f.debug_tuple("BoolGlyph");
-      df.field(&self.0);
-      df.finish()
-    }
+    write!(f, "BoolGlyph({:?})", self.get())?;
+    Ok(())
   }
 }
 

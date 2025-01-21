@@ -25,7 +25,7 @@ use std::{cmp::Ordering, ops::Deref};
 ///
 ///
 /// ```
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct IntGlyph<G: Glyph>(G, i128);
 
 impl<G: Glyph> IntGlyph<G> {
@@ -56,6 +56,12 @@ impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
       }
     };
     Ok(Self(glyph, val))
+  }
+}
+
+impl<G: Glyph> Debug for IntGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "IntGlyph({})", self.1)
   }
 }
 
@@ -257,7 +263,7 @@ impl<G: Glyph> Ord for UIntGlyph<G> {
 
 impl<G: Glyph> Debug for UIntGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    self.1.fmt(f)
+    write!(f, "UIntGlyph({})", self.1)
   }
 }
 
@@ -343,7 +349,7 @@ impl<G: Glyph> Ord for FloatGlyph<G> {
 
 impl<G: Glyph> Debug for FloatGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    self.1.fmt(f)
+    write!(f, "FloatGlyph({})", self.1)
   }
 }
 
