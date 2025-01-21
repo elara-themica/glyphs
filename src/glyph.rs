@@ -4,6 +4,7 @@ use alloc::string::FromUtf8Error;
 use crate::{
   basic::UnitTypes,
   crypto::{CryptographicHash, GlyphHash},
+  dynamic::DynGlyph,
   util::{
     debug::{HexDump, ShortHexDump},
     MemoizedInvariant,
@@ -485,6 +486,22 @@ impl GlyphSorting {
       a_type.cmp(&b_type)
     } else {
       a.content().cmp(b.content())
+    }
+  }
+
+  /// Order glyphs based on semantic content.
+  pub fn dyn_ord(
+    a: ParsedGlyph<'_>,
+    b: ParsedGlyph<'_>,
+    sorting: GlyphSorting,
+  ) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => GlyphSorting::byte_ord(a, b),
+      GlyphSorting::Experimental => {
+        let a_dyn = DynGlyph::from_glyph_u(a);
+        let b_dyn = DynGlyph::from_glyph_u(b);
+        a_dyn.cmp(&b_dyn)
+      },
     }
   }
 }

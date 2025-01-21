@@ -94,6 +94,9 @@ pub mod collections;
 #[allow(missing_docs)]
 pub mod crypto;
 
+#[deny(missing_docs)]
+mod dynamic;
+
 #[allow(missing_docs)]
 // #[cfg(feature = "glifs")]
 pub mod glifs;

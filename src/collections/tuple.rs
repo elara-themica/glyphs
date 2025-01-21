@@ -1,13 +1,14 @@
 //! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
 
 use crate::{
-  glyph_close, glyph_read, FromGlyph, FromGlyphErr, Glyph, GlyphErr,
-  GlyphHeader, GlyphType, ParsedGlyph, ToGlyph,
+  glyph_close, glyph_read, EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
+  GlyphErr, GlyphHeader, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
 };
+use std::cmp::Ordering;
 
 impl<'a, A, B> ToGlyph for (A, B)
 where
@@ -457,6 +458,47 @@ where
     match source.header().confirm_type(GlyphType::Tuple) {
       Ok(_) => Ok(TupleGlyph(source)),
       Err(err) => Err(err.into_fge(source)),
+    }
+  }
+}
+
+impl<G: Glyph> PartialEq for TupleGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for TupleGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for TupleGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for TupleGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for TupleGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        GlyphSorting::byte_ord(self.0.borrow(), other.0.borrow())
+      },
+      GlyphSorting::Experimental => {
+        GlyphSorting::dyn_ord(self.0.borrow(), other.0.borrow(), sorting)
+      },
     }
   }
 }
