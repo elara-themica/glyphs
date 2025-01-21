@@ -12,10 +12,12 @@
 //! - The remaining bytes of the glyph are a buffer for the glyphs it
 //!   contains.
 use crate::{
+  crypto::{Blake3Hash, Md5Hash, Sha1Hash, Sha2Hash, Sha3Hash},
+  dynamic::DynGlyph,
   glyph_close, glyph_read,
-  util::debug::CloneDebugIterator,
   zerocopy::{
-    round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16, U32,
+    round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
+    I16, I32, I64, U128, U16, U32, U64,
   },
   FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
   GlyphType, ParsedGlyph, ToGlyph,
@@ -25,6 +27,7 @@ use core::{
   mem::size_of,
   ptr::NonNull,
 };
+use uuid::Uuid;
 
 /// The specific type header for (non-primitive) vector glyphs.
 ///
@@ -227,21 +230,13 @@ where
   G: Glyph,
 {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-    if f.alternate() {
-      let mut df = f.debug_struct("VecGlyph");
-      df.field("glyph_len", &self.glyph.glyph_len());
-      df.field("len", &self.len());
-      df.field("offsets", &self.offsets());
-      df.field("entries", &self.iter().clone_debug());
-      df.finish()
-    } else {
-      let mut df = f.debug_list();
-      for i in 0..self.len() {
-        let result = self.get(i);
-        df.entry(&result);
-      }
-      df.finish()
+    write!(f, "VecGlyph")?;
+    let mut df = f.debug_list();
+    for glyph in self.iter() {
+      let dg = DynGlyph::from_glyph_u(glyph);
+      df.entry(&dg);
     }
+    df.finish()
   }
 }
 
@@ -559,11 +554,88 @@ impl<'a> BasicVecGlyph<ParsedGlyph<'a>> {
 
 impl<G: Glyph> Debug for BasicVecGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    let mut df = f.debug_struct(core::any::type_name::<Self>());
-    df.field("type_id", &self.type_id());
-    df.field("tensor_rank", &self.tensor_rank());
+    let mut df = f.debug_struct("BasicVecGlyph");
     df.field("dimension_lengths", &self.dimension_lengths());
-    df.field("bytes", &self.as_bytes());
+    df.field("type", &self.type_id());
+
+    match self.type_id() {
+      ZeroCopyTypeID::U8 => {
+        let values: &[u8] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::U16 => {
+        let values: &[U16] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::U32 => {
+        let values: &[U32] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::U64 => {
+        let values: &[U64] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::U128 => {
+        let values: &[U128] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::I8 => {
+        let values: &[i8] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::I16 => {
+        let values: &[I16] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::I32 => {
+        let values: &[I32] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::I64 => {
+        let values: &[I64] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::I128 => {
+        let values: &[I128] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::F32 => {
+        let values: &[F32] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::F64 => {
+        let values: &[F64] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::HashMD5 => {
+        let values: &[Md5Hash] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::HashSHA1 => {
+        let values: &[Sha1Hash] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::HashSHA2 => {
+        let values: &[Sha2Hash] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::HashSHA3 => {
+        let values: &[Sha3Hash] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::HashBlake3 => {
+        let values: &[Blake3Hash] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      ZeroCopyTypeID::UUID => {
+        let values: &[Uuid] = self.get().unwrap();
+        df.field("values", &values);
+      },
+      _ => {
+        df.field("type_id", &self.header().get_zero_copy_type_id());
+        df.field("bytes", &self.as_bytes());
+      },
+    }
     df.finish()
   }
 }

@@ -1,8 +1,9 @@
 //! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
 
 use crate::{
-  glyph_close, glyph_read, EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
-  GlyphErr, GlyphHeader, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  dynamic::DynGlyph, glyph_close, glyph_read, EncodedGlyph, FromGlyph,
+  FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphSorting, GlyphType,
+  ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -444,7 +445,8 @@ where
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_tuple("TupleGlyph");
     for glyph in self.iter() {
-      df.field(&glyph);
+      let decoded = DynGlyph::from_glyph_u(glyph);
+      df.field(&decoded);
     }
     df.finish()
   }
