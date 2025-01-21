@@ -9,12 +9,13 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::transmute,
 };
+use std::cmp::Ordering;
 
 // TODO: Test implementing these from another crate, and fully convert trait
 //       call reference style to
@@ -329,6 +330,66 @@ impl<'a> HashGlyph<ParsedGlyph<'a>> {
     self.header().confirm_hash_type(H::HASH_TYPE_ID)?;
     let hash = H::bbrf(self.digest_bytes_parsed(), &mut 0)?;
     Ok(hash)
+  }
+}
+
+impl<G: Glyph> PartialEq for HashGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for HashGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for HashGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for HashGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> Debug for HashGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    match self.hash_type() {
+      CryptoHashType::Unspecified => {
+        write!(f, "UnspecifiedHashGlyph(")?;
+      },
+      CryptoHashType::MD5 => {
+        write!(f, "MD5Glyph(")?;
+      },
+      CryptoHashType::SHA1 => {
+        write!(f, "SHA1Glyph(")?;
+      },
+      CryptoHashType::SHA2 => {
+        write!(f, "SHA2Glyph(")?;
+      },
+      CryptoHashType::SHA3 => {
+        write!(f, "SHA3Glyph(")?;
+      },
+      CryptoHashType::Blake3 => {
+        write!(f, "Blake3Glyph(")?;
+      },
+      CryptoHashType::Unknown => {
+        write!(f, "UnknownHashGlyph(")?;
+      },
+    }
+    write!(f, "{:?})", &ShortHexDump(self.digest_bytes(), 0))?;
+    Ok(())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for HashGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
