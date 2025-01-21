@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 /// A Glyph that represents several different unit types, i.e., types with no
 /// further information, e.g., [`()`] or [`Option::None`].  For the list of
 /// known unit types, see `enum` [`UnitTypes`] .
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct UnitGlyph<G: Glyph>(G, UnitTypes);
 
 impl<G: Glyph> UnitGlyph<G> {
@@ -36,6 +36,13 @@ impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
         Err(GlyphErr::UnitLength(glyph.content().len()).into_fge(glyph))
       )
     }
+  }
+}
+
+impl<G: Glyph> core::fmt::Debug for UnitGlyph<G> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "UnitGlyph({:?})", self.type_id())?;
+    Ok(())
   }
 }
 
