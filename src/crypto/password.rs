@@ -11,7 +11,7 @@ use crate::{
   },
   util::debug::ShortHexDump,
   zerocopy::{round_to_word, ZeroCopy, U16},
-  FromGlyphErr,
+  EncodedGlyph, FromGlyphErr, GlyphSorting, ParsedGlyph,
 };
 use argon2::{Algorithm, Version};
 use core::{
@@ -20,6 +20,7 @@ use core::{
   slice::from_raw_parts,
 };
 use rand::{CryptoRng, Rng, RngCore};
+use std::cmp::Ordering;
 
 /// A password to be used as an encryption and/or decryption key.
 pub struct PasswordKey<T>
@@ -534,6 +535,51 @@ impl<G: Glyph> Debug for PasswordGlyph<G> {
       _ => {},
     }
     df.finish()
+  }
+}
+
+impl<G: Glyph> PartialEq for PasswordGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for PasswordGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for PasswordGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for PasswordGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, GlyphSorting::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph for PasswordGlyph<G> {
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        let a = self.glyph.borrow();
+        let b = other.glyph.borrow();
+        a.glyph_type()
+          .cmp(&b.glyph_type())
+          .then_with(|| a.content().cmp(b.content()))
+      },
+      GlyphSorting::Experimental => self
+        .header()
+        .algorithm_id
+        .get()
+        .cmp(&other.header().algorithm_id.get())
+        .then_with(|| self.salt().cmp(other.salt()))
+        .then_with(|| self.digest().cmp(other.digest())),
+    }
   }
 }
 
