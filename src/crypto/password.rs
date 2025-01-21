@@ -558,7 +558,11 @@ impl<G: Glyph> Ord for PasswordGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for PasswordGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for PasswordGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.glyph.borrow()
   }

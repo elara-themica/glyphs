@@ -441,7 +441,12 @@ pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
 /// may be _partially_ decoded, but this typically involves just a type ID check
 /// and minimal metadata processing (i.e., keeping a reference to an array of
 /// offsets).
-pub trait EncodedGlyph: PartialEq + Eq + PartialOrd + Ord + Debug {
+pub trait EncodedGlyph<G: Glyph>:
+  PartialEq + Eq + PartialOrd + Ord + Debug
+{
+  /// Discard the encoding and retrieve the inner glyph.
+  fn into_inner(self) -> G;
+
   /// Returns a reference to the underlying glyph
   fn glyph(&self) -> ParsedGlyph<'_>;
 

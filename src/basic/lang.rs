@@ -436,7 +436,11 @@ impl<G: Glyph> Ord for StringGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for StringGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for StringGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
@@ -532,7 +536,11 @@ impl<G: Glyph> Ord for CharGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for CharGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for CharGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }

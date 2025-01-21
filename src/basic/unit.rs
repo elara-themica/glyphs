@@ -182,7 +182,11 @@ impl<G: Glyph> Ord for UnitGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for UnitGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for UnitGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }

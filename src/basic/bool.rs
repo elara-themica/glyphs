@@ -66,7 +66,11 @@ impl<G: Glyph> Ord for BooleanGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for BooleanGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for BooleanGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
@@ -559,7 +563,11 @@ impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for BitVecGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for BitVecGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.glyph.borrow()
   }

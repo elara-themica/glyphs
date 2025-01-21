@@ -104,7 +104,11 @@ impl<G: Glyph, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph for BasicGlyph<G, T> {
+impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph<G> for BasicGlyph<G, T> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }

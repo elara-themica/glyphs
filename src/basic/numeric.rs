@@ -133,7 +133,11 @@ impl<G: Glyph> Ord for IntGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for IntGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for IntGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
@@ -257,7 +261,11 @@ impl<G: Glyph> Debug for UIntGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for UIntGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for UIntGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
@@ -339,7 +347,11 @@ impl<G: Glyph> Debug for FloatGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph for FloatGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for FloatGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
