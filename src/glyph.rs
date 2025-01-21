@@ -489,6 +489,12 @@ impl GlyphSorting {
   }
 }
 
+impl Default for GlyphSorting {
+  fn default() -> Self {
+    Self::Experimental
+  }
+}
+
 /// A glyph parsed from a byte buffer
 #[derive(Clone, Copy)]
 pub struct ParsedGlyph<'a> {
