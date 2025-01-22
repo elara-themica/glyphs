@@ -12,9 +12,9 @@ use core::{
 
 /// A glyph containing a boolean value.
 ///
-pub struct BooleanGlyph<G: Glyph>(G);
+pub struct BoolGlyph<G: Glyph>(G);
 
-impl<G: Glyph> BooleanGlyph<G> {
+impl<G: Glyph> BoolGlyph<G> {
   /// Fetches the glyph's truth value.
   ///
   /// `BoolGlyph`s are short glyphs, with the content stored in the length
@@ -25,43 +25,43 @@ impl<G: Glyph> BooleanGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for BooleanGlyph<G> {
+impl<G: Glyph> FromGlyph<G> for BoolGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.confirm_type(GlyphType::Bool) {
       return Err(err.into_fge(source));
     }
-    Ok(BooleanGlyph(source))
+    Ok(BoolGlyph(source))
   }
 }
 
-impl<G: Glyph> Debug for BooleanGlyph<G> {
+impl<G: Glyph> Debug for BoolGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(f, "BoolGlyph({:?})", self.get())?;
     Ok(())
   }
 }
 
-impl<G: Glyph> PartialEq for BooleanGlyph<G> {
+impl<G: Glyph> PartialEq for BoolGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.get() == other.get()
   }
 }
 
-impl<G: Glyph> Eq for BooleanGlyph<G> {}
+impl<G: Glyph> Eq for BoolGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for BooleanGlyph<G> {
+impl<G: Glyph> PartialOrd for BoolGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for BooleanGlyph<G> {
+impl<G: Glyph> Ord for BoolGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for BooleanGlyph<G> {
+impl<G: Glyph> EncodedGlyph<G> for BoolGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
