@@ -12,8 +12,8 @@ use crate::{
   glyph_close, glyph_read,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
-  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
-  GlyphType, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -22,6 +22,7 @@ use core::{
   ptr::NonNull,
   str::from_utf8,
 };
+use std::cmp::Ordering;
 
 /// A header for object glyphs.
 #[derive(Copy, Clone)]
@@ -542,6 +543,66 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
         }
         None // Got to the end of list; nothing found.
       }
+    }
+  }
+}
+
+impl<G: Glyph> PartialEq for ObjGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for ObjGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for ObjGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for ObjGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        self.glyph.content().cmp(&other.glyph.content())
+      },
+      GlyphSorting::Experimental => {
+        let mut self_iter = self.fields_iter();
+        let mut other_iter = other.fields_iter();
+
+        loop {
+          match (self_iter.next(), other_iter.next()) {
+            (Some((a_fn, a_val)), Some((b_fn, b_val))) => {
+              let ordering = a_fn.cmp(&b_fn).then_with(|| {
+                let a_val = DynGlyph::from_glyph_u(a_val);
+                let b_val = DynGlyph::from_glyph_u(b_val);
+                a_val.glyph_ord(&b_val, sorting)
+              });
+              if ordering != Ordering::Equal {
+                return ordering;
+              }
+            },
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+          }
+        }
+      },
     }
   }
 }

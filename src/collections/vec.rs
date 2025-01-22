@@ -19,14 +19,15 @@ use crate::{
     round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
     I16, I32, I64, U128, U16, U32, U64,
   },
-  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
-  GlyphType, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
   ptr::NonNull,
 };
+use std::cmp::Ordering;
 use uuid::Uuid;
 
 /// The specific type header for (non-primitive) vector glyphs.
@@ -223,7 +224,10 @@ where
   }
 }
 
-// impl<'a, 'b> IntoIterator for &'a VecGlyph<>
+// TODO
+// impl<'a, G: Glyph> IntoIterator for &'a VecGlyph<G> {
+//
+// }
 
 impl<G> Debug for VecGlyph<G>
 where
@@ -237,6 +241,55 @@ where
       df.entry(&dg);
     }
     df.finish()
+  }
+}
+
+impl<G: Glyph> PartialEq for VecGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for VecGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for VecGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for VecGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for VecGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    let mut self_iter = self.iter().map(|g| DynGlyph::from_glyph_u(g));
+    let mut other_iter = other.iter().map(|g| DynGlyph::from_glyph_u(g));
+
+    loop {
+      match (self_iter.next(), other_iter.next()) {
+        (Some(a), Some(b)) => {
+          let ordering = a.glyph_ord(&b, sorting); // Adjust comparison logic if needed
+          if ordering != Ordering::Equal {
+            return ordering;
+          }
+        },
+        (Some(_), None) => return Ordering::Greater,
+        (None, Some(_)) => return Ordering::Less,
+        (None, None) => return Ordering::Equal,
+      }
+    }
   }
 }
 
@@ -637,6 +690,145 @@ impl<G: Glyph> Debug for BasicVecGlyph<G> {
       },
     }
     df.finish()
+  }
+}
+
+impl<G: Glyph> PartialEq for BasicVecGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for BasicVecGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for BasicVecGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for BasicVecGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for BasicVecGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => self
+        .header()
+        .basic_type_id
+        .get()
+        .cmp(&other.header().basic_type_id.get())
+        .then(self.as_bytes().cmp(other.as_bytes())),
+      GlyphSorting::Experimental => match (self.type_id(), other.type_id()) {
+        (ZeroCopyTypeID::U8, ZeroCopyTypeID::U8) => {
+          let a: &[u8] = self.get().unwrap();
+          let b: &[u8] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::U16, ZeroCopyTypeID::U16) => {
+          let a: &[U16] = self.get().unwrap();
+          let b: &[U16] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::U32, ZeroCopyTypeID::U32) => {
+          let a: &[U32] = self.get().unwrap();
+          let b: &[U32] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::U64, ZeroCopyTypeID::U64) => {
+          let a: &[U64] = self.get().unwrap();
+          let b: &[U64] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::U128, ZeroCopyTypeID::U128) => {
+          let a: &[U128] = self.get().unwrap();
+          let b: &[U128] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::I8, ZeroCopyTypeID::I8) => {
+          let a: &[i8] = self.get().unwrap();
+          let b: &[i8] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::I16, ZeroCopyTypeID::I16) => {
+          let a: &[I16] = self.get().unwrap();
+          let b: &[I16] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::I32, ZeroCopyTypeID::I32) => {
+          let a: &[I32] = self.get().unwrap();
+          let b: &[I32] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::I64, ZeroCopyTypeID::I64) => {
+          let a: &[I64] = self.get().unwrap();
+          let b: &[I64] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::I128, ZeroCopyTypeID::I128) => {
+          let a: &[I128] = self.get().unwrap();
+          let b: &[I128] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::F32, ZeroCopyTypeID::F32) => {
+          let a: &[F32] = self.get().unwrap();
+          let b: &[F32] = other.get().unwrap();
+          a.partial_cmp(b).unwrap_or(Ordering::Equal)
+        },
+        (ZeroCopyTypeID::F64, ZeroCopyTypeID::F64) => {
+          let a: &[F64] = self.get().unwrap();
+          let b: &[F64] = other.get().unwrap();
+          a.partial_cmp(b).unwrap_or(Ordering::Equal)
+        },
+        (ZeroCopyTypeID::HashMD5, ZeroCopyTypeID::HashMD5) => {
+          let a: &[Md5Hash] = self.get().unwrap();
+          let b: &[Md5Hash] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::HashSHA1, ZeroCopyTypeID::HashSHA1) => {
+          let a: &[Sha1Hash] = self.get().unwrap();
+          let b: &[Sha1Hash] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::HashSHA2, ZeroCopyTypeID::HashSHA2) => {
+          let a: &[Sha2Hash] = self.get().unwrap();
+          let b: &[Sha2Hash] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::HashSHA3, ZeroCopyTypeID::HashSHA3) => {
+          let a: &[Sha3Hash] = self.get().unwrap();
+          let b: &[Sha3Hash] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::HashBlake3, ZeroCopyTypeID::HashBlake3) => {
+          let a: &[Blake3Hash] = self.get().unwrap();
+          let b: &[Blake3Hash] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (ZeroCopyTypeID::UUID, ZeroCopyTypeID::UUID) => {
+          let a: &[Uuid] = self.get().unwrap();
+          let b: &[Uuid] = other.get().unwrap();
+          a.cmp(b)
+        },
+        (_, _) => self
+          .header()
+          .basic_type_id
+          .get()
+          .cmp(&other.header().basic_type_id.get())
+          .then(self.as_bytes().cmp(other.as_bytes())),
+      },
+    }
   }
 }
 

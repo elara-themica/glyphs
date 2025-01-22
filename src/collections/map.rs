@@ -5,8 +5,8 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close, glyph_read,
   zerocopy::{round_to_word, ZeroCopy, U32},
-  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
-  GlyphType, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -14,6 +14,7 @@ use core::{
   mem::size_of,
   ptr::NonNull,
 };
+use std::cmp::Ordering;
 
 /// The specific type header for map glyphs.  Currently, this is identical to
 /// the header for [`VecGlyph`].
@@ -212,6 +213,69 @@ where
       df.entry(&key, &val);
     }
     df.finish()
+  }
+}
+
+impl<G: Glyph> PartialEq for MapGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for MapGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for MapGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for MapGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        self.glyph.content().cmp(other.glyph.content())
+      },
+      GlyphSorting::Experimental => {
+        let mut self_iter = self
+          .iter()
+          .map(|(k, v)| (DynGlyph::from_glyph_u(k), DynGlyph::from_glyph_u(v)));
+
+        let mut other_iter = self
+          .iter()
+          .map(|(k, v)| (DynGlyph::from_glyph_u(k), DynGlyph::from_glyph_u(v)));
+
+        loop {
+          match (self_iter.next(), other_iter.next()) {
+            (Some((key_a, val_a)), Some((key_b, val_b))) => {
+              let ordering = key_a
+                .glyph_ord(&key_b, sorting)
+                .then(val_a.glyph_ord(&val_b, sorting)); // Adjust comparison logic if needed
+              if ordering != Ordering::Equal {
+                return ordering;
+              }
+            },
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+          }
+        }
+      },
+    }
   }
 }
 

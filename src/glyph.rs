@@ -465,6 +465,7 @@ pub trait EncodedGlyph<G: Glyph>:
 }
 
 /// Sorting methods used for glyphs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum GlyphSorting {
   /// Sort glyphs first by Type ID, then as raw byte arrays.

@@ -1,12 +1,13 @@
 use crate::{
   zerocopy::{bounds_check, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID},
-  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
 };
+use std::cmp::Ordering;
 use uuid::Uuid;
 
 impl ToGlyph for Uuid {
@@ -110,54 +111,42 @@ where
     Ok(UuidGlyph(source))
   }
 }
-//
-// #[derive(GlyphDelegate)]
-// pub struct VecUuidGlyph<T>(#[GlyphDelegate] T)
-// where
-//   T: Glyph;
-//
-// impl<T> VecUuidGlyph<T>
-// where
-//   T: Glyph,
-// {
-//   pub fn get(&self) -> &[Uuid] {
-//     let content = self.0.content_padded();
-//     // SAFETY: Uuid is guaranteed to have the same ABI as [u8; 16].  This
-//     // unsafety can be removed when the uuid crate's zerocopy feature is
-//     // stabilized.
-//     unsafe {
-//       let num_uuids = content.len() / size_of::<Uuid>();
-//       let ptr = content.as_ptr() as *const Uuid;
-//       core::slice::from_raw_parts(ptr, num_uuids)
-//     }
-//   }
-// }
-//
-// impl<'a> VecUuidGlyph<ParsedGlyph<'a>> {
-//   pub fn get_parsed(&self) -> &'a [Uuid] {
-//     let content = self.0.content_parsed();
-//     // SAFETY: Uuid is guaranteed to have the same ABI as [u8; 16].  This
-//     // unsafety can be removed when the uuid crate's zerocopy feature is
-//     // stabilized.
-//     unsafe {
-//       // This also effectively functions as a bounds check.
-//       let num_uuids = content.len() / size_of::<Uuid>();
-//       let ptr = content.as_ptr() as *const Uuid;
-//       core::slice::from_raw_parts(ptr, num_uuids)
-//     }
-//   }
-// }
-//
-// impl<T> FromGlyph<T> for VecUuidGlyph<T>
-// where
-//   T: Glyph,
-// {
-//   fn from_glyph(source: T) -> Result<Self, GlyphErr> {
-//     source.confirm_type(GlyphType::VecUUID)?;
-//     // No bounds check necessary; get functions include them.
-//     Ok(VecUuidGlyph(source))
-//   }
-// }
+
+impl<G: Glyph> PartialEq for UuidGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for UuidGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for UuidGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for UuidGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for UuidGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      _ => self.0.content().cmp(other.0.content()),
+    }
+  }
+}
 
 #[cfg(test)]
 mod test {

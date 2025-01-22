@@ -2,10 +2,11 @@
 
 use crate::{
   crypto::GlyphHash,
+  dynamic::DynGlyph,
   glyph_close, glyph_read,
   zerocopy::{ZeroCopy, U16},
-  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphPtr, GlyphType,
-  ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphPtr, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -14,6 +15,7 @@ use core::{
   ptr::NonNull,
 };
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 
 /// The specific type header for document glyphs.
 ///
@@ -352,6 +354,57 @@ impl<G: Glyph> Debug for DocGlyph<G> {
     b.field("id", &self.id_glyph());
     b.field("body", &self.body_glyph());
     b.finish()
+  }
+}
+
+impl<G: Glyph> PartialEq for DocGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> Eq for DocGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for DocGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for DocGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for DocGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        self.glyph.content().cmp(other.glyph.content())
+      },
+      GlyphSorting::Experimental => {
+        // Sort on ID, Body, and finally old versions.
+        let self_id = DynGlyph::from_glyph_u(self.id_glyph());
+        let other_id = DynGlyph::from_glyph_u(other.id_glyph());
+        self_id
+          .glyph_ord(&other_id, sorting)
+          .then_with(|| {
+            let self_body = DynGlyph::from_glyph_u(self.body_glyph());
+            let other_body = DynGlyph::from_glyph_u(other.body_glyph());
+            self_body.glyph_ord(&other_body, sorting)
+          })
+          .then_with(|| self.previous_versions().cmp(other.previous_versions()))
+      },
+    }
   }
 }
 
