@@ -2,6 +2,7 @@
 //! [`MapGlyph`].
 
 use crate::{
+  dynamic::DynGlyph,
   glyph_close, glyph_read,
   zerocopy::{round_to_word, ZeroCopy, U32},
   FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
@@ -206,6 +207,8 @@ where
     f.write_str("MapGlyph")?;
     let mut df = f.debug_map();
     for (key, val) in self.iter() {
+      let key = DynGlyph::from_glyph_u(key);
+      let val = DynGlyph::from_glyph_u(val);
       df.entry(&key, &val);
     }
     df.finish()

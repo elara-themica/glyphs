@@ -8,6 +8,7 @@
 //! 3. All key/value pairs are stored in byte string order.
 use crate::{
   crypto::GlyphHash,
+  dynamic::DynGlyph,
   glyph_close, glyph_read,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
@@ -558,6 +559,7 @@ impl<T: Glyph> Debug for ObjGlyph<T> {
       fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let mut df = f.debug_list();
         for (_field_name, field) in self.0.clone() {
+          let field = DynGlyph::from_glyph_u(field);
           df.entry(&field);
         }
         df.finish()
@@ -576,6 +578,7 @@ impl<T: Glyph> Debug for ObjGlyph<T> {
         let mut df = f.debug_map();
         for (field_name, field) in self.0.clone() {
           let field_name = field_name.unwrap_or("MISSING");
+          let field = DynGlyph::from_glyph_u(field);
           df.entry(&field_name, &field);
         }
         df.finish()
