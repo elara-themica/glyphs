@@ -276,7 +276,7 @@ pub trait CryptographicHash:
 pub struct HashGlyph<G: Glyph>(G, *const [u8]);
 
 impl<G: Glyph> HashGlyph<G> {
-  /// The crypto hash header.
+  /// The old_crypto hash header.
   fn header(&self) -> &CryptoHashHeader {
     // SAFETY: `from_glyph` creation guarantees valid header.
     unsafe {

@@ -1,11 +1,6 @@
 //! Types related storing encrypted passwords and encrypting data using a
 //! password as a key.
 use crate::{
-  crypto::{
-    aes_256ctr_decrypt, aes_256ctr_encrypt, AesIv, AesKey, CiphertextMetadata,
-    CryptographicHash, DecryptionKey, EncryptionKey, EncryptionSchemes,
-    GlyphHash, HashContext, Sha3Context, Sha3Hash,
-  },
   glyph::{
     glyph_close, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
   },
@@ -15,94 +10,94 @@ use crate::{
 };
 use argon2::{Algorithm, Version};
 use core::{
+  cmp::Ordering,
   fmt::{Debug, Formatter},
   mem::{size_of, transmute},
   slice::from_raw_parts,
 };
 use rand::{CryptoRng, Rng, RngCore};
-use std::cmp::Ordering;
 
-/// A password to be used as an encryption and/or decryption key.
-pub struct PasswordKey<T>
-where
-  T: AsRef<[u8]>,
-{
-  password: T,
-}
-
-impl<T> PasswordKey<T>
-where
-  T: AsRef<[u8]>,
-{
-  pub fn new(password: T) -> Result<Self, GlyphErr> {
-    Ok(PasswordKey { password })
-  }
-
-  /// Generates an AES key from a password, salted by the IV.
-  ///
-  ///
-  fn calculate_key(&self, iv: &AesIv) -> AesKey {
-    let mut ctx = Sha3Context::new();
-    ctx.update(iv.bytes());
-    ctx.update(self.password.as_ref());
-    let hash = ctx.finish();
-    AesKey::from(*hash.hash_bytes())
-  }
-}
-
-impl<T> Debug for PasswordKey<T>
-where
-  T: AsRef<[u8]>,
-{
-  fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "PasswordKey(")?;
-    let pw_string = core::str::from_utf8(self.password.as_ref());
-    match pw_string {
-      Ok(str) => write!(f, "UTF-8/\"{}\"", str)?,
-      Err(_) => {
-        write!(f, "Bytes/{:?}", ShortHexDump(self.password.as_ref(), 8))?
-      },
-    }
-    write!(f, " }}")
-  }
-}
-
-impl<T> EncryptionKey for PasswordKey<T>
-where
-  T: AsRef<[u8]>,
-{
-  fn metadata_glyph_len(&self) -> usize {
-    CiphertextMetadata::glyph_len(EncryptionSchemes::Aes256Ctr)
-  }
-
-  fn encrypt<R: RngCore + CryptoRng>(
-    &self,
-    rng: R,
-    data: &mut [u8],
-  ) -> Result<(GlyphHash, CiphertextMetadata), GlyphErr> {
-    let iv = AesIv::new(rng);
-    let key = self.calculate_key(&iv);
-    let key_hash = Sha3Hash::new(key.bytes());
-    let (hash, mac) = aes_256ctr_encrypt(&key, &iv, data);
-    Ok((hash, CiphertextMetadata::new_aes_256(key_hash, iv, mac)))
-  }
-}
-
-impl<T> DecryptionKey for PasswordKey<T>
-where
-  T: AsRef<[u8]>,
-{
-  fn decrypt(
-    &self,
-    metadata: &CiphertextMetadata,
-    data: &mut [u8],
-  ) -> Result<GlyphHash, GlyphErr> {
-    let (iv, mac) = metadata.get_aes_256()?;
-    let key = self.calculate_key(iv);
-    let pt_hash = aes_256ctr_decrypt(&key, &iv, &mac, data)?;
-    Ok(pt_hash)
-  }
-}
+// /// A password to be used as an encryption and/or decryption key.
+// pub struct PasswordKey<T>
+// where
+//   T: AsRef<[u8]>,
+// {
+//   password: T,
+// }
+//
+// impl<T> PasswordKey<T>
+// where
+//   T: AsRef<[u8]>,
+// {
+//   pub fn new(password: T) -> Result<Self, GlyphErr> {
+//     Ok(PasswordKey { password })
+//   }
+//
+//   /// Generates an AES key from a password, salted by the IV.
+//   ///
+//   ///
+//   fn calculate_key(&self, iv: &AesIv) -> AesKey {
+//     let mut ctx = Sha3Context::new();
+//     ctx.update(iv.bytes());
+//     ctx.update(self.password.as_ref());
+//     let hash = ctx.finish();
+//     AesKey::from(*hash.hash_bytes())
+//   }
+// }
+//
+// impl<T> Debug for PasswordKey<T>
+// where
+//   T: AsRef<[u8]>,
+// {
+//   fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+//     write!(f, "PasswordKey(")?;
+//     let pw_string = core::str::from_utf8(self.password.as_ref());
+//     match pw_string {
+//       Ok(str) => write!(f, "UTF-8/\"{}\"", str)?,
+//       Err(_) => {
+//         write!(f, "Bytes/{:?}", ShortHexDump(self.password.as_ref(), 8))?
+//       },
+//     }
+//     write!(f, " }}")
+//   }
+// }
+//
+// impl<T> EncryptionKey for PasswordKey<T>
+// where
+//   T: AsRef<[u8]>,
+// {
+//   fn metadata_glyph_len(&self) -> usize {
+//     CiphertextMetadata::glyph_len(EncryptionSchemes::Aes256Ctr)
+//   }
+//
+//   fn encrypt<R: RngCore + CryptoRng>(
+//     &self,
+//     rng: R,
+//     data: &mut [u8],
+//   ) -> Result<(GlyphHash, CiphertextMetadata), GlyphErr> {
+//     let iv = AesIv::new(rng);
+//     let key = self.calculate_key(&iv);
+//     let key_hash = Sha3Hash::new(key.bytes());
+//     let (hash, mac) = aes_256ctr_encrypt(&key, &iv, data);
+//     Ok((hash, CiphertextMetadata::new_aes_256(key_hash, iv, mac)))
+//   }
+// }
+//
+// impl<T> DecryptionKey for PasswordKey<T>
+// where
+//   T: AsRef<[u8]>,
+// {
+//   fn decrypt(
+//     &self,
+//     metadata: &CiphertextMetadata,
+//     data: &mut [u8],
+//   ) -> Result<GlyphHash, GlyphErr> {
+//     let (iv, mac) = metadata.get_aes_256()?;
+//     let key = self.calculate_key(iv);
+//     let pt_hash = aes_256ctr_decrypt(&key, &iv, &mac, data)?;
+//     Ok(pt_hash)
+//   }
+// }
 
 /// A salted and hashed password (currently using the `argon2` crate)
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -588,6 +583,7 @@ impl<G: Glyph> EncodedGlyph<G> for PasswordGlyph<G> {
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod test {
   use super::*;
   use crate::{crypto::TEST_PLAINTEXT, glyph_new, util::init_test_logger};
@@ -625,25 +621,25 @@ mod test {
     assert!(!pwg.matches(pw2).unwrap());
   }
 
-  #[test]
-  fn crypto_password_key() -> Result<(), GlyphErr> {
-    init_test_logger();
-
-    let mut rng = ChaCha20Rng::from_seed([32; 32]);
-    let key = PasswordKey::new(b"hunter2")?;
-
-    let mut message: alloc::boxed::Box<[u8]> =
-      alloc::boxed::Box::try_from(&TEST_PLAINTEXT[..])?;
-    dbg!(ShortHexDump(message.as_ref(), 8));
-
-    let (_ct_hash, md) = key.encrypt(&mut rng, message.as_mut())?;
-    dbg!(ShortHexDump(message.as_ref(), 8));
-
-    key.decrypt(&md, message.as_mut())?;
-    dbg!(ShortHexDump(message.as_ref(), 8));
-
-    assert_eq!(message.as_ref(), &TEST_PLAINTEXT[..]);
-
-    Ok(())
-  }
+  // #[test]
+  // fn crypto_password_key() -> Result<(), GlyphErr> {
+  //   init_test_logger();
+  //
+  //   let mut rng = ChaCha20Rng::from_seed([32; 32]);
+  //   let key = PasswordKey::new(b"hunter2")?;
+  //
+  //   let mut message: alloc::boxed::Box<[u8]> =
+  //     alloc::boxed::Box::try_from(&TEST_PLAINTEXT[..])?;
+  //   dbg!(ShortHexDump(message.as_ref(), 8));
+  //
+  //   let (_ct_hash, md) = key.encrypt(&mut rng, message.as_mut())?;
+  //   dbg!(ShortHexDump(message.as_ref(), 8));
+  //
+  //   key.decrypt(&md, message.as_mut())?;
+  //   dbg!(ShortHexDump(message.as_ref(), 8));
+  //
+  //   assert_eq!(message.as_ref(), &TEST_PLAINTEXT[..]);
+  //
+  //   Ok(())
+  // }
 }
