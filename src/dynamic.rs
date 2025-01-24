@@ -5,7 +5,7 @@ use crate::{
   },
   collections::{BasicVecGlyph, MapGlyph, TupleGlyph, VecGlyph},
   crypto::{HashGlyph, PasswordGlyph},
-  misc::UuidGlyph,
+  misc::{DateTimeGlyph, UuidGlyph},
   structured::{DocGlyph, ObjGlyph},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphSorting,
   GlyphType, ParsedGlyph,
@@ -37,6 +37,7 @@ pub enum DynGlyph<G: Glyph> {
   Char(CharGlyph<G>),
 
   //=== Other
+  DateTime(DateTimeGlyph<G>),
   UUID(UuidGlyph<G>),
 
   // === Crypto
@@ -167,6 +168,7 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
       DynGlyph::Map(g) => g.into_inner(),
       DynGlyph::Obj(g) => g.into_inner(),
       DynGlyph::Doc(g) => g.into_inner(),
+      DynGlyph::DateTime(g) => g.into_inner(),
       DynGlyph::UUID(g) => g.into_inner(),
       DynGlyph::CryptoHash(g) => g.into_inner(),
       DynGlyph::EncryptedPassword(g) => g.into_inner(),
@@ -191,6 +193,7 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
       DynGlyph::Doc(eg) => eg.glyph(),
       DynGlyph::String(eg) => eg.glyph(),
       DynGlyph::Char(eg) => eg.glyph(),
+      DynGlyph::DateTime(eg) => eg.glyph(),
       DynGlyph::UUID(eg) => eg.glyph(),
       DynGlyph::CryptoHash(eg) => eg.glyph(),
       DynGlyph::EncryptedPassword(eg) => eg.glyph(),
@@ -218,6 +221,7 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
       (DynGlyph::Doc(a), DynGlyph::Doc(b)) => a.glyph_ord(b, sorting),
       (DynGlyph::String(a), DynGlyph::String(b)) => a.glyph_ord(b, sorting),
       (DynGlyph::Char(a), DynGlyph::Char(b)) => a.glyph_ord(b, sorting),
+      (DynGlyph::DateTime(a), DynGlyph::DateTime(b)) => a.glyph_ord(b, sorting),
       (DynGlyph::UUID(a), DynGlyph::UUID(b)) => a.glyph_ord(b, sorting),
       (DynGlyph::UnknownType(a), DynGlyph::UnknownType(b)) => a
         .glyph_type()
@@ -316,6 +320,7 @@ impl<G: Glyph> Debug for DynGlyph<G> {
       DynGlyph::Doc(g) => Debug::fmt(g, f)?,
       DynGlyph::String(g) => Debug::fmt(g, f)?,
       DynGlyph::Char(g) => Debug::fmt(g, f)?,
+      DynGlyph::DateTime(g) => Debug::fmt(g, f)?,
       DynGlyph::UUID(g) => Debug::fmt(g, f)?,
       DynGlyph::CryptoHash(g) => Debug::fmt(g, f)?,
       DynGlyph::EncryptedPassword(g) => Debug::fmt(g, f)?,
