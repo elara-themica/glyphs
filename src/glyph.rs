@@ -1343,7 +1343,10 @@ pub enum GlyphErr {
 
   /// A key was provided that did not have the correct number of bytes for the
   /// encryption used.
-  CryptoKeyLength,
+  CryptoKeyLength {
+    expected: usize,
+    observed: usize,
+  },
 
   /// Unexpected crypto key type
   CryptoKeyType,

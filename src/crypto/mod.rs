@@ -1,3 +1,6 @@
+mod aes;
+pub use self::aes::*;
+
 mod hash;
 pub use self::hash::*;
 
