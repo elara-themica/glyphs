@@ -13,6 +13,7 @@ edition = "2021"
 [dependencies]
 argon2 = { optional = true, version = "0.5" }
 aes = { optional = true, version = "0.8" }
+chrono = { optional = true, version = "0.4" }
 ctr = { optional = true, version = "0.9" }
 backtrace = { optional = true, version = "0.3" }
 blake3 = { optional = true, version = "1.5" }
@@ -40,11 +41,11 @@ serde_derive = "^1"
 
 [features]
 all_hashes = ["md5", "sha1", "sha2", "sha3"]
-alloc = ["ed25519-dalek/alloc"]
+alloc = ["ed25519-dalek/alloc", "chrono/alloc"]
 crypto = ["aes", "argon2", "ctr", "ed25519-dalek", "rand", "rand_chacha", "sha3", "x25519-dalek"]
 test = ["log", "crypto", "all_hashes"]
 rng = ["uuid/v4"]
-std = ["uuid/v1"]
+std = ["uuid/v1", "chrono/std"]
 test_slow = []
 backtrace_full = ["backtrace"]
 
@@ -65,6 +66,7 @@ default = [
     "glifs",
     "crypto",
     "all_hashes",
+    "chrono"
 ]
 
 

@@ -1163,6 +1163,7 @@ pub enum GlyphType {
   GlifsTxLog,
 
   Unknown,
+  DateTime,
 }
 
 impl From<u16> for GlyphType {
@@ -1524,6 +1525,8 @@ pub enum GlyphErr {
     digest_expected: i32,
     digest_actual:   usize,
   },
+  InvalidDateTime,
+  DateTimeOverflow(i128),
 }
 
 impl GlyphErr {
