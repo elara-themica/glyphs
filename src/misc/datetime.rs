@@ -12,6 +12,15 @@ use std::time::SystemTime;
 
 const DATE_TIME_GLYPH_LEN: usize = size_of::<GlyphHeader>() + size_of::<i128>();
 
+/// Glifs type for storing date/timestamps.
+///
+/// For most functionality, please use a conversion to standard
+/// types such as `std::time::SystemTime` or `chrono::DateTime`.
+#[derive(Copy, Clone, Debug)]
+pub struct DateTime(i128);
+
+unsafe impl ZeroCopy for DateTime {}
+
 /// Describes a specific date and time, with nanosecond precision.
 pub struct DateTimeGlyph<G: Glyph>(G);
 
