@@ -937,6 +937,67 @@ where
   d.finish()
 }
 
+pub struct UnsafeGlyph(NonNull<u8>);
+
+impl UnsafeGlyph {
+  /// Creates a new UnsafeGlyph from a [`ParsedGlyph`].
+  ///
+  /// # Safety
+  ///
+  /// Essentially, an `UnsafeGlyph` is just an arbitrary pointer that is not
+  /// checked further, with all the caveats that implies.  Callers must ensure
+  /// that the underlying pointer remains valid for the entire lifetime of the
+  /// object created.  If it is allowed to escape into "safe" code areas that
+  /// do not uphold this invariant, undefined behavior *WILL* result.
+  pub unsafe fn from_parsed(parsed: ParsedGlyph) -> Self {
+    let ptr = parsed.as_ref().as_ptr();
+    debug_assert!(ptr.is_aligned_to(8));
+    Self(NonNull::from(ptr))
+  }
+}
+
+impl Debug for UnsafeGlyph {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    let mut d = f.debug_struct("UnsafeGlyph");
+    let addr = self.as_ref().as_ptr();
+    d.field("address", &addr);
+    d.field("glifs_hash", &self.glyph_hash());
+    d.field("header", &self.header());
+    if !self.header().is_short() {
+      d.field("content", &HexDump(self.content_padded()));
+    } else {
+      d.field("content", &self.short_content());
+    }
+    d.finish()
+  }
+}
+
+impl ToGlyph for UnsafeGlyph {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    u8::bbwrs(self.as_ref(), target, cursor)
+  }
+
+  fn glyph_len(&self) -> usize {
+    self.as_ref().len()
+  }
+}
+
+unsafe impl Glyph for UnsafeGlyph {}
+
+impl AsRef<[u8]> for UnsafeGlyph {
+  fn as_ref(&self) -> &[u8] {
+    unsafe {
+      let header = transmute::<_, &GlyphHeader>(self.0.as_ptr());
+      let len = header.glyph_len();
+      from_raw_parts(self.0.as_ptr(), len)
+    }
+  }
+}
+
 /// Creates a new glyph in its own, heap-allocated buffer.
 #[cfg(feature = "alloc")]
 pub fn glyph_new<T>(src: T) -> Result<BoxGlyph, GlyphErr>
@@ -1530,6 +1591,7 @@ pub enum GlyphErr {
   },
   InvalidDateTime,
   DateTimeOverflow(i128),
+  CryptoKeyLengthOverflow(usize),
 }
 
 impl GlyphErr {

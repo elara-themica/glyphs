@@ -67,6 +67,7 @@
 #![feature(allocator_api)]
 // Used for generated documentation to reference feature requirements.
 #![feature(doc_cfg)]
+#![feature(pointer_is_aligned_to)]
 // Used by specialization feature
 #![allow(incomplete_features)]
 // Warnings disabled while in concept development.
