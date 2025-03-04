@@ -123,10 +123,17 @@ macro_rules! gen_zc_prim {
     }
 
     impl $zc_prim {
+      /// Creates a new instance of the zero-copy type from the primitive type.
+      pub const fn new(val: $native_prim) -> $zc_prim {
+        $zc_prim(val.to_le_bytes())
+      }
+
       /// Creates an instance of the primitive from an array of bytes.
       ///
       /// Note that any types with endianness must be little-endian.
-      pub fn from_bytes(bytes: [u8; size_of::<$native_prim>()]) -> $zc_prim {
+      pub const fn from_bytes(
+        bytes: [u8; size_of::<$native_prim>()],
+      ) -> $zc_prim {
         $zc_prim(bytes)
       }
 

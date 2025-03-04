@@ -8,18 +8,133 @@ use core::{
   fmt::{Debug, Formatter},
 };
 #[cfg(feature = "std")]
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
+/// The size of a date type glyph; specified as a constant for reuse.
 const DATE_TIME_GLYPH_LEN: usize = size_of::<GlyphHeader>() + size_of::<i128>();
 
 /// Glifs type for storing date/timestamps.
 ///
 /// For most functionality, please use a conversion to standard
 /// types such as `std::time::SystemTime` or `chrono::DateTime`.
-#[derive(Copy, Clone, Debug)]
-pub struct DateTime(i128);
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub struct DateTime(I128);
 
 unsafe impl ZeroCopy for DateTime {}
+
+impl DateTime {
+  /// The maximum value that can be represented, approximately 10^20 years
+  /// into the future.
+  pub const NEVER: DateTime = DateTime(I128::new(i128::MAX));
+  /// The Unix Epoch, January 1, 1970, at 00:00 GMT.
+  pub const UNIX_EPOCH: DateTime = DateTime(I128::new(0));
+
+  /// The system's current time.
+  #[cfg(feature = "std")]
+  pub fn now() -> DateTime {
+    let system_time = SystemTime::now();
+    system_time.into()
+  }
+}
+
+impl Default for DateTime {
+  fn default() -> Self {
+    Self::UNIX_EPOCH
+  }
+}
+
+/// Conversion to from a glyphs [`DateTime`] to [`std::time::SystemTime`].
+///
+/// An error is thrown if the value overflows `SystemTime`.  Feedback is sought
+/// if this is appropriate or if defaults should be used instead.
+#[cfg(feature = "std")]
+impl TryFrom<DateTime> for SystemTime {
+  type Error = DateTimeErr;
+
+  fn try_from(value: DateTime) -> Result<Self, Self::Error> {
+    let secs = value.0.get().abs() / 1_000_000_000;
+    let nanos = value.0.get().abs() % 1_000_000_000;
+    let duration = Duration::new(secs as u64, nanos as u32);
+    // We create a SystemTime by adding or subtracting a `Duration` from
+    // `SystemTime::UNIX_EPOCH` and durations can't be negative, so...
+    match value.0.get().cmp(&0) {
+      Ordering::Less => SystemTime::UNIX_EPOCH
+        .checked_sub(duration)
+        .ok_or(DateTimeErr::ConversionOverflow(value.0.get())),
+      Ordering::Equal => Ok(SystemTime::UNIX_EPOCH),
+      Ordering::Greater => SystemTime::UNIX_EPOCH
+        .checked_add(duration)
+        .ok_or(DateTimeErr::ConversionOverflow(value.0.get())),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl From<SystemTime> for DateTime {
+  fn from(value: SystemTime) -> Self {
+    match value.duration_since(SystemTime::UNIX_EPOCH) {
+      Ok(duration) => {
+        let duration = duration.as_nanos() as i128;
+        DateTime(I128::from(duration))
+      },
+      Err(err) => {
+        let duration = err.duration();
+        let duration = duration.as_nanos() as i128;
+        DateTime(I128::from(-duration))
+      },
+    }
+  }
+}
+
+impl TryFrom<DateTime> for chrono::DateTime<chrono::Utc> {
+  type Error = GlyphErr;
+
+  fn try_from(value: DateTime) -> Result<Self, Self::Error> {
+    let ts = value.0.get();
+    let secs = ts / 1_000_000_000;
+    let nanos = (ts % 1_000_000_000) as u32;
+    match i64::try_from(secs) {
+      Ok(secs) => {
+        let dt =
+          chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos).unwrap();
+        Ok(dt)
+      },
+      Err(_err) => Err(GlyphErr::DateTimeOverflow(ts)),
+    }
+  }
+}
+
+impl Debug for DateTime {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    if self.eq(&DateTime::NEVER) {
+      write!(f, "DateTime::NEVER")?;
+      return Ok(());
+    }
+
+    if cfg!(feature = "chrono") {
+      match chrono::DateTime::<chrono::Utc>::try_from(*self) {
+        Ok(time) => {
+          Debug::fmt(&time, f)?;
+        },
+        Err(_err) => {
+          write!(f, "DateTime({:?})", self.0.get())?;
+        },
+      }
+    } else if cfg!(feature = "std") {
+      match SystemTime::try_from(*self) {
+        Ok(system_time) => {
+          Debug::fmt(&system_time, f)?;
+        },
+        Err(_err) => {
+          write!(f, "DateTime({:?})", self.0.get())?;
+        },
+      }
+    } else {
+      write!(f, "DateTime({:?})", self.0.get())?;
+    }
+    Ok(())
+  }
+}
 
 /// Describes a specific date and time, with nanosecond precision.
 pub struct DateTimeGlyph<G: Glyph>(G);
@@ -231,6 +346,12 @@ impl<G: Glyph> FromGlyph<G> for chrono::DateTime<chrono::Utc> {
       Err(err) => Err(err.into_fge(dtg.into_inner())),
     }
   }
+}
+
+/// Errors working with glyphs date/time types.
+#[allow(missing_docs)]
+pub enum DateTimeErr {
+  ConversionOverflow(i128),
 }
 
 #[cfg(test)]

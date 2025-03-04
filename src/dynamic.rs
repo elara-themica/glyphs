@@ -98,7 +98,7 @@ impl<G: Glyph> DynGlyph<G> {
       GlyphType::CryptoHash => {
         HashGlyph::from_glyph(src).map(|g| DynGlyph::CryptoHash(g))
       },
-      GlyphType::EncryptedPassword => {
+      GlyphType::PasswordHash => {
         PasswordGlyph::from_glyph(src).map(|g| DynGlyph::EncryptedPassword(g))
       },
 

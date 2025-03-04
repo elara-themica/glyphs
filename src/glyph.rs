@@ -3,7 +3,7 @@ use alloc::string::FromUtf8Error;
 
 use crate::{
   basic::UnitTypes,
-  crypto::{CryptographicHash, GlyphHash},
+  crypto::{CryptoKeyTypes, CryptographicHash, GlyphHash},
   dynamic::DynGlyph,
   util::{
     debug::{HexDump, ShortHexDump},
@@ -328,7 +328,7 @@ to the array would no longer be valid.
 
 */
 // TODO: Transfer safety information to this doc comment.
-pub unsafe trait Glyph: AsRef<[u8]> + Debug + ToGlyph {
+pub unsafe trait Glyph: AsRef<[u8]> + Clone + Debug + ToGlyph {
   /// Returns the contents of the glyph, including any padding.
   #[inline(always)]
   fn content_padded(&self) -> &[u8] {
@@ -709,6 +709,7 @@ impl AsMut<[u8]> for BoxGlyphBuf {
 
 /// A glyph stored on the heap.
 #[cfg(feature = "alloc")]
+#[derive(Clone)]
 pub struct BoxGlyph(Box<[u8], GlyphAlloc>);
 
 #[cfg(feature = "alloc")]
@@ -937,6 +938,8 @@ where
   d.finish()
 }
 
+/// A pointer to a glyph.
+#[derive(Copy, Clone)]
 pub struct UnsafeGlyph(NonNull<u8>);
 
 impl UnsafeGlyph {
@@ -950,9 +953,26 @@ impl UnsafeGlyph {
   /// object created.  If it is allowed to escape into "safe" code areas that
   /// do not uphold this invariant, undefined behavior *WILL* result.
   pub unsafe fn from_parsed(parsed: ParsedGlyph) -> Self {
-    let ptr = parsed.as_ref().as_ptr();
-    debug_assert!(ptr.is_aligned_to(8));
-    Self(NonNull::from(ptr))
+    let first_byte = parsed.as_ref().get_unchecked(0);
+    debug_assert!((*first_byte as *const u8).is_aligned_to(8));
+    Self(NonNull::from(first_byte))
+  }
+
+  /// Converts this into a [`ParsedGlyph`] with an unbound lifetime.
+  ///
+  /// # Safety
+  ///
+  /// This has safety issues similar to dereferencing a pointer and handing
+  /// out a reference.  Generally, it's only safe where e.g., the original
+  /// `UnsafeGlyph` is a self-referencing pointer to memory that's `Pin`ned.
+  /// If these are created outside that context, there will be _unmarked_
+  /// unsafety.  It's generally advised to keep these at least as `UnsafeGlyph`s
+  /// as long as possible.
+  pub unsafe fn into_parsed<'a>(self) -> ParsedGlyph<'a> {
+    let glyph_bytes = self.as_ref() as *const [u8];
+    ParsedGlyph {
+      glyph_bytes: &*glyph_bytes,
+    }
   }
 }
 
@@ -986,7 +1006,11 @@ impl ToGlyph for UnsafeGlyph {
   }
 }
 
-unsafe impl Glyph for UnsafeGlyph {}
+unsafe impl Glyph for UnsafeGlyph {
+  fn borrow(&self) -> ParsedGlyph<'_> {
+    panic!("UnsafeGlyph cannot be borrowed safely, use into_parsed() instead");
+  }
+}
 
 impl AsRef<[u8]> for UnsafeGlyph {
   fn as_ref(&self) -> &[u8] {
@@ -1206,25 +1230,23 @@ pub enum GlyphType {
 
   //=== Other
   UUID,
+  DateTime,
 
   // === Crypto
   CryptoHash,
-  EncryptedPassword,
-  PublicKey,
-  PrivateKey,
-  KeyPair,
+  PasswordHash,
+  CryptoKey,
   Signature,
-  SignedExtent,
   SignedGlyph,
+  SignedExtent,
+  CiphertextMetadata,
   EncryptedExtent,
   EncryptedGlyph,
-  CiphertextMetadata,
 
   //=== GLIFS
   GlifsTxLog,
 
   Unknown,
-  DateTime,
 }
 
 impl From<u16> for GlyphType {
@@ -1573,7 +1595,7 @@ pub enum GlyphErr {
   /// type other than [`UnitTypes::Nothing`].
   UnexpectedUnitType(UnitTypes),
   TensorRankOverflow(usize),
-  UnknownCryptoScheme,
+  UnsupportedCryptoScheme,
 
   /// Error working with an Argon2 password.
   Argon2Error,
@@ -1592,6 +1614,14 @@ pub enum GlyphErr {
   InvalidDateTime,
   DateTimeOverflow(i128),
   CryptoKeyLengthOverflow(usize),
+  /// When writing a signature glyph, the length of cryptographic signature was
+  /// greater than `u16::MAX` bytes.
+  SignatureLengthOverflow(usize),
+  /// When writing a signature glyph, the length of public key was greater than
+  /// `u16::MAX` bytes.
+  SignatureKeyLengthOverflow(usize),
+  /// This type of key cannot be used to create signatures.
+  CryptoSigningUnsupported(CryptoKeyTypes),
 }
 
 impl GlyphErr {

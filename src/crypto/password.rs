@@ -239,13 +239,7 @@ impl ToGlyph for Password {
         u8::bbwrs(digest, target, cursor)?;
       },
     }
-    glyph_close(
-      GlyphType::EncryptedPassword,
-      target,
-      glyph_offset,
-      cursor,
-      true,
-    )
+    glyph_close(GlyphType::PasswordHash, target, glyph_offset, cursor, true)
   }
 
   fn glyph_len(&self) -> usize {
@@ -464,7 +458,7 @@ impl<G: Glyph> FromGlyph<G> for PasswordGlyph<G> {
        - If the password type is known, the salt and digest lengths match
          what is expected by those password algorithms.
     */
-    if let Err(err) = glyph.confirm_type(GlyphType::EncryptedPassword) {
+    if let Err(err) = glyph.confirm_type(GlyphType::PasswordHash) {
       return Err(err.into_fge(glyph));
     }
     let content = glyph.content();

@@ -49,8 +49,8 @@ use crate::{GlyphErr, GlyphType};
 use core::{
   fmt::Debug,
   hint::unreachable_unchecked,
-  intrinsics::{copy_nonoverlapping, transmute},
-  ptr::write_unaligned,
+  mem::transmute,
+  ptr::{copy_nonoverlapping, write_unaligned},
   slice::{from_raw_parts, from_raw_parts_mut},
 };
 

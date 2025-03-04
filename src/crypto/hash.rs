@@ -718,6 +718,7 @@ pub(crate) mod sha2 {
 
   /// A context for calculating a SHA-2 256-bit hash
   #[cfg(feature = "sha2")]
+  #[derive(Clone)]
   pub struct Sha2Context(::sha2::Sha256);
 
   #[cfg(feature = "sha2")]
