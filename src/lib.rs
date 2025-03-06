@@ -4,57 +4,62 @@
 //!
 //! The _glyphs_ data format is a semi-structured zero copy data format,
 //! designed for use in large distributed systems.  Its name is inspired by the
-//! human language term of the same name, which represents a unit of writing,
-//! e.g., a letter.  Similarly, the data format uses the term (and type)
-//! [`Glyph`] to represent a unit of meaning for a computer data management
-//! system.
+//! human language term of the same name, which represents a unit of written
+//! meaning (e.g., a letter).  Similarly, the data format uses the term
+//! [`Glyph`] to represent a unit of meaning for a computer data system.
 //!
-//! - __Semi-Structured__.  The _glyphs_ data format is what's known
-//!   as [semi-structuerd](https://en.wikipedia.org/wiki/Semi-structured_data).
-//!   What this means is that it does not have a rigidly defined structure
-//!   (like a row in a relational database table) but instead has metadata
-//!   that describes its various elements and their types.  The most common
-//!   example of this type of data as of this writing is a JSON object, though
-//!   the two share little else in common.
+//! - __Semi-Structured__.  The _glyphs_ data format is what's known as
+//!   [semi-structured](https://en.wikipedia.org/wiki/Semi-structured_data).
+//!   It does not have a rigidly defined structure (like a row in a relational
+//!   database table) where types, elements, and meanings are defined by (and
+//!   thus inherently constrained by) some larger set of data to which it
+//!   belongs.  Instead, each object contains metadata that allows a flexible
+//!   structure, like a JSON object (the equivalent of which would be an
+//!   [`ObjGlyph`]).
+//! - __Rich Type System__.  Glyphs have a larger number of types used to
+//!   standardize and label different types of data.  For example, while JSON
+//!   typically would store a UUID or a date as a string, and depend on context
+//!   and application logic to understand this semantic meaning, these are
+//!   first-class types in the glyphs format, with their own type identifiers
+//!   and defined format.
 //! - __Zero Copy__.  It is also a binary format, designed to be used by
 //!   machines directly _without deserialization_.  Because deserialization
 //!   overhead in data-intensive applications accounts for a significant
-//!   proportion of all CPU use, a zero copy format can be dramatically more
-//!   efficient in some cases.
-//! - __Immutable__.  Once written, glyphs are intended to be immutable, as they
-//!   will frequently be referred to (either directly or through a container) by
-//!   a stable cryptographic hash.  Mutability takes place at higher layers,
-//!   e.g., with a [document](https://en.wikipedia.org/wiki/Document-oriented_database#Documents)
-//!   and different versions of [copy on write](https://en.wikipedia.org/wiki/Copy-on-write)
-//!   indexes.
+//!   portion of CPU use, a zero copy format can be dramatically more efficient
+//!   in many cases.
 //!
 //! # The Glyph
 //!
 //! The [`Glyph`] is the basic unit of data, each of which begins with an 8-byte
 //! header containing a length, type information, and, in a few cases (e.g.,
-//! for 32-bit numbers) user data.
+//! for 32-bit numbers) the meaningful data.
 //!
 //! - Glyphs are always a multiple of 8 bytes in length, though they may have
 //!   extra zero padding in some cases (e.g., strings).  This allows us to
-//!   maintain byte alignment for up to 64-bit primitive types.
+//!   maintain alignment for up to 64-bit primitive types.
 //! - Glyph may be stored on the heap ([`BoxGlyph`]), optionally with reference
 //!   counting ([`ArcGlyph`]), or parsed from some other buffer
 //!   ([`ParsedGlyph`]).  Most more specific types are generic over these.
-//! - The [`Glyph`] interface itself provides nothing more than (1) type
-//!   information and (2) an array of bytes.
-//! - Once written, glyphs are immutable.  This significantly simplifies
-//!   implementation.
+//! - The [`Glyph`] trait itself provides nothing more than (1) type
+//!   information and (2) an array of bytes.  It is the more specific types that
+//!   allow more semantically meaningful zero-copy access to contained
+//!   information.  These are typically decoded using [`FromGlyph`], either
+//!   directly from an expected type or dynamically using [`DynGlyph`].
+//! - Glyphs can be re-written but are themselves immutable, just as any other
+//!   serialized data.
 //!
 //! # Types of Glyphs
 //!
-//! - Basic existential types, such as [`NothingGlyph`].
-//! - Numeric types, such as [`IntGlyph`], [`UIntGlyph`], and [`FloatGlyph`].
-//! - Basic compound types, such as [`VecGlyph`], [`TupleGlyph`], and
-//!   [`MapGlyph`].
-//! - Structured types, such as [`ObjGlyph`] and [`DocGlyph`].
-//! - Cryptography types, such as [`HashGlyph`], [`SignatureGlyph`] and
-//    TODO: Add glyph types for passwords and keys
-//! - Other useful types, such as [`UUIDGlyph`].
+//! - Basic types, e.g. [`IntGlyph`], [`UnitGlyph`] and [`StringGlyph`].
+//! - Simple semantic types, e.g. [`DateTimeGlyph`] and [`UUIDGlyph`].
+//! - Container types, e.g. [`VecGlyph`], [`MapGlyph`], and [`ObjGlyph`].
+//! - Data system types, e.g. [`DocGlyph`],  that facilitate replication and
+//!   synchronization.
+//! - Native cryptographic types, e.g. [`HashGlyph`], [`SignatureGlyph`], and
+//!   [`PasswordGlyph`].
+//!
+//! It is expected that the list of these types will grow somewhat over time.
+//!
 
 #![no_std]
 // Used to allow const generics in trait APIs.
