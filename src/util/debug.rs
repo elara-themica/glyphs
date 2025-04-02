@@ -27,11 +27,14 @@ impl<'a> Debug for HexDump<'a> {
     let mut line = String::with_capacity(100);
     let mut start = 0usize;
 
+    let first_line = " 0 1 2 3  4 5 6 7   8 9 A B  C E E F   0 1 2 3  4 5 6 7   8 9 A B  C E E F";
+    b.field("----", &UnquotedDebugString(first_line));
+
     for (count, &byte) in self.0.iter().enumerate() {
       // End of line
       if (count % 32) == 0 && count != 0 {
         let linenum = format!("{:04X?}", start);
-        b.field(linenum.as_str(), &line.as_str());
+        b.field(linenum.as_str(), &UnquotedDebugString(line.as_str()));
         start += 32;
         line.clear();
       }
@@ -46,7 +49,7 @@ impl<'a> Debug for HexDump<'a> {
     // Last remaining line
     if line.len() != 0 {
       let linenum = format!("{:04X?}", start);
-      b.field(linenum.as_str(), &line.as_str());
+      b.field(linenum.as_str(), &UnquotedDebugString(line.as_str()));
     }
 
     b.finish()
@@ -76,6 +79,14 @@ impl<'a> Debug for ShortHexDump<'a> {
 impl<'a> Display for ShortHexDump<'a> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     Debug::fmt(self, f)
+  }
+}
+
+pub(crate) struct UnquotedDebugString<'a>(pub &'a str);
+
+impl<'a> Debug for UnquotedDebugString<'a> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", &self.0)
   }
 }
 
