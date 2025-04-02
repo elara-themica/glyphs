@@ -636,6 +636,7 @@ pub enum ZeroCopyTypeID {
   GlyphHeader = 0x0023,
   GlyphOffset = 0x0024,
   Unknown = 0x0025,
+  HashSHA512,
 }
 
 impl From<u16> for ZeroCopyTypeID {

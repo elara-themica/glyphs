@@ -12,7 +12,7 @@
 //! - The remaining bytes of the glyph are a buffer for the glyphs it
 //!   contains.
 use crate::{
-  crypto::{Blake3Hash, Md5Hash, Sha1Hash, Sha2Hash, Sha3Hash},
+  crypto::{Blake3Hash, Md5Hash, Sha1Hash, Sha256Hash, Sha3Hash},
   dynamic::DynGlyph,
   glyph_close, glyph_read,
   zerocopy::{
@@ -669,7 +669,7 @@ impl<G: Glyph> Debug for BasicVecGlyph<G> {
         df.field("values", &values);
       },
       ZeroCopyTypeID::HashSHA2 => {
-        let values: &[Sha2Hash] = self.get().unwrap();
+        let values: &[Sha256Hash] = self.get().unwrap();
         df.field("values", &values);
       },
       ZeroCopyTypeID::HashSHA3 => {
@@ -802,8 +802,8 @@ impl<G: Glyph> EncodedGlyph<G> for BasicVecGlyph<G> {
           a.cmp(b)
         },
         (ZeroCopyTypeID::HashSHA2, ZeroCopyTypeID::HashSHA2) => {
-          let a: &[Sha2Hash] = self.get().unwrap();
-          let b: &[Sha2Hash] = other.get().unwrap();
+          let a: &[Sha256Hash] = self.get().unwrap();
+          let b: &[Sha256Hash] = other.get().unwrap();
           a.cmp(b)
         },
         (ZeroCopyTypeID::HashSHA3, ZeroCopyTypeID::HashSHA3) => {

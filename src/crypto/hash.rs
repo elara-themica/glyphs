@@ -9,7 +9,7 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -185,15 +185,18 @@ pub enum CryptoHashType {
   /// SHA-1
   SHA1 = 0x0002,
   /// SHA2-256
-  SHA2 = 0x0003,
+  SHA256 = 0x0003,
+  /// SHA2-512,
+  SHA512 = 0x0004,
   /// SHA3-256
-  SHA3 = 0x0004,
+  SHA3 = 0x0005,
+
   /// Blake3
-  Blake3 = 0x0005,
+  Blake3 = 0x0006,
 
   // This must always be the last member.
   /// Unknown
-  Unknown = 0x0006,
+  Unknown = 0x0007,
 }
 
 impl From<u16> for CryptoHashType {
@@ -228,7 +231,14 @@ impl From<CryptoHashType> for U16 {
 
 /// Glyphs trait for cryptographic hash functions.
 pub trait CryptographicHash:
-  ZeroCopy + Default + AsRef<[u8]> + Send + Sync
+  ZeroCopy
+  + Default
+  + AsRef<[u8]>
+  + ToGlyph
+  + for<'a> FromGlyph<ParsedGlyph<'a>>
+  + Send
+  + Sync
+  + 'static
 {
   /// The length of the hash produced by the function, in bytes.
   const HASH_LEN: usize;
@@ -365,8 +375,11 @@ impl<G: Glyph> Debug for HashGlyph<G> {
       CryptoHashType::SHA1 => {
         write!(f, "SHA1Glyph(")?;
       },
-      CryptoHashType::SHA2 => {
+      CryptoHashType::SHA256 => {
         write!(f, "SHA2Glyph(")?;
+      },
+      CryptoHashType::SHA512 => {
+        write!(f, "SHA2_512Glyph(")?;
       },
       CryptoHashType::SHA3 => {
         write!(f, "SHA3Glyph(")?;
@@ -435,13 +448,12 @@ impl HashPrefix {
   ///   used.
   /// - `mask_len`: The number of bits in the prefix. If the value is greater
   ///   than 248, it will be truncated to 248.
-  pub fn new(prefix_bytes: &[u8], prefix_len: usize) -> Self {
-    let prefix_len = prefix_len.min(120);
+  pub fn new(hash: &[u8], mask_len: usize) -> Self {
+    let prefix_len = mask_len.min(120);
     let prefix_mask = (!(u128::MAX >> prefix_len)).to_be_bytes();
     let mut prefix = [0u8; 15];
-    for (dst, (src, mask)) in prefix
-      .iter_mut()
-      .zip(prefix_bytes.iter().zip(prefix_mask.iter()))
+    for (dst, (src, mask)) in
+      prefix.iter_mut().zip(hash.iter().zip(prefix_mask.iter()))
     {
       *dst = *src & *mask;
     }
@@ -703,30 +715,30 @@ pub(crate) mod sha1 {
   hash_impls!(Sha1Hash, SHA1_DIGEST_BYTES, SHA1, HashSHA1, Sha1Context);
 }
 
-pub(crate) mod sha2 {
+pub(crate) mod sha256 {
   use super::*;
   #[rustfmt::skip]
   use ::sha2::Digest;
 
   /// The length of a SHA-2 256 byte hash value, in bytes (=32)
-  pub const SHA2_256_DIGEST_BYTES: usize = 32;
+  pub const SHA_256_DIGEST_BYTES: usize = 32;
 
   /// A SHA-2 256-bit hash value
   #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
   #[repr(packed)]
-  pub struct Sha2Hash(pub [u8; SHA2_256_DIGEST_BYTES]);
+  pub struct Sha256Hash(pub [u8; SHA_256_DIGEST_BYTES]);
 
   /// A context for calculating a SHA-2 256-bit hash
   #[cfg(feature = "sha2")]
   #[derive(Clone)]
-  pub struct Sha2Context(::sha2::Sha256);
+  pub struct Sha256Context(::sha2::Sha256);
 
   #[cfg(feature = "sha2")]
-  impl HashContext for Sha2Context {
-    type Output = Sha2Hash;
+  impl HashContext for Sha256Context {
+    type Output = Sha256Hash;
 
     fn new() -> Self {
-      Sha2Context(::sha2::Sha256::new())
+      Sha256Context(::sha2::Sha256::new())
     }
 
     fn update(&mut self, bytes: &[u8]) {
@@ -739,11 +751,63 @@ pub(crate) mod sha2 {
       let output = self.0.finalize();
       let mut hash_bytes = [0u8; 32];
       hash_bytes.clone_from_slice(output.as_slice());
-      Sha2Hash(hash_bytes)
+      Sha256Hash(hash_bytes)
     }
   }
 
-  hash_impls!(Sha2Hash, SHA2_256_DIGEST_BYTES, SHA2, HashSHA2, Sha2Context);
+  hash_impls!(
+    Sha256Hash,
+    SHA_256_DIGEST_BYTES,
+    SHA256,
+    HashSHA2,
+    Sha256Context
+  );
+}
+
+pub(crate) mod sha512 {
+  use super::*;
+
+  /// The length of an SHA-2 256 byte hash value, in bytes (=32)
+  pub const SHA512_DIGEST_BYTES: usize = 64;
+
+  /// A SHA-2 256-bit hash value
+  #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+  #[repr(packed)]
+  pub struct Sha512Hash(pub [u8; SHA512_DIGEST_BYTES]);
+
+  /// A context for calculating a SHA-2 256-bit hash
+  #[cfg(feature = "sha2")]
+  #[derive(Clone)]
+  pub struct Sha512Context(::sha2::Sha512);
+
+  #[cfg(feature = "sha2")]
+  impl HashContext for Sha512Context {
+    type Output = Sha512Hash;
+
+    fn new() -> Self {
+      Sha512Context(<::sha2::Sha512 as ::sha2::Digest>::new())
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+      ::sha2::Digest::update(&mut self.0, bytes);
+    }
+
+    fn finish(self) -> Self::Output {
+      use ::sha2::Digest;
+      let output = self.0.finalize();
+      let mut hash_bytes = [0u8; 64];
+      hash_bytes.clone_from_slice(output.as_slice());
+      Sha512Hash(hash_bytes)
+    }
+  }
+
+  hash_impls!(
+    Sha512Hash,
+    SHA512_DIGEST_BYTES,
+    SHA512,
+    HashSHA512,
+    Sha512Context
+  );
 }
 
 pub(crate) mod sha3 {
@@ -828,7 +892,7 @@ mod test {
   use super::*;
   use crate::{
     crypto::{
-      blake3::Blake3Hash, md5::Md5Hash, sha1::Sha1Hash, sha2::Sha2Hash,
+      blake3::Blake3Hash, md5::Md5Hash, sha1::Sha1Hash, sha256::Sha256Hash,
       sha3::Sha3Hash,
     },
     util::{init_test_logger, simple_codec_slice_test, simple_codec_test},
@@ -858,9 +922,9 @@ mod test {
 
     #[cfg(feature = "sha2")]
     {
-      let hash = Sha2Hash::random(&mut rng);
+      let hash = Sha256Hash::random(&mut rng);
       simple_codec_test(hash);
-      simple_codec_slice_test::<3, Sha2Hash, Sha2Hash>(hash);
+      simple_codec_slice_test::<3, Sha256Hash, Sha256Hash>(hash);
     }
 
     #[cfg(feature = "sha3")]
@@ -908,7 +972,7 @@ mod test {
 
     b.bytes = bytes.len() as u64;
     b.iter(|| {
-      let _hash = Sha2Hash::new(&bytes[..]);
+      let _hash = Sha256Hash::new(&bytes[..]);
     });
     Ok(())
   }

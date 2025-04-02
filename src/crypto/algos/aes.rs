@@ -22,13 +22,13 @@ type Aes256Ctr = ctr::Ctr128LE<::aes::Aes256>;
 /// An AES Key.
 ///
 /// The development version of GLIFS uses only AES-256 in CTR mode.
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct AesKey([u8; 32]);
 
 impl AesKey {
   /// Generate a new random AES key
-  pub fn new<R>(mut rng: R) -> AesKey
+  pub fn new<R>(rng: &mut R) -> AesKey
   where
     R: RngCore + CryptoRng,
   {
@@ -106,6 +106,12 @@ impl Debug for AesKey {
   }
 }
 
+impl Drop for AesKey {
+  fn drop(&mut self) {
+    self.0.fill(0)
+  }
+}
+
 /// An AES initialization vector.
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(packed)]
@@ -116,7 +122,7 @@ unsafe impl ZeroCopy for AesIv {}
 /// An AES Nonce
 impl AesIv {
   /// Generate a new random IV
-  pub fn new<R>(mut rng: R) -> AesIv
+  pub fn new_random<R>(rng: &mut R) -> AesIv
   where
     R: RngCore + CryptoRng,
   {
@@ -253,7 +259,7 @@ impl Debug for AesMac {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{crypto::TEST_PLAINTEXT, util::init_test_logger, GlyphErr};
+  use crate::{crypto::test::TEST_PLAINTEXT, util::init_test_logger, GlyphErr};
   use ::test::Bencher;
   use alloc::vec::Vec;
   use rand::rngs::OsRng;
@@ -266,7 +272,7 @@ mod test {
 
     let mut rng = OsRng::default();
     let key = AesKey::new(&mut rng);
-    let iv = AesIv::new(&mut rng);
+    let iv = AesIv::new_random(&mut rng);
     dbg!(&key, &iv);
 
     println!("Plaintext: {:?}", ShortHexDump(buffer.as_slice(), 4));

@@ -3,7 +3,7 @@ use alloc::string::FromUtf8Error;
 
 use crate::{
   basic::UnitTypes,
-  crypto::{CryptoKeyTypes, CryptographicHash, GlyphHash},
+  crypto::{CryptoErr, CryptographicHash, GlyphHash},
   dynamic::DynGlyph,
   util::{
     debug::{HexDump, ShortHexDump},
@@ -389,6 +389,18 @@ pub unsafe trait Glyph: AsRef<[u8]> + Clone + Debug + ToGlyph {
   #[inline(always)]
   fn confirm_type(&self, glyph_type: GlyphType) -> Result<(), GlyphErr> {
     self.header().confirm_type(glyph_type)
+  }
+
+  /// Interpret the glyph dynamically (detect type and return an enum
+  /// [`DynGlyph`]).
+  fn as_dyn(&self) -> DynGlyph<ParsedGlyph<'_>> {
+    DynGlyph::from_glyph_u(self.borrow())
+  }
+
+  /// Interpret the glyph dynamically (detect type and return an enum
+  /// [`DynGlyph`]).
+  fn into_dyn(self) -> DynGlyph<Self> {
+    DynGlyph::from_glyph_u(self)
   }
 
   /// Confirms this is a valid and correct glyph (including bounds checking).
@@ -952,8 +964,10 @@ impl UnsafeGlyph {
   /// that the underlying pointer remains valid for the entire lifetime of the
   /// object created.  If it is allowed to escape into "safe" code areas that
   /// do not uphold this invariant, undefined behavior *WILL* result.
-  pub unsafe fn from_parsed(parsed: ParsedGlyph) -> Self {
-    let first_byte = parsed.as_ref().get_unchecked(0);
+  pub fn from_parsed(parsed: ParsedGlyph) -> Self {
+    // SAFETY: bounds check unnecessary for `ParsedGlyph` source, due to
+    //         invariants provided by the `Glyph` trait.
+    let first_byte = unsafe { parsed.as_ref().get_unchecked(0) };
     debug_assert!((*first_byte as *const u8).is_aligned_to(8));
     Self(NonNull::from(first_byte))
   }
@@ -1613,6 +1627,7 @@ pub enum GlyphErr {
   },
   InvalidDateTime,
   DateTimeOverflow(i128),
+  /// The length of cryptographic keys can be no longer than `u16::MAX` bytes.
   CryptoKeyLengthOverflow(usize),
   /// When writing a signature glyph, the length of cryptographic signature was
   /// greater than `u16::MAX` bytes.
@@ -1620,8 +1635,8 @@ pub enum GlyphErr {
   /// When writing a signature glyph, the length of public key was greater than
   /// `u16::MAX` bytes.
   SignatureKeyLengthOverflow(usize),
-  /// This type of key cannot be used to create signatures.
-  CryptoSigningUnsupported(CryptoKeyTypes),
+  /// Errors related to functions.
+  CryptoErr(CryptoErr),
 }
 
 impl GlyphErr {

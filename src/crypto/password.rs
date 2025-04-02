@@ -580,7 +580,9 @@ impl<G: Glyph> EncodedGlyph<G> for PasswordGlyph<G> {
 #[allow(unused)]
 mod test {
   use super::*;
-  use crate::{crypto::TEST_PLAINTEXT, glyph_new, util::init_test_logger};
+  use crate::{
+    crypto::test::TEST_PLAINTEXT, glyph_new, util::init_test_logger,
+  };
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;
