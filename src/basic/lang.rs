@@ -340,7 +340,7 @@ where
     let bytes = source.content();
     let bytes_v = match u8::bbrds_i(bytes, &mut 0) {
       Ok(bytes_v) => bytes_v,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let valid_string = match String::from_utf8(bytes_v) {
       Ok(valid_string) => valid_string,
@@ -457,7 +457,7 @@ where
     let value: u32 =
       match U32::bbrd(&source.header().short_content()[..], &mut 0) {
         Ok(value) => value.into(),
-        Err(err) => return Err(err.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
     match char::try_from(value) {
       Ok(c) => Ok(c),

@@ -209,12 +209,12 @@ where
     let mut cursor = 0;
     let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let offsets =
       match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
         Ok(offsets) => offsets,
-        Err(err) => return Err(err.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
     let offsets = NonNull::from(offsets);
     Ok(Self {
@@ -564,12 +564,12 @@ where
     let content = glyph.content();
     let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
     {
       Ok(tensor_lengths) => tensor_lengths,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let tensor_lengths = NonNull::from(tensor_lengths);
     *cursor = round_to_word(*cursor);

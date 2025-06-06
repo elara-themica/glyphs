@@ -32,7 +32,7 @@ impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
 
     if size_of::<T>() > 4 {
       if let Err(err) = bounds_check(glyph.content_padded(), size_of::<T>()) {
-        return Err(err.into_fge(glyph));
+        return Err(FromGlyphErr::new(glyph, err.into()));
       }
 
       Ok(Self(glyph, PhantomData::default()))

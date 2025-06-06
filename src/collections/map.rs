@@ -101,11 +101,11 @@ where
 
     let mgh = match MapGlyphHeader::bbrf(content, cursor) {
       Ok(mgh) => mgh,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
       Ok(offsets) => offsets,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
 
     // Keep internal self references

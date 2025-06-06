@@ -164,7 +164,7 @@ impl<G: Glyph> FromGlyph<G> for EncryptedGlyph<G> {
     let mut cursor = 0;
     let header = match CiphertextHeader::bbrd(&contents, &mut cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let scheme: EncryptionScheme = header.encryption_scheme.get().into();
     let metadata = match CiphertextMetadata::read(contents, &mut cursor, scheme)

@@ -176,15 +176,15 @@ where
 
     let header = match TxLogHeader::bbrf(source, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let collection = match GlyphHash::bbrf(source, cursor) {
       Ok(collection) => collection,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let pk_bytes: &[u8; 32] = match u8::bbrfa(source, cursor) {
       Ok(pk_bytes) => pk_bytes,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let previous_tx = match GlyphHash::bbrfs(
       source,
@@ -192,34 +192,34 @@ where
       header.num_previous_transactions(),
     ) {
       Ok(previous_tx) => previous_tx,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
 
     let glyphs_added =
       match GlyphHash::bbrfs(source, cursor, header.num_glyphs_added()) {
         Ok(glyphs_added) => glyphs_added,
-        Err(err) => return Err(err.into_fge(glyph)),
+        Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
       };
     let glyphs_deleted =
       match GlifsDelete::bbrfs(source, cursor, header.num_glyphs_deleted()) {
         Ok(glyphs_deleted) => glyphs_deleted,
-        Err(err) => return Err(err.into_fge(glyph)),
+        Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
       };
     let extents_added =
       match GlyphHash::bbrfs(source, cursor, header.num_extents_added()) {
         Ok(extents_added) => extents_added,
-        Err(err) => return Err(err.into_fge(glyph)),
+        Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
       };
     let extents_deleted =
       match GlifsDelete::bbrfs(source, cursor, header.num_extents_deleted()) {
         Ok(extents_deleted) => extents_deleted,
-        Err(err) => return Err(err.into_fge(glyph)),
+        Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
       };
     let signed_content = &source[..*cursor];
 
     let sig_bytes: &[u8; 64] = match u8::bbrfa(source, cursor) {
       Ok(sig_bytes) => sig_bytes,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
 
     let pk = match VerifyingKey::from_bytes(&pk_bytes) {

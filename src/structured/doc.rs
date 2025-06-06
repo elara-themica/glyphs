@@ -309,30 +309,30 @@ impl<'a> DocGlyph<ParsedGlyph<'a>> {
 impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Document) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err.into()));
     }
     let content = source.content_padded();
     let cursor = &mut 0;
 
     let dgh = match DocGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let nov = u16::from(dgh.num_old_versions) as usize;
     let ov = match DocVer::bbrfs(content, cursor, nov) {
       Ok(versions) => versions,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     // SAFETY: This internal self-reference must not escape without being bound
     // to the lifetime of 'self, and
     let id_glyph = match glyph_read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let id = GlyphPtr::from_parsed(id_glyph);
     let body_glyph = match glyph_read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let body = GlyphPtr::from_parsed(body_glyph);
 

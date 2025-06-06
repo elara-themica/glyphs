@@ -45,7 +45,7 @@ where
     let cursor = &mut 0;
     let bytes = match u8::bbrda::<[u8], 16>(content, cursor) {
       Ok(bytes) => bytes,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     Ok(Uuid::from_bytes(bytes))
   }
@@ -60,7 +60,7 @@ impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a Uuid {
     }
     let content = source.content_parsed();
     if let Err(err) = bounds_check(content, size_of::<Uuid>()) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err.into()));
     }
     // SAFETY: We just did a bounds check, and Uuid is guaranteed to have the
     // same ABI as [u8; 16]
@@ -106,7 +106,7 @@ where
       return Err(err.into_fge(source));
     }
     if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err.into()));
     }
     Ok(UuidGlyph(source))
   }

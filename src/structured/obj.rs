@@ -216,12 +216,12 @@ where
 
     let header = match ObjGlyphHeader::bbrd(content, cursor) {
       Ok(header) => header,
-      Err(e) => return Err(e.into_fge(source)),
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
     let type_hash = if header.has_type_hash() {
       let hash = match GlyphHash::bbrf(content, cursor) {
         Ok(hash) => hash,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       Some(NonNull::from(hash))
     } else {
@@ -230,11 +230,11 @@ where
     let type_name = if header.has_type_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
@@ -248,7 +248,7 @@ where
     let variant_id = if header.has_variant_id() {
       let id = match U64::bbrd(content, cursor) {
         Ok(value) => value,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       Some(id.get())
     } else {
@@ -257,11 +257,11 @@ where
     let variant_name = if header.has_variant_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
@@ -277,7 +277,7 @@ where
       match GlyphOffset::bbrfs(content, cursor, header.num_fields.get().into())
       {
         Ok(offsets) => offsets,
-        Err(e) => return Err(e.into_fge(source)),
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
       };
     let field_offsets = NonNull::from(field_offsets);
 
