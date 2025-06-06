@@ -53,7 +53,7 @@ pub(crate) mod de;
 #[warn(missing_docs)]
 pub(crate) mod ser;
 
-use crate::{FromGlyphErr, Glyph, GlyphErr, GlyphType};
+use crate::{zerocopy::BufferErr, FromGlyphErr, Glyph, GlyphErr, GlyphType};
 use alloc::string::{String, ToString};
 use core::fmt::{Debug, Display, Formatter};
 
@@ -64,6 +64,8 @@ use core::fmt::{Debug, Display, Formatter};
 /// in `GlyphErr` for performance reasons.
 #[derive(Debug)]
 pub enum SerdeGlyphErr {
+  BufferErr(BufferErr),
+
   /// A custom text error, provided by the `serde` library itself.
   Custom(String),
 
@@ -167,6 +169,12 @@ impl From<SerdeGlyphErr> for GlyphErr {
 impl From<GlyphErr> for SerdeGlyphErr {
   fn from(src: GlyphErr) -> Self {
     Self::GlyphErr(src)
+  }
+}
+
+impl From<BufferErr> for SerdeGlyphErr {
+  fn from(value: BufferErr) -> Self {
+    Self::BufferErr(value)
   }
 }
 

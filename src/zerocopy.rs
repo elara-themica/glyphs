@@ -45,7 +45,7 @@
 //! with otherwise generic code.  There's also a [`ZeroCopyGlyph`] trait for
 //! those types which have a regular glyph type associated with them as well.
 //! See the documentation for [`BasicGlyph`] for more details.
-use crate::{GlyphErr, GlyphType};
+use crate::GlyphType;
 use core::{
   fmt::Debug,
   hint::unreachable_unchecked,
@@ -56,12 +56,12 @@ use core::{
 
 /// Bounds check that returns [`BufferErr`] on failure.
 #[inline(always)]
-pub(crate) fn bounds_check<T>(buffer: &T, to: usize) -> Result<(), GlyphErr>
+pub(crate) fn bounds_check<T>(buffer: &T, to: usize) -> Result<(), BufferErr>
 where
   T: AsRef<[u8]> + ?Sized,
 {
   if to > buffer.as_ref().len() {
-    let err = GlyphErr::OutOfBounds {
+    let err = BufferErr::OutOfBounds {
       index:  to,
       length: buffer.as_ref().len(),
     };
@@ -80,7 +80,7 @@ pub(crate) fn round_to_word(n: usize) -> usize {
 pub(crate) fn pad_to_word(
   buffer: &mut [u8],
   cursor: &mut usize,
-) -> Result<(), GlyphErr> {
+) -> Result<(), BufferErr> {
   let idx_to_word = round_to_word(*cursor);
   bounds_check(buffer, idx_to_word)?;
   unsafe { pad_to_word_u(buffer, cursor) }
@@ -149,7 +149,7 @@ pub trait ZeroCopyGlyph:
 pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   /// Reads a copy of `Self` from `source[cursor]`.
   #[inline(always)]
-  fn bbrd<T>(source: &T, cursor: &mut usize) -> Result<Self, GlyphErr>
+  fn bbrd<T>(source: &T, cursor: &mut usize) -> Result<Self, BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -176,7 +176,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &T,
     cursor: &mut usize,
     items: usize,
-  ) -> Result<alloc::vec::Vec<Self>, GlyphErr>
+  ) -> Result<alloc::vec::Vec<Self>, BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -193,7 +193,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrds_i<T>(
     source: &T,
     cursor: &mut usize,
-  ) -> Result<alloc::vec::Vec<Self>, GlyphErr>
+  ) -> Result<alloc::vec::Vec<Self>, BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -221,7 +221,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrda<T, const N: usize>(
     source: &T,
     cursor: &mut usize,
-  ) -> Result<[Self; N], GlyphErr>
+  ) -> Result<[Self; N], BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -251,7 +251,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrf<'a, T>(
     source: &'a T,
     cursor: &mut usize,
-  ) -> Result<&'a Self, GlyphErr>
+  ) -> Result<&'a Self, BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -276,7 +276,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &'a T,
     cursor: &mut usize,
     len: usize,
-  ) -> Result<&'a [Self], GlyphErr>
+  ) -> Result<&'a [Self], BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -306,7 +306,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrfa<'a, T, const N: usize>(
     source: &'a T,
     cursor: &mut usize,
-  ) -> Result<&'a [Self; N], GlyphErr>
+  ) -> Result<&'a [Self; N], BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -336,7 +336,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &T,
     cursor: &mut usize,
     target: &mut [Self],
-  ) -> Result<(), GlyphErr>
+  ) -> Result<(), BufferErr>
   where
     T: AsRef<[u8]> + ?Sized,
   {
@@ -385,7 +385,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
 
   /// Write a copy of the object at `buffer[offset]`
   #[inline(always)]
-  fn bbwr<T>(&self, target: &mut T, cursor: &mut usize) -> Result<(), GlyphErr>
+  fn bbwr<T>(&self, target: &mut T, cursor: &mut usize) -> Result<(), BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
   {
@@ -411,7 +411,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &[Self],
     target: &mut T,
     cursor: &mut usize,
-  ) -> Result<(), GlyphErr>
+  ) -> Result<(), BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
     Self: Sized,
@@ -450,7 +450,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &[&Self],
     target: &mut T,
     cursor: &mut usize,
-  ) -> Result<(), GlyphErr>
+  ) -> Result<(), BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
   {
@@ -478,7 +478,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrf_mut<'a, T>(
     source: &'a mut T,
     cursor: &mut usize,
-  ) -> Result<&'a mut Self, GlyphErr>
+  ) -> Result<&'a mut Self, BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
     Self: ZeroCopy,
@@ -514,7 +514,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
     source: &'a mut T,
     cursor: &mut usize,
     len: usize,
-  ) -> Result<&'a mut [Self], GlyphErr>
+  ) -> Result<&'a mut [Self], BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
     Self: ZeroCopy,
@@ -569,7 +569,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
   fn bbrfa_mut<'a, T, const N: usize>(
     source: &'a mut T,
     cursor: &mut usize,
-  ) -> Result<&'a mut [Self; N], GlyphErr>
+  ) -> Result<&'a mut [Self; N], BufferErr>
   where
     T: AsMut<[u8]> + AsRef<[u8]> + ?Sized,
     Self: Sized,
@@ -667,6 +667,18 @@ impl From<ZeroCopyTypeID> for U16 {
   fn from(value: ZeroCopyTypeID) -> Self {
     U16::from(value as u16)
   }
+}
+
+/// Errors reading from raw byte buffers
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum BufferErr {
+  /// A bounds check failed.
+  OutOfBounds {
+    /// The position being checked.
+    index:  usize,
+    /// The length of the buffer.
+    length: usize,
+  },
 }
 
 unsafe impl ZeroCopy for u8 {}

@@ -10,8 +10,8 @@ use crate::{
     MemoizedInvariant,
   },
   zerocopy::{
-    bounds_check, pad_to_word, round_to_word, HasZeroCopyID, ZeroCopy,
-    ZeroCopyTypeID, U16, U32,
+    bounds_check, pad_to_word, round_to_word, BufferErr, HasZeroCopyID,
+    ZeroCopy, ZeroCopyTypeID, U16, U32,
   },
 };
 #[cfg(feature = "alloc")]
@@ -721,7 +721,7 @@ impl AsMut<[u8]> for BoxGlyphBuf {
 
 /// A glyph stored on the heap.
 #[cfg(feature = "alloc")]
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct BoxGlyph(Box<[u8], GlyphAlloc>);
 
 #[cfg(feature = "alloc")]
@@ -833,7 +833,8 @@ impl AsRef<[u8]> for ArcGlyphBuf {
   fn as_ref(&self) -> &[u8] {
     unsafe {
       let ptr = self.0.get();
-      &(*ptr)[size_of::<HeapGlyphHeader>()..]
+      let bytes = &*ptr;
+      &bytes[size_of::<HeapGlyphHeader>()..]
     }
   }
 }
@@ -908,7 +909,8 @@ impl ToGlyph for ArcGlyph {
     target: &mut [u8],
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
-    u8::bbwrs(self.as_ref(), target, cursor)
+    u8::bbwrs(self.as_ref(), target, cursor)?;
+    Ok(())
   }
 
   fn glyph_len(&self) -> usize {
@@ -1012,7 +1014,8 @@ impl ToGlyph for UnsafeGlyph {
     target: &mut [u8],
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
-    u8::bbwrs(self.as_ref(), target, cursor)
+    u8::bbwrs(self.as_ref(), target, cursor)?;
+    Ok(())
   }
 
   fn glyph_len(&self) -> usize {
@@ -1303,6 +1306,8 @@ impl From<GlyphType> for u16 {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C, u32)]
 pub enum GlyphErr {
+  BufferErr(BufferErr),
+
   /// User type labels may not have user type labels themselves.
   RecursiveUserTypeLabel,
 
@@ -1388,8 +1393,6 @@ pub enum GlyphErr {
   /// A user type label was requested, but none was present.
   UserTypeLabelNotPresent,
 
-  // /// An error occurred while working with cryptographic data.
-  // CryptoErr(CryptoErr),
   /// A type cannot be decoded because it is encrypted.
   ///
   /// Use an intermediate type that has a more specific decoding function
@@ -1635,7 +1638,7 @@ pub enum GlyphErr {
   /// When writing a signature glyph, the length of public key was greater than
   /// `u16::MAX` bytes.
   SignatureKeyLengthOverflow(usize),
-  /// Errors related to functions.
+  /// Errors related to cryptographic functions.
   CryptoErr(CryptoErr),
 }
 
@@ -1643,6 +1646,12 @@ impl GlyphErr {
   /// Translates into a [`FromGlyphErr`] during decoding.
   pub fn into_fge<G: Glyph>(self, glyph: G) -> FromGlyphErr<G> {
     FromGlyphErr(glyph, self)
+  }
+}
+
+impl From<BufferErr> for GlyphErr {
+  fn from(value: BufferErr) -> Self {
+    Self::BufferErr(value)
   }
 }
 
