@@ -1,52 +1,134 @@
-use crate::zerocopy::U16;
-use std::intrinsics::transmute;
+//! Adaptations of Cryptographic Algorithms
+//!
+//! # Overview
+//!
+//! This module contains adaptations of cryptographic algorithms for use with
+//! glyphs.  The primary purpose of this module is to provide a consistent API
+//! for cryptographic algorithms for the rest of this library, with public APIs
+//! that can be used for third-party implementation of other cryptographic
+//! algorithms.
+//!
+//! Initially, we implement only a small subset of the algorithms that are
+//! commonly used in the cryptographic community--AES 256 for symmetric
+//! encryption and Curve25519 for asymmetric encryption and digital signatures
+//! using the `aes`, `ed25519-dalek` and `x25519-dalek` crates.
+//!
+//! - [`CryptoKey`].  This trait is implemented by all cryptographic keys, and
+//!   provies
+//!
+//! - [`SigningKey`]
+//! - [`AuthenticationKey`]
+//! - [`CryptoSignature`]
+//!
+//!
 
-pub mod aes;
-pub mod ed25519;
+use crate::crypto::{
+  CryptoErr, CryptoKeyTypes, CryptoSignatureTypes, Sha3Hash,
+};
+use argon2::password_hash::rand_core::CryptoRng;
+use core::fmt::Debug;
+use rand::Rng;
 
-/// A list of cryptographic key types and corresponding type ids.
-//
-// SAFETY:  Updating this?  Remember to keep the list and IDs contiguous and
-// update the `From<u16>` implementation below with the highest ID.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u16)]
-pub enum CryptoKeyTypes {
-  /// The type of the key is deliberately unspecified.
-  Unspecified = 0x0000,
-  /// A 256-bit AES key
-  Aes256 = 0x0001,
-  /// An Ed25519 Public Key
-  Ed25519Public = 0x0002,
-  /// An Ed25519 Private Key
-  Ed25519Private = 0x0003,
-  /// An X25519 Public Key
-  X25519Public = 0x0004,
-  /// An X25519 Private Key
-  X25519Private = 0x0005,
-  /// An unknown key type.
-  Unknown = 0x0006,
+pub(super) mod aes;
+pub(super) mod ed25519;
+
+/// Internal trait for Cryptographic Keys
+pub trait CryptoKey: Debug + Sized + Send {
+  type PublicBytes<'a>: AsRef<[u8]>
+  where
+    Self: 'a;
+
+  type SecretBytes<'a>: AsRef<[u8]>
+  where
+    Self: 'a;
+
+  /// Returns the fingerprint of this key
+  fn fingerprint(&self) -> &Sha3Hash;
+
+  /// Returns the type of this cryptographic key.
+  ///
+  /// This is intended to be used for serialization.
+  fn key_type(&self) -> CryptoKeyTypes;
+
+  /// The length serialized key's public component (if any), in bytes.
+  fn public_len(&self) -> usize;
+
+  /// The length serialized key's secret component (if any), in bytes.
+  fn secret_len(&self) -> usize;
+
+  /// The serialized bytes of the public key component (if any).
+  fn public_bytes(&self) -> Self::PublicBytes<'_>;
+
+  /// The serialized bytes of the private key component (if any).
+  fn secret_bytes(&self) -> Self::SecretBytes<'_>;
+
+  /// Read the serialized key from the provided buffer.
+  fn deserialize(
+    key_type: CryptoKeyTypes,
+    public_bytes: &[u8],
+    secret_bytes: &[u8],
+  ) -> Result<Self, CryptoErr>;
 }
 
-impl From<u16> for CryptoKeyTypes {
-  fn from(type_id: u16) -> Self {
-    if type_id > CryptoKeyTypes::Unknown as u16 {
-      CryptoKeyTypes::Unknown
-    } else {
-      // SAFETY: Depends on highest known ID being checked, safety note
-      // left in that code.
-      unsafe { transmute::<u16, Self>(type_id) }
-    }
-  }
+pub trait GenerableCryptoKey: CryptoKey {
+  fn generate<R: Rng + CryptoRng>(rng: &mut R) -> Self;
 }
 
-impl From<U16> for CryptoKeyTypes {
-  fn from(value: U16) -> Self {
-    value.get().into()
-  }
+/// Keys used for creating digital signatures.
+pub trait SigningKey: CryptoKey {
+  /// The type of public key used to authenticate the signature.
+  type AuthenticationKey: AuthenticationKey;
+
+  /// The type of signature produced by this key.
+  type Signature: CryptoSignature;
+
+  /// The public key used to authenticate the signature.
+  fn authentication_key(&self) -> &Self::AuthenticationKey;
+
+  /// Produce a digital signature for the provided bytes.
+  ///
+  /// Note that this is distinct from the full signature provided by a
+  /// [`SignatureGlyph`]; this is for the cryptographic signature only.
+  fn sign(&self, bytes: &[u8]) -> Self::Signature;
 }
 
-impl From<CryptoKeyTypes> for U16 {
-  fn from(value: CryptoKeyTypes) -> Self {
-    U16::from(value as u16)
+/// Keys used to authenticate digital signatures.
+pub trait AuthenticationKey: CryptoKey {
+  /// The type of signature that can be verified by this key.
+  type Signature: CryptoSignature;
+
+  /// Returns `Ok(())` if the signature is valid or an `Err` otherwise.
+  fn verify(
+    &self,
+    bytes: &[u8],
+    signature: &Self::Signature,
+  ) -> Result<(), CryptoErr>;
+}
+
+/// Cryptographic signatures created by a [`SigningKey`],
+pub trait CryptoSignature: Sized {
+  /// The type of key used to authenticate this signature.
+  type AuthenticationKey: AuthenticationKey;
+
+  type SignatureBytes<'a>: AsRef<[u8]>
+  where
+    Self: 'a;
+
+  fn signature_type(&self) -> CryptoSignatureTypes;
+
+  /// The length of the serialized signature, in bytes.
+  ///
+  /// The default implementation just uses the `signature_bytes()` function;
+  /// this can be overridden if/when serialization is non-trivial.
+  fn signature_length(&self) -> usize {
+    self.signature_bytes().as_ref().len()
   }
+
+  fn signature_bytes(&self) -> Self::SignatureBytes<'_>;
+
+  /// Deserialize a signature from the provided buffer.
+  fn deserialize(
+    sig_type: CryptoSignatureTypes,
+    source: &[u8],
+  ) -> Result<Self, CryptoErr>;
 }

@@ -1,138 +1,37 @@
+//! Module for Ed25519 cryptographic keys and signatures.
+//!
+//! These types should generally not be used directly.  They are intended to
+//! be generics used with the generic cryptographic types, as they are here to
+//! provide access to low-level primitives through a generic (trait) interface.
+//! For example, generate a new key with [`Key::<Ed25519SecretKey>::generate()`]
+//! instead of using [`Ed25519SecretKey`] directly.
+//!
+//! [`Ed25519SecretKey`], [`Ed25519PublicKey`], and [`Ed25519Signature`] are
+//! adaptors for the `SigningKey`, `VerifyingKey`, and `Signature` types from
+//! the `ed25519-dalek` crate, respectively.
 use crate::{
   crypto::{
-    algos::CryptoKeyTypes,
-    key_codec::{crypto_key_glyph_encode, crypto_key_glyph_len},
-    CryptoErr, CryptoKeyGlyph, CryptoSignatureOldTrait, CryptographicHash,
-    GlyphsAuthenticationKey, GlyphsCryptographicKey, GlyphsSigningKey,
-    HashContext, Sha3Hash,
+    algos::{
+      AuthenticationKey, CryptoKey, CryptoSignature, GenerableCryptoKey,
+      SigningKey,
+    },
+    CryptoErr, CryptoKeyTypes, CryptoSignatureTypes, CryptographicHash,
+    Sha3Hash,
   },
-  misc::DateTime,
   util::debug::ShortHexDump,
   zerocopy::ZeroCopy,
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, ToGlyph,
 };
-use core::{
-  cmp::Ordering,
-  fmt::{Debug, Formatter},
-};
+use core::fmt::{Debug, Formatter};
 use ed25519_dalek::{Signer, Verifier};
 use rand::{CryptoRng, Rng};
 
-pub(in crate::crypto) const ED25519_KEY_LEN: usize = 32;
-pub(in crate::crypto) const ED25519_SIGNATURE_LEN: usize = 64;
-
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Ed25519PublicKey {
-  expires:     DateTime,
   fingerprint: Sha3Hash,
-  pk:          ed25519_dalek::VerifyingKey,
+  public_key:  ed25519_dalek::VerifyingKey,
 }
 
-impl ToGlyph for Ed25519PublicKey {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    crypto_key_glyph_encode(self, target, cursor)
-  }
-
-  fn glyph_len(&self) -> usize {
-    crypto_key_glyph_len(self)
-  }
-}
-
-impl<'a, G: Glyph> TryFrom<&'a CryptoKeyGlyph<G>> for Ed25519PublicKey {
-  type Error = GlyphErr;
-
-  fn try_from(value: &'a CryptoKeyGlyph<G>) -> Result<Self, Self::Error> {
-    Ed25519PublicKey::read(
-      value.key_type(),
-      value.expires(),
-      value.public_key_bytes(),
-      value.private_key_bytes(),
-    )
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for Ed25519PublicKey {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    let key_glyph = CryptoKeyGlyph::from_glyph(glyph)?;
-    let pk = match Ed25519PublicKey::try_from(&key_glyph) {
-      Ok(pk) => pk,
-      Err(err) => return Err(FromGlyphErr::new(key_glyph.into_inner(), err)),
-    };
-    Ok(pk)
-  }
-}
-
-impl GlyphsCryptographicKey for Ed25519PublicKey {
-  fn key_type(&self) -> CryptoKeyTypes {
-    CryptoKeyTypes::Ed25519Public
-  }
-
-  fn fingerprint(&self) -> Sha3Hash {
-    self.fingerprint
-  }
-
-  fn expires(&self) -> &DateTime {
-    &self.expires
-  }
-
-  fn read(
-    key_type: CryptoKeyTypes,
-    expires: &DateTime,
-    public: &[u8],
-    _private: &[u8],
-  ) -> Result<Self, GlyphErr> {
-    if key_type != CryptoKeyTypes::Ed25519Public
-      && key_type != CryptoKeyTypes::Ed25519Private
-    {
-      Err(GlyphErr::CryptoErr(CryptoErr::WrongKeyType {
-        expected: CryptoKeyTypes::Ed25519Public,
-        observed: key_type,
-      }))
-    } else {
-      let pk_bytes: &[u8; ED25519_KEY_LEN] = u8::bbrfa(public, &mut 0)?;
-      let pk = ed25519_dalek::VerifyingKey::from_bytes(pk_bytes)
-        .map_err(|_| GlyphErr::CryptoErr(CryptoErr::Ed25519InvalidKey))?;
-      let fingerprint = Sha3Hash::new(&pk.to_bytes());
-      Ok(Self {
-        expires: expires.clone(),
-        fingerprint,
-        pk,
-      })
-    }
-  }
-
-  fn key_len_public(&self) -> usize {
-    ED25519_KEY_LEN
-  }
-
-  fn write_public(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    u8::bbwrs(self.pk.as_bytes(), target, cursor)?;
-    Ok(())
-  }
-
-  fn key_len_private(&self) -> usize {
-    0
-  }
-
-  fn write_private(
-    &self,
-    _target: &mut [u8],
-    _cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    Ok(())
-  }
-}
-
-impl GlyphsAuthenticationKey for Ed25519PublicKey {
-  type HashContext = ed25519_dalek::Sha512;
+impl AuthenticationKey for Ed25519PublicKey {
   type Signature = Ed25519Signature;
 
   fn verify(
@@ -141,277 +40,234 @@ impl GlyphsAuthenticationKey for Ed25519PublicKey {
     signature: &Self::Signature,
   ) -> Result<(), CryptoErr> {
     self
-      .pk
-      .verify(bytes, &signature.signature)
-      .map_err(|_| CryptoErr::VerificationFailed)
-  }
-
-  fn new_hash_context(&self) -> Self::HashContext {
-    <ed25519_dalek::Sha512 as ed25519_dalek::Digest>::new()
-  }
-
-  fn verify_pre_hashed(
-    &self,
-    context: Self::HashContext,
-    signature: &Self::Signature,
-  ) -> Result<(), CryptoErr> {
-    self
-      .pk
-      .verify_prehashed(context, None, &signature.signature)
-      .map_err(|_| CryptoErr::SignatureInvalid)?;
+      .public_key
+      .verify(bytes, &signature.0)
+      .map_err(|_| CryptoErr::VerificationFailed)?;
     Ok(())
   }
 }
 
-impl PartialOrd for Ed25519PublicKey {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
+impl CryptoKey for Ed25519PublicKey {
+  type PublicBytes<'a> = &'a [u8; 32];
+  type SecretBytes<'a> = &'a [u8];
 
-impl Ord for Ed25519PublicKey {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.fingerprint.cmp(&other.fingerprint)
+  fn fingerprint(&self) -> &Sha3Hash {
+    &self.fingerprint
+  }
+
+  fn key_type(&self) -> CryptoKeyTypes {
+    CryptoKeyTypes::Ed25519Public
+  }
+
+  fn public_len(&self) -> usize {
+    ed25519_dalek::PUBLIC_KEY_LENGTH
+  }
+
+  fn secret_len(&self) -> usize {
+    0
+  }
+
+  fn public_bytes(&self) -> Self::PublicBytes<'_> {
+    self.public_key.as_bytes()
+  }
+
+  fn secret_bytes(&self) -> Self::SecretBytes<'_> {
+    &[]
+  }
+
+  fn deserialize(
+    key_type: CryptoKeyTypes,
+    public_bytes: &[u8],
+    private_bytes: &[u8],
+  ) -> Result<Self, CryptoErr> {
+    if key_type == CryptoKeyTypes::Ed25519Public {
+      let fingerprint = Sha3Hash::new(public_bytes);
+      let public_bytes: &[u8; 32] = u8::bbrfa(public_bytes, &mut 0)?;
+      let public_key = ed25519_dalek::VerifyingKey::from_bytes(public_bytes)
+        .map_err(|_| CryptoErr::Ed25519InvalidKey)?;
+      Ok(Self {
+        fingerprint,
+        public_key,
+      })
+    } else if key_type == CryptoKeyTypes::Ed25519Private {
+      let sk =
+        Ed25519SecretKey::deserialize(key_type, public_bytes, private_bytes)?;
+      Ok(*sk.authentication_key())
+    } else {
+      Err(CryptoErr::WrongKeyType {
+        expected: CryptoKeyTypes::Ed25519Public,
+        observed: key_type,
+      })
+    }
   }
 }
 
 impl Debug for Ed25519PublicKey {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    let mut df = f.debug_tuple("Ed25519PublicKey");
-    df.field(&self.fingerprint);
-    df.finish()
+    write!(
+      f,
+      "Ed25519PublicKey({:?})",
+      &ShortHexDump(self.fingerprint.as_ref(), 0)
+    )
   }
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct Ed25519PrivateKey {
-  pk: Ed25519PublicKey,
-  sk: ed25519_dalek::SigningKey,
+pub struct Ed25519SecretKey {
+  public_key: Ed25519PublicKey,
+  secret_key: ed25519_dalek::SigningKey,
 }
 
-impl Ed25519PrivateKey {
-  pub fn generate<R: Rng + CryptoRng>(
-    rng: &mut R,
-    expires: Option<DateTime>,
-  ) -> Self {
-    let expires = expires.unwrap_or(DateTime::NEVER);
+impl AuthenticationKey for Ed25519SecretKey {
+  type Signature = Ed25519Signature;
+
+  fn verify(
+    &self,
+    bytes: &[u8],
+    signature: &Self::Signature,
+  ) -> Result<(), CryptoErr> {
+    self.public_key.verify(bytes, signature)
+  }
+}
+
+impl CryptoKey for Ed25519SecretKey {
+  type PublicBytes<'a> = &'a [u8; 32];
+  type SecretBytes<'a> = [u8; 32];
+
+  fn fingerprint(&self) -> &Sha3Hash {
+    self.public_key.fingerprint()
+  }
+
+  fn key_type(&self) -> CryptoKeyTypes {
+    CryptoKeyTypes::Ed25519Private
+  }
+
+  fn public_len(&self) -> usize {
+    ed25519_dalek::PUBLIC_KEY_LENGTH
+  }
+
+  fn secret_len(&self) -> usize {
+    ed25519_dalek::SECRET_KEY_LENGTH
+  }
+
+  fn public_bytes(&self) -> Self::PublicBytes<'_> {
+    self.public_key.public_bytes()
+  }
+
+  fn secret_bytes(&self) -> Self::SecretBytes<'_> {
+    self.secret_key.to_bytes()
+  }
+
+  fn deserialize(
+    key_type: CryptoKeyTypes,
+    public_bytes: &[u8],
+    secret_bytes: &[u8],
+  ) -> Result<Self, CryptoErr> {
+    if key_type == CryptoKeyTypes::Ed25519Private {
+      let pk_bytes: &[u8; 32] = u8::bbrfa(public_bytes, &mut 0)?;
+      let public_key_deserialized =
+        ed25519_dalek::VerifyingKey::from_bytes(pk_bytes)
+          .map_err(|_| CryptoErr::Ed25519InvalidKey)?;
+
+      let sk_bytes: &[u8; 32] = u8::bbrfa(secret_bytes, &mut 0)?;
+      let secret_key = ed25519_dalek::SigningKey::from(sk_bytes);
+
+      let public_key_calculated = secret_key.verifying_key();
+
+      if public_key_calculated != public_key_deserialized {
+        std::dbg!(public_key_calculated, public_key_deserialized);
+        return Err(CryptoErr::Ed25519InvalidKey);
+      }
+      let fingerprint = Sha3Hash::new(public_bytes);
+      Ok(Self {
+        public_key: Ed25519PublicKey {
+          fingerprint,
+          public_key: public_key_calculated,
+        },
+        secret_key,
+      })
+    } else {
+      Err(CryptoErr::WrongKeyType {
+        expected: CryptoKeyTypes::Ed25519Private,
+        observed: key_type,
+      })
+    }
+  }
+}
+
+impl GenerableCryptoKey for Ed25519SecretKey {
+  fn generate<R: Rng + CryptoRng>(rng: &mut R) -> Self {
     let sk = ed25519_dalek::SigningKey::generate(rng);
     let pk = sk.verifying_key();
     let fingerprint = Sha3Hash::new(&pk.to_bytes());
 
     Self {
-      pk: Ed25519PublicKey {
-        expires,
+      public_key: Ed25519PublicKey {
         fingerprint,
-        pk,
+        public_key: pk,
       },
-      sk,
-    }
-  }
-
-  pub fn public_key(&self) -> &Ed25519PublicKey {
-    &self.pk
-  }
-}
-
-impl ToGlyph for Ed25519PrivateKey {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    crypto_key_glyph_encode(self, target, cursor)
-  }
-
-  fn glyph_len(&self) -> usize {
-    crypto_key_glyph_len(self)
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for Ed25519PrivateKey {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    let key_glyph = CryptoKeyGlyph::from_glyph(glyph)?;
-    let sk = match Ed25519PrivateKey::try_from(&key_glyph) {
-      Ok(sk) => sk,
-      Err(err) => return Err(FromGlyphErr::new(key_glyph.into_inner(), err)),
-    };
-    Ok(sk)
-  }
-}
-
-impl<'a, G: Glyph> TryFrom<&'a CryptoKeyGlyph<G>> for Ed25519PrivateKey {
-  type Error = GlyphErr;
-
-  fn try_from(value: &'a CryptoKeyGlyph<G>) -> Result<Self, Self::Error> {
-    if value.key_type() != CryptoKeyTypes::Ed25519Private {
-      Err(GlyphErr::CryptoErr(CryptoErr::WrongKeyType {
-        expected: CryptoKeyTypes::Ed25519Private,
-        observed: value.key_type(),
-      }))
-    } else {
-      Ed25519PrivateKey::read(
-        value.key_type(),
-        value.expires(),
-        value.public_key_bytes(),
-        value.private_key_bytes(),
-      )
+      secret_key: sk,
     }
   }
 }
 
-impl GlyphsCryptographicKey for Ed25519PrivateKey {
-  fn key_type(&self) -> CryptoKeyTypes {
-    CryptoKeyTypes::Ed25519Private
-  }
-
-  fn fingerprint(&self) -> Sha3Hash {
-    self.pk.fingerprint()
-  }
-
-  fn expires(&self) -> &DateTime {
-    self.pk.expires()
-  }
-
-  fn read(
-    key_type: CryptoKeyTypes,
-    expires: &DateTime,
-    _public: &[u8],
-    private: &[u8],
-  ) -> Result<Self, GlyphErr> {
-    if key_type != CryptoKeyTypes::Ed25519Private {
-      Err(GlyphErr::CryptoErr(CryptoErr::WrongKeyType {
-        expected: CryptoKeyTypes::Ed25519Private,
-        observed: key_type,
-      }))
-    } else {
-      let sk_bytes: &[u8; ED25519_KEY_LEN] = u8::bbrfa(private, &mut 0)?;
-      let sk = ed25519_dalek::SigningKey::from_bytes(sk_bytes);
-      let pk = sk.verifying_key();
-      let fingerprint = Sha3Hash::new(&pk.to_bytes());
-      Ok(Self {
-        pk: Ed25519PublicKey {
-          expires: expires.clone(),
-          fingerprint,
-          pk,
-        },
-        sk,
-      })
-    }
-  }
-
-  fn key_len_public(&self) -> usize {
-    ED25519_KEY_LEN
-  }
-
-  fn write_public(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    u8::bbwrs(self.public_key().pk.as_bytes(), target, cursor)?;
-    Ok(())
-  }
-
-  fn key_len_private(&self) -> usize {
-    ED25519_KEY_LEN
-  }
-
-  fn write_private(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    u8::bbwrs(self.sk.as_bytes(), target, cursor)?;
-    Ok(())
-  }
-}
-
-impl GlyphsSigningKey for Ed25519PrivateKey {
-  type HashContext = ed25519_dalek::Sha512;
-  type Signature = Ed25519Signature;
-
-  fn sign(&self, bytes: &[u8]) -> Self::Signature {
-    let signature = self.sk.sign(bytes);
-    Ed25519Signature { signature }
-  }
-
-  fn new_hash_context(&self) -> Self::HashContext {
-    ed25519_dalek::Sha512::new()
-  }
-
-  fn sign_pre_hashed(
-    &self,
-    context: Self::HashContext,
-  ) -> Result<Self::Signature, CryptoErr> {
-    let sig = self
-      .sk
-      .sign_prehashed(context, None)
-      .map_err(|_| CryptoErr::InternalErrorEd25519)?;
-    Ok(Ed25519Signature { signature: sig })
-  }
-}
-
-impl PartialOrd for Ed25519PrivateKey {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl Ord for Ed25519PrivateKey {
-  fn cmp(&self, other: &Self) -> Ordering {
-    // Same sort order as the public keys.
-    self.pk.cmp(&other.pk)
-  }
-}
-
-impl Debug for Ed25519PrivateKey {
+impl Debug for Ed25519SecretKey {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(
       f,
-      "Ed25519PrivateKey(fingerprint={:?})",
-      &self.pk.fingerprint
+      "Ed25519PrivateKey({:?})",
+      &ShortHexDump(self.public_key.fingerprint.as_ref(), 0)
     )
   }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Ed25519Signature {
-  signature: ed25519_dalek::Signature,
-}
+impl SigningKey for Ed25519SecretKey {
+  type AuthenticationKey = Ed25519PublicKey;
+  type Signature = Ed25519Signature;
 
-impl CryptoSignatureOldTrait for Ed25519Signature {
-  fn len(&self) -> usize {
-    ED25519_SIGNATURE_LEN
+  fn authentication_key(&self) -> &Self::AuthenticationKey {
+    &self.public_key
   }
 
-  fn read(source: &[u8], cursor: &mut usize) -> Result<Self, GlyphErr> {
-    let bytes: &[u8; 64] = u8::bbrfa(&source, cursor)?;
-    let signature = ed25519_dalek::Signature::from_bytes(bytes);
-    Ok(Self { signature })
-  }
-
-  fn write(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let bytes = self.signature.to_bytes();
-    u8::bbwrs(&bytes, target, cursor)?;
-    Ok(())
+  fn sign(&self, bytes: &[u8]) -> Self::Signature {
+    let sig = self.secret_key.sign(bytes);
+    Ed25519Signature(sig)
   }
 }
 
-impl PartialOrd for Ed25519Signature {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
+#[derive(Clone, Eq, PartialEq)]
+pub struct Ed25519Signature(ed25519_dalek::Signature);
 
-impl Ord for Ed25519Signature {
-  fn cmp(&self, other: &Self) -> Ordering {
-    let self_bytes = self.signature.to_bytes();
-    let other_bytes = other.signature.to_bytes();
-    self_bytes.cmp(&other_bytes)
+impl CryptoSignature for Ed25519Signature {
+  type AuthenticationKey = Ed25519PublicKey;
+  type SignatureBytes<'a> = [u8; 64];
+
+  fn signature_type(&self) -> CryptoSignatureTypes {
+    CryptoSignatureTypes::Ed25519
+  }
+
+  fn signature_length(&self) -> usize {
+    ed25519_dalek::SIGNATURE_LENGTH
+  }
+
+  fn signature_bytes(&self) -> Self::SignatureBytes<'_> {
+    self.0.to_bytes()
+  }
+
+  fn deserialize(
+    sig_type: CryptoSignatureTypes,
+    source: &[u8],
+  ) -> Result<Self, CryptoErr> {
+    if sig_type == CryptoSignatureTypes::Ed25519 {
+      let bytes: &[u8; 64] = u8::bbrfa(source, &mut 0)?;
+      let sig = ed25519_dalek::Signature::from_bytes(bytes);
+      Ok(Self(sig))
+    } else {
+      Err(CryptoErr::WrongSignatureType {
+        expected: CryptoSignatureTypes::Ed25519,
+        observed: sig_type,
+      })
+    }
   }
 }
 
@@ -420,48 +276,72 @@ impl Debug for Ed25519Signature {
     write!(
       f,
       "Ed25519Signature({:?})",
-      &ShortHexDump(&self.signature.to_bytes()[..], 0)
+      &ShortHexDump(&self.0.to_bytes()[..], 0)
     )
-  }
-}
-
-impl HashContext for ed25519_dalek::Sha512 {
-  type Output = ();
-
-  fn new() -> Self {
-    <ed25519_dalek::Sha512 as ed25519_dalek::Digest>::new()
-  }
-
-  fn update(&mut self, bytes: &[u8]) {
-    <Self as ed25519_dalek::Digest>::update(self, bytes);
-  }
-
-  fn finish(self) -> Self::Output {
-    <Self as ed25519_dalek::Digest>::finalize(self);
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::crypto::test::TEST_PLAINTEXT;
+  use crate::crypto::{algos::SigningKey, test::TEST_PLAINTEXT};
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
-  use std::dbg;
 
   #[test]
-  fn ed25519() {
+  fn crypto_ed25519() {
     let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
-    let sk = Ed25519PrivateKey::generate(&mut rng, None);
-    let pk = sk.public_key();
-    dbg!(&pk, &sk);
-    let sig = sk.sign(TEST_PLAINTEXT);
-    dbg!(&sig);
-    let check = pk.verify(TEST_PLAINTEXT, &sig);
-    dbg!(&check);
-    assert!(check.is_ok());
-    let check = pk.verify(b"IMPOSTER!", &sig);
-    dbg!(&check);
-    assert!(check.is_err());
+    let secret_key = Ed25519SecretKey::generate(&mut rng);
+    let public_key = secret_key.authentication_key();
+    let signature = secret_key.sign(TEST_PLAINTEXT);
+
+    public_key.verify(TEST_PLAINTEXT, &signature).unwrap();
+    secret_key.verify(TEST_PLAINTEXT, &signature).unwrap();
+    assert!(public_key.verify(b"IMPOSTER!", &signature).is_err());
+    assert!(secret_key.verify(b"IMPOSTER!", &signature).is_err());
+
+    // Serialize keys and the signature.
+    let secret_bytes = secret_key.secret_bytes();
+    let public_bytes = public_key.public_bytes();
+    let signature_bytes = signature.signature_bytes();
+
+    // The serialized public key should be the same as the public component of
+    // the secret key.
+    assert_eq!(public_bytes, secret_key.public_bytes());
+
+    // Deserialize the public key from the public key bytes.
+    let public_key_deserialized = Ed25519PublicKey::deserialize(
+      public_key.key_type(),
+      public_bytes.as_ref(),
+      &[],
+    )
+    .unwrap();
+    assert_eq!(public_key, &public_key_deserialized);
+
+    // Deserialize the secret key from the serialized secret key bytes.
+    let secret_key_deserialized = Ed25519SecretKey::deserialize(
+      secret_key.key_type(),
+      public_bytes.as_ref(),
+      secret_bytes.as_ref(),
+    )
+    .unwrap();
+    assert_eq!(secret_key, secret_key_deserialized);
+
+    // Deserialize the public key from the private key.
+    let public_key_deserialized = Ed25519PublicKey::deserialize(
+      secret_key.key_type(),
+      public_bytes.as_ref(),
+      secret_bytes.as_ref(),
+    )
+    .unwrap();
+    assert_eq!(public_key, &public_key_deserialized);
+
+    // Deserialize the signature from the signature bytes.
+    let signature_deserialized = Ed25519Signature::deserialize(
+      signature.signature_type(),
+      signature_bytes.as_ref(),
+    )
+    .unwrap();
+    assert_eq!(signature, signature_deserialized);
   }
 }
