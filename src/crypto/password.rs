@@ -465,17 +465,17 @@ impl<G: Glyph> FromGlyph<G> for PasswordGlyph<G> {
     let mut cursor = 0;
     let pw_header = match PasswordGlyphHeader::bbrd(content, &mut cursor) {
       Ok(pw_header) => pw_header,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let salt_len = pw_header.salt_len();
     let digest_len = pw_header.digest_len();
     let salt = match u8::bbrfs(content, &mut cursor, salt_len) {
       Ok(salt) => salt,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let digest = match u8::bbrfs(content, &mut cursor, digest_len) {
       Ok(digest) => digest,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
 
     match pw_header.algorithm() {

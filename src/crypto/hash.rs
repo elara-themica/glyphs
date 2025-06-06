@@ -42,6 +42,15 @@ macro_rules! hash_impls {
       fn hash_bytes(&self) -> &[u8; $hash_len] {
         &self.0
       }
+
+      fn suffix_bytes(&self) -> [u8; 4] {
+        [
+          self.0[Self::HASH_LEN - 4],
+          self.0[Self::HASH_LEN - 3],
+          self.0[Self::HASH_LEN - 2],
+          self.0[Self::HASH_LEN - 1],
+        ]
+      }
     }
 
     /// The default value is all zeroes.
@@ -264,6 +273,9 @@ pub trait CryptographicHash:
   /// The raw hash bytes.
   fn hash_bytes(&self) -> &[u8; <Self as CryptographicHash>::HASH_LEN];
 
+  /// Returns the last 4 bytes of the hash.
+  fn suffix_bytes(&self) -> [u8; 4];
+
   /// Create a new hash from an array of bytes.
   fn from_hash_bytes(
     hash_bytes: [u8; <Self as CryptographicHash>::HASH_LEN],
@@ -324,7 +336,7 @@ impl<G: Glyph> FromGlyph<G> for HashGlyph<G> {
     let cursor = &mut 0;
     let _header = match CryptoHashHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(err.into_fge(glyph)),
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
     };
     let digest_bytes = &content[*cursor..] as *const [u8];
     Ok(Self(glyph, digest_bytes))
