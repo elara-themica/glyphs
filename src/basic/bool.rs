@@ -81,12 +81,9 @@ where
   B: AsRef<[u8]>,
 {
   /// The source bytes
-  data: B,
-  /// The number of bits in the vector.
-  ///
-  /// A separate length (other than self.data.len() * 8) is necessary to allow
-  /// lengths other than multiples of 8.
-  len:  usize,
+  data:         B,
+  /// The number of bits in the last byte which are padding
+  bits_padding: u8,
 }
 
 impl<B> BitVec<B>
@@ -105,34 +102,24 @@ where
   ///
   /// A [`GlyphErr::BitVecLenOverflow`] will be returned if the length given
   /// is longer than the data vector provided.
-  pub fn from_bytes(data: B, length: Option<usize>) -> Result<Self, GlyphErr> {
-    if let Some(len) = length {
-      let data_len = data.as_ref().len() * 8;
-      if len <= data_len {
-        Ok(Self { data, len })
-      } else {
-        Err(GlyphErr::BitVecLenOverflow { data_len, len })
-      }
-    } else {
-      let len = data.as_ref().len() * 8;
-      Ok(Self { data, len })
-    }
+  pub fn from_bytes(data: B, bits_padding: u8) -> Self {
+    Self { data, bits_padding }
   }
 
   /// Returns the length of the vector, in bits.
-  pub fn len(&self) -> usize {
-    self.len
+  pub fn len(&self) -> u64 {
+    self.data.as_ref().len() as u64 * 8 - self.bits_padding as u64
   }
 
   /// Returns `true` if the vector is of length zero
   pub fn is_empty(&self) -> bool {
-    self.len == 0
+    self.len() == 0
   }
 
   /// Gets the bit at position `index`.
-  pub fn get(&self, index: usize) -> Option<bool> {
+  pub fn get(&self, index: u64) -> Option<bool> {
     // Bounds Check
-    if index >= self.len {
+    if index >= self.len() {
       None
     } else {
       let data = self.data.as_ref();
@@ -150,8 +137,8 @@ where
   /// type as a parameter.
   pub fn borrow(&self) -> BitVec<&[u8]> {
     BitVec {
-      data: self.data.as_ref(),
-      len:  self.len(),
+      data:         self.data.as_ref(),
+      bits_padding: self.bits_padding,
     }
   }
 
@@ -166,17 +153,17 @@ where
     IterBits {
       vector:   self.borrow(),
       position: 0,
-      end:      self.len,
+      end:      self.len(),
     }
   }
 
   /// For a given bit index, return a byte index and a mask with (only) that bit set.
   #[inline(always)]
-  fn index_mask(bit_index: usize) -> (usize, u8) {
+  fn index_mask(bit_index: u64) -> (usize, u8) {
     let byte_num = bit_index / 8;
     let bit_num = bit_index % 8;
     let bit_mask: u8 = 0x80u8 >> bit_num;
-    (byte_num, bit_mask)
+    (byte_num as usize, bit_mask)
   }
 }
 
@@ -185,7 +172,7 @@ where
   B: AsRef<[u8]> + AsMut<[u8]>,
 {
   /// Sets the specified bit to the provided value.
-  pub fn set(&mut self, index: usize, value: bool) -> Option<()> {
+  pub fn set(&mut self, index: u64, value: bool) -> Option<()> {
     if index < self.len() {
       let content = self.data.as_mut();
       let (index, mask) = Self::index_mask(index);
@@ -214,11 +201,11 @@ impl<'a> BitVec<&'a [u8]> {
        + 'a {
     IterBits {
       vector:   BitVec {
-        data: self.data,
-        len:  self.len,
+        data:         self.data,
+        bits_padding: self.bits_padding,
       },
       position: 0,
-      end:      self.len,
+      end:      self.len(),
     }
   }
 }
@@ -227,16 +214,17 @@ impl<'a> BitVec<&'a [u8]> {
 impl BitVec<alloc::boxed::Box<[u8]>> {
   /// Creates a new bit vector sufficient to hold `num_bits` bits.  They will
   /// all be initialized to zero/false.
-  pub fn new(num_bits: usize) -> Result<Self, GlyphErr> {
+  ///
+  /// An error will be returned if memory allocation fails.
+  pub fn new(num_bits: u64) -> Result<Self, GlyphErr> {
     let num_bytes = (num_bits + 7) / 8;
+    let bits_padding = (8 - (num_bits % 8)) as u8 & 0b111;
     let data = unsafe {
-      alloc::boxed::Box::<[u8]>::try_new_zeroed_slice(num_bytes)?.assume_init()
+      alloc::boxed::Box::<[u8]>::try_new_zeroed_slice(num_bytes as usize)?
+        .assume_init()
     };
 
-    Ok(BitVec {
-      data,
-      len: num_bits,
-    })
+    Ok(BitVec { data, bits_padding })
   }
 }
 impl<B> AsRef<[u8]> for BitVec<B>
@@ -254,7 +242,7 @@ where
 {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut d = f.debug_struct("BitVector");
-    d.field("length", &self.len);
+    d.field("bits_padding", &self.bits_padding);
     if self.data.as_ref().len() <= 32 {
       d.field("bits", &ShortHexDump(self.data.as_ref(), 2));
     } else {
@@ -273,7 +261,7 @@ impl<G: Glyph> FromGlyph<G> for BitVec<alloc::boxed::Box<[u8]>> {
         let data = alloc::boxed::Box::<[u8]>::from(b.data);
         Ok(BitVec {
           data,
-          len: source.len(),
+          bits_padding: b.bits_padding,
         })
       },
       Err(e) => {
@@ -304,7 +292,7 @@ where
 
     // Compare overlapping full bytes
     let overlapping_bits = self.len().min(other.len());
-    let overlapping_bytes = overlapping_bits / 8;
+    let overlapping_bytes = (overlapping_bits / 8) as usize;
     let extra_bits = overlapping_bits % 8;
     match (
       self.data.as_ref().get(0..overlapping_bytes),
@@ -410,8 +398,8 @@ where
   B: AsRef<[u8]>,
 {
   vector:   BitVec<B>,
-  position: usize,
-  end:      usize,
+  position: u64,
+  end:      u64,
 }
 
 impl<B> DoubleEndedIterator for IterBits<B>
@@ -434,7 +422,7 @@ where
   B: AsRef<[u8]>,
 {
   fn len(&self) -> usize {
-    self.vector.len - self.position
+    (self.end - self.position) as usize
   }
 }
 
@@ -462,12 +450,7 @@ where
 
 /// A glyph containing a dense (8 bits per byte) bit vector.
 pub struct BitVecGlyph<G: Glyph> {
-  // SAFETY: bit_vector references this.
-  #[allow(dead_code)]
-  glyph:    G,
-  num_bits: usize,
-  // The &'static [u8] is an internal self-reference to the glyph's content.
-  // bit_vector: BitVec<&'static [u8]>,
+  glyph: G,
 }
 
 impl<G: Glyph> BitVecGlyph<G> {
@@ -478,11 +461,13 @@ impl<G: Glyph> BitVecGlyph<G> {
   /// See the [`BitVec`] type for more details, though note that the
   /// resulting BitVector will be immutable.
   pub fn bit_vector(&self) -> BitVec<&[u8]> {
-    if let Some(buffer) = self.glyph.content().get(1..) {
-      BitVec::from_bytes(buffer, Some(self.num_bits)).unwrap();
-      todo!()
+    if let (Some(bits_padding), Some(buffer)) =
+      (self.glyph.content().get(0), self.glyph.content().get(1..))
+    {
+      let bits_padding = *bits_padding & Self::BIT_PADDING_MASK;
+      BitVec::from_bytes(buffer, bits_padding)
     } else {
-      BitVec::from_bytes(&[][..], None).unwrap()
+      BitVec::from_bytes(&[][..], 0)
     }
   }
 }
@@ -494,11 +479,14 @@ impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
   /// See the [`BitVec`] type for more details, though note that the
   /// resulting BitVector will be immutable.
   pub fn bit_vector_parsed(&self) -> BitVec<&'a [u8]> {
-    if let Some(buffer) = self.glyph.content_parsed().get(1..) {
-      BitVec::from_bytes(buffer, Some(self.num_bits)).unwrap();
-      todo!()
+    if let (Some(bits_padding), Some(buffer)) = (
+      self.glyph.content_parsed().get(0),
+      self.glyph.content_parsed().get(1..),
+    ) {
+      let bits_padding = *bits_padding & Self::BIT_PADDING_MASK;
+      BitVec::from_bytes(buffer, bits_padding)
     } else {
-      BitVec::from_bytes(&[][..], None).unwrap()
+      BitVec::from_bytes(&[][..], 0)
     }
   }
 }
@@ -532,26 +520,8 @@ impl<G: Glyph> Eq for BitVecGlyph<G> {}
 
 impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    let parse = || {
-      source.header().confirm_type(GlyphType::VecBool)?;
-      let content = source.content();
-      if content.len() == 0 {
-        Ok(0)
-      } else {
-        let cursor = &mut 0;
-        let first_byte = u8::bbrd(content, cursor)?;
-        let num_bits_padding = (first_byte & Self::BIT_PADDING_MASK) as usize;
-        let num_bits_in_buffer = (content.len() - 1) * 8;
-        let num_bits = num_bits_in_buffer - num_bits_padding;
-        Result::<_, GlyphErr>::Ok(num_bits)
-      }
-    };
-
-    match parse() {
-      Ok(num_bits) => Ok(BitVecGlyph {
-        glyph: source,
-        num_bits,
-      }),
+    match source.header().confirm_type(GlyphType::VecBool) {
+      Ok(_) => Ok(BitVecGlyph { glyph: source }),
       Err(err) => Err(FromGlyphErr::new(source, err)),
     }
   }
@@ -618,17 +588,17 @@ impl ToGlyph for [bool] {
   ) -> Result<(), GlyphErr> {
     if self.len() > 0 {
       let glyph_start = GlyphHeader::skip(cursor);
-      let bit_padding = (8 - (self.len() % 8) as u8) & 0b0000_0111;
-      bit_padding.bbwr(target, cursor)?;
+      let bits_padding = (8 - self.len() % 8) as u8 & 0b0000_0111;
+      bits_padding.bbwr(target, cursor)?;
       let num_bytes = (self.len() + 7) / 8;
       // We're going to construct a mutable BitVector in place and set the bits.
       let bytes = u8::bbrfs_mut(target, cursor, num_bytes)?;
       if let Some(byte) = bytes.last_mut() {
         *byte = 0; // Make sure any unused bits are zeroed.
       }
-      let mut bv = BitVec::from_bytes(bytes, Some(self.len()))?;
+      let mut bv = BitVec::from_bytes(bytes, bits_padding);
       for (i, bit) in self.iter().enumerate() {
-        bv.set(i, *bit);
+        bv.set(i as u64, *bit);
       }
       glyph_close(GlyphType::VecBool, target, glyph_start, cursor, true)
     } else {
@@ -656,7 +626,7 @@ mod tests {
   use super::*;
   use crate::glyph_new;
   use alloc::vec::Vec;
-  use std::vec;
+  use std::{dbg, vec};
 
   #[test]
   fn bit_vec() {
@@ -664,6 +634,7 @@ mod tests {
     let bools = vec![true, false, true, false, true, true, false, true];
     let bools_g = glyph_new(&bools[..]).unwrap();
     let bools_g = BitVecGlyph::<_>::from_glyph(bools_g).unwrap();
+
     for (bools_val, bools_g_val) in
       bools.iter().zip(bools_g.bit_vector().iter())
     {
@@ -678,17 +649,15 @@ mod tests {
 
     // Basic BitVecG ops
     let bvz_g = glyph_new(&bvz).unwrap();
-    // dbg!(&bvz_g);
     let bvz_g = BitVecGlyph::<_>::from_glyph(bvz_g).unwrap();
     assert_eq!(bvz_g.bit_vector(), bvz);
 
     // Test with varying bit lengths covering every value modulo 8
-    for len in (0..16usize).chain(100..130usize) {
+    for len in (0..16u64).chain(100..130u64) {
       let mut bv = BitVec::new(len).unwrap();
       for i in 0..len {
         bv.set(i, (i % 2) == 0).unwrap(); // Set even-indexed bits
       }
-      // dbg!(&bv);
 
       // Validate bits
       for i in 0..len {
