@@ -53,6 +53,7 @@ use core::{
   ptr::{copy_nonoverlapping, write_unaligned},
   slice::{from_raw_parts, from_raw_parts_mut},
 };
+use std::marker::PhantomData;
 
 /// Bounds check that returns [`BufferErr`] on failure.
 #[inline(always)]
@@ -114,6 +115,79 @@ pub(crate) unsafe fn pad_to_word_u(target: &mut [u8], cursor: &mut usize) {
       0u8.bbwr_u(target, cursor);
     },
     _ => unreachable_unchecked(),
+  }
+}
+
+/// A reference to a (word-aligned) zero-copy type in a raw buffer.
+pub(crate) struct ZCRef<T: ZeroCopy> {
+  offset_words: u32,
+  _phantom:     PhantomData<T>,
+}
+
+impl<T: ZeroCopy> ZCRef<T> {
+  fn cursor(&self) -> usize {
+    self.offset_words as usize * 8
+  }
+
+  pub fn deref<'a>(&self, buffer: &'a [u8]) -> Result<&'a T, BufferErr> {
+    let mut cursor = self.cursor();
+    T::bbrf(buffer, &mut cursor)
+  }
+
+  pub fn deref_mut<'a>(
+    &self,
+    buffer: &'a mut [u8],
+  ) -> Result<&'a mut T, BufferErr> {
+    let mut cursor = self.cursor();
+    T::bbrf_mut(buffer, &mut cursor)
+  }
+
+  pub unsafe fn deref_u<'a>(&self, buffer: &'a [u8]) -> &'a T {
+    let mut cursor = self.cursor();
+    T::bbrf_u(buffer, &mut cursor)
+  }
+
+  pub unsafe fn deref_mut_u<'a>(&self, buffer: &'a mut [u8]) -> &'a mut T {
+    let mut cursor = self.cursor();
+    T::bbrf_mut_u(buffer, &mut cursor)
+  }
+}
+
+/// A reference to a (word-aligned) zero-copy type in a raw buffer.
+pub(crate) struct ZCSliceRef<T: ZeroCopy> {
+  offset_words: u32,
+  slice_len:    u32,
+  _phantom:     PhantomData<T>,
+}
+
+impl<T: ZeroCopy> ZCSliceRef<T> {
+  fn parts(&self) -> (usize, usize) {
+    let offset = self.offset_words as usize * 8;
+    let length = self.slice_len as usize;
+    (offset, length)
+  }
+
+  pub fn deref<'a>(&self, buffer: &'a [u8]) -> Result<&'a [T], BufferErr> {
+    let (mut offset, len) = self.parts();
+    T::bbrfs(buffer, &mut offset, len)
+  }
+
+  pub fn deref_mut<'a>(
+    &self,
+    buffer: &'a mut [u8],
+  ) -> Result<&'a mut [T], BufferErr> {
+    let (mut offset, len) = self.parts();
+    T::bbrfs_mut(buffer, &mut offset, len)
+  }
+
+  pub unsafe fn deref_u<'a>(&self, buffer: &'a [u8]) -> &'a [T] {
+    let (mut offset, len) = self.parts();
+    T::bbrfs_u(buffer, &mut offset, len)
+  }
+
+  pub unsafe fn deref_mut_u<'a>(&self, buffer: &'a mut [u8]) -> &'a mut [T] {
+    let (mut offset, len) = self.parts();
+    T::bbrfs_mut_u(buffer, &mut offset, len)
   }
 }
 
