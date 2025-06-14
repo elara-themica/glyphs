@@ -1,6 +1,5 @@
 use crate::{
-  glyph::glyph_close,
-  zerocopy::{bounds_check, round_to_word, ZeroCopy, U32, U64},
+  zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16, U32},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
   GlyphType, ParsedGlyph, ToGlyph,
 };
@@ -17,37 +16,124 @@ use core::{
   },
 };
 use icu_collator::{Collator, CollatorOptions};
+use std::ops::Deref;
 
-pub(crate) static COLLATOR: DefaultCollator =
-  DefaultCollator(AtomicUsize::new(0));
+pub(crate) static COLLATOR: StringCollator =
+  StringCollator(AtomicUsize::new(0));
 
-pub(crate) struct DefaultCollator(AtomicUsize);
+/// A glyph containing a valid UTF-8 string.
+pub struct StringGlyph<G>(G)
+where
+  G: Glyph;
 
-impl DefaultCollator {
-  pub(crate) fn get(&self) -> &'static Collator {
-    unsafe {
-      if self.0.load(Relaxed) == 0 {
-        let options = CollatorOptions::new();
-        let locale = Default::default();
-        let c = Box::new(Collator::try_new(&locale, options).unwrap());
-        let ptr = c.as_ref() as *const Collator;
-        match self.0.compare_exchange(0, ptr as usize, SeqCst, SeqCst) {
-          Ok(old) => {
-            debug_assert_eq!(old, 0);
-            Box::leak(c);
-            &*ptr
-          },
-          Err(old) => {
-            // Someone beat us here!  Let c go out of scope, use theirs.
-            let ptr = old as *const Collator;
-            &*ptr
-          },
-        }
-      } else {
-        let ptr = self.0.load(Relaxed) as *const Collator;
-        &*ptr
-      }
+impl<G> StringGlyph<G>
+where
+  G: Glyph,
+{
+  /// The language in which the string is written.
+  pub fn language(&self) -> Language {
+    match StringMetadata::bbrf(self.0.content_padded(), &mut 0) {
+      Ok(md) => md.language(),
+      Err(_err) => Language::Unknown,
     }
+  }
+
+  /// The direction of the text (i.e., left-to-right, etc...)
+  pub fn direction(&self) -> StringDirection {
+    match StringMetadata::bbrf(self.0.content_padded(), &mut 0) {
+      Ok(md) => md.direction(),
+      Err(_err) => StringDirection::Unspecified,
+    }
+  }
+
+  /// Returns the raw bytes of the string
+  pub fn get_bytes(&self) -> &[u8] {
+    self.0.content()
+  }
+}
+
+impl<G> Debug for StringGlyph<G>
+where
+  G: Glyph,
+{
+  fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
+    write!(f, "StringGlyph(\"{}\")", self.deref())
+  }
+}
+
+impl<G> Deref for StringGlyph<G>
+where
+  G: Glyph,
+{
+  type Target = str;
+
+  fn deref(&self) -> &Self::Target {
+    match self.0.content().get(2..) {
+      None => {
+        // Empty String
+        ""
+      },
+      Some(bytes) => {
+        // Validity was already checked during `glyph_decode`.
+        unsafe { core::str::from_utf8_unchecked(bytes) }
+      },
+    }
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for StringGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
+impl<G: Glyph> Eq for StringGlyph<G> {}
+
+impl<G> FromGlyph<G> for StringGlyph<G>
+where
+  G: Glyph,
+{
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::String) {
+      return Err(err.into_fge(source));
+    }
+
+    // Check for valid UTF-8 string.
+    if let Err(err) = from_utf8(source.content()) {
+      return Err(FromGlyphErr::new(source, err.into()));
+    }
+    Ok(StringGlyph(source))
+  }
+}
+
+impl<G: Glyph> Ord for StringGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self
+      .language()
+      .cmp(&other.language())
+      .then(self.direction().cmp(&other.direction()))
+      .then_with(|| {
+        let a = self.get_bytes();
+        let b = other.get_bytes();
+        let c = COLLATOR.get();
+        c.compare_utf8(a, b)
+      })
+  }
+}
+
+impl<G: Glyph> PartialEq for StringGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.0.content() == other.0.content()
+  }
+}
+
+impl<G: Glyph> PartialOrd for StringGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 
@@ -55,10 +141,17 @@ impl DefaultCollator {
 ///
 /// These were from the List of ISO 639 Language Codes, taken
 /// from Wikipedia on 2025.01.10.
+///
+/// These language identifiers are encoded as the first 14 bits of a
+/// [`StringGlyph`].
+// SAFETY: When updating this list, you must ensure that (1) the implementation
+// of From<u16> is updated to reflect the highest known value and (2) that all
+// possible lower numbered identifiers have an entry in this enum.
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[allow(missing_docs, non_camel_case_types)]
 #[repr(u16)]
-enum Language {
+#[non_exhaustive]
+pub enum Language {
   #[default]
   Unknown = 0x0000,
   NonLinguistic = 0x0001,
@@ -245,6 +338,17 @@ enum Language {
   Zulu_ZU = 0x00b6,
 }
 
+impl From<u16> for Language {
+  fn from(value: u16) -> Self {
+    if value > Self::Zhuang_ZA as u16 {
+      Self::Unknown
+    } else {
+      // SAFETY: There are contiguous known/specified values
+      unsafe { std::mem::transmute(value) }
+    }
+  }
+}
+
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[allow(missing_docs, non_camel_case_types)]
 #[repr(u8)]
@@ -256,33 +360,159 @@ pub enum StringDirection {
   RightToLeft = 3,
 }
 
-/// Writes a string glyph.
-///
-/// A generic function, as there are several string types, which do not always
-/// include all the information.
-///
-/// - If both are present, `locale` will overwrite `lang`.
-fn str_glyph_encode<S: AsRef<[u8]>>(
-  content: &S,
-  language: Option<Language>,
-  direction: Option<StringDirection>,
-  target: &mut [u8],
-  cursor: &mut usize,
-) -> Result<(), GlyphErr> {
-  let language = language.unwrap_or_default();
-  let direction = direction.unwrap_or_default();
-
-  let glyph_offset = *cursor;
-  *cursor += size_of::<GlyphHeader>();
-  (language as u8).bbwr(target, cursor)?;
-  ((direction as u8) << 6).bbwr(target, cursor)?;
-  u8::bbwrs(content.as_ref(), target, cursor)?;
-  glyph_close(GlyphType::String, target, glyph_offset, cursor, true)
+impl From<u8> for StringDirection {
+  fn from(value: u8) -> Self {
+    if value > Self::RightToLeft as u8 {
+      Self::Unspecified
+    } else {
+      // SAFETY: There are contiguous known/specified values
+      unsafe { std::mem::transmute(value) }
+    }
+  }
 }
 
-fn str_glyph_len<S: AsRef<[u8]>>(content: &S) -> usize {
-  size_of::<GlyphHeader>() + round_to_word(2 + content.as_ref().len())
+#[derive(Copy, Clone)]
+struct StringMetadata(U16);
+
+impl StringMetadata {
+  fn language(&self) -> Language {
+    let id = self.0.get() & 0b0001_1111_1111_1111;
+    Language::from(id)
+  }
+
+  fn direction(&self) -> StringDirection {
+    let id = (self.0.get() >> 14) as u8;
+    StringDirection::from(id)
+  }
+
+  fn new(
+    language: Option<Language>,
+    direction: Option<StringDirection>,
+  ) -> StringMetadata {
+    let language = language.unwrap_or_default();
+    let direction = direction.unwrap_or_default();
+    let lang_id = language as u16 & 0b0001_1111_1111_1111;
+    let dir_id = direction as u8 & 0b0000_0111;
+
+    let value = lang_id | ((dir_id as u16) << 14);
+    StringMetadata(U16::from(value))
+  }
 }
+
+unsafe impl ZeroCopy for StringMetadata {}
+
+/// A glyph containing a Unicode character `char`.
+pub struct CharGlyph<G: Glyph>(G);
+
+impl<G: Glyph> CharGlyph<G> {
+  /// The `char` contained by this glyph.
+  pub fn get(&self) -> char {
+    let bytes = self.0.header().short_content();
+    // SAFETY: A valid value was confirmed when the CharGlyph was created.
+    unsafe { char::from_u32_unchecked(u32::from_le_bytes(*bytes)) }
+  }
+}
+
+impl<G: Glyph> Debug for CharGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "CharGlyph({:?})", self.get())
+  }
+}
+
+impl<G: Glyph> FromGlyph<G> for CharGlyph<G> {
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
+      return Err(err.into_fge(source));
+    }
+    // Check for valid unicode char.
+    unsafe {
+      if let Err(err) = <char>::from_glyph(source.borrow().detach()) {
+        return Err(FromGlyphErr::new(source, err.into()));
+      }
+    }
+    Ok(CharGlyph(source))
+  }
+}
+
+impl<G: Glyph> PartialEq for CharGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.get() == other.get()
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for CharGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
+impl<G: Glyph> Eq for CharGlyph<G> {}
+
+impl<G: Glyph> PartialOrd for CharGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<G: Glyph> Ord for CharGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.get().cmp(&other.get())
+  }
+}
+
+pub(crate) struct StringCollator(AtomicUsize);
+
+impl StringCollator {
+  pub(crate) fn get(&self) -> &'static Collator {
+    unsafe {
+      if self.0.load(Relaxed) == 0 {
+        let options = CollatorOptions::new();
+        let locale = Default::default();
+        let c = Box::new(Collator::try_new(&locale, options).unwrap());
+        let ptr = c.as_ref() as *const Collator;
+        match self.0.compare_exchange(0, ptr as usize, SeqCst, SeqCst) {
+          Ok(old) => {
+            debug_assert_eq!(old, 0);
+            Box::leak(c);
+            &*ptr
+          },
+          Err(old) => {
+            // Someone beat us here!  Let c go out of scope, use theirs.
+            let ptr = old as *const Collator;
+            &*ptr
+          },
+        }
+      } else {
+        let ptr = self.0.load(Relaxed) as *const Collator;
+        &*ptr
+      }
+    }
+  }
+}
+
+// impl<G> FromGlyph<G> for char
+// where
+//   G: Glyph,
+// {
+//   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+//     if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
+//       return Err(err.into_fge(source));
+//     }
+//     let value: u32 =
+//       match U32::bbrd(&source.header().short_content()[..], &mut 0) {
+//         Ok(value) => value.into(),
+//         Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+//       };
+//     match char::try_from(value) {
+//       Ok(c) => Ok(c),
+//       Err(_err) => Err(FromGlyphErr::new(source, GlyphErr::IllegalValue)),
+//     }
+//   }
+// }
 
 impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
   fn from_glyph(
@@ -291,40 +521,13 @@ impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
     if let Err(err) = source.header().confirm_type(GlyphType::String) {
       return Err(err.into_fge(source));
     }
-    let str_bytes = source.content_parsed();
-    let valid_str = match from_utf8(str_bytes) {
-      Ok(valid_str) => valid_str,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    Ok(valid_str)
-  }
-}
-
-impl ToGlyph for str {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    // SAFETY: So we can do one bounds check.
-    unsafe {
-      let str_bytes = self.as_bytes();
-      let header = GlyphHeader::new(GlyphType::String, str_bytes.len())?;
-      let bounds =
-        round_to_word(*cursor + size_of::<GlyphHeader>() + str_bytes.len());
-      bounds_check(target, bounds)?;
-      let mut zero_idx = bounds - 8;
-      U64::from(0).bbwr_u(target, &mut zero_idx);
-      header.bbwr_u(target, cursor);
-      u8::bbwrs_u(str_bytes, target, cursor);
-      *cursor = round_to_word(*cursor);
-      // pad_to_word_u(target, cursor);
+    match source.content_parsed().get(2..) {
+      None => Ok(""),
+      Some(bytes) => match from_utf8(bytes) {
+        Ok(valid_str) => Ok(valid_str),
+        Err(err) => Err(FromGlyphErr::new(source, err.into())),
+      },
     }
-    Ok(())
-  }
-
-  fn glyph_len(&self) -> usize {
-    round_to_word(size_of::<GlyphHeader>() + self.len())
   }
 }
 
@@ -334,115 +537,13 @@ where
   G: Glyph,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::String) {
-      return Err(err.into_fge(source));
+    match <&str>::from_glyph(source.borrow()) {
+      Ok(as_str) => Ok(String::from(as_str)),
+      Err(err) => {
+        let err = err.into_parts().1;
+        Err(FromGlyphErr::new(source, err))
+      },
     }
-    let bytes = source.content();
-    let bytes_v = match u8::bbrds_i(bytes, &mut 0) {
-      Ok(bytes_v) => bytes_v,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let valid_string = match String::from_utf8(bytes_v) {
-      Ok(valid_string) => valid_string,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    Ok(valid_string)
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl ToGlyph for alloc::string::String {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    self.as_str().glyph_encode(target, cursor)
-  }
-
-  fn glyph_len(&self) -> usize {
-    self.as_str().glyph_len()
-  }
-}
-
-/// A glyph containing a valid UTF-8 string.
-pub struct StringGlyph<G>(G)
-where
-  G: Glyph;
-
-impl<G> StringGlyph<G>
-where
-  G: Glyph,
-{
-  /// The string contained in the glyph.
-  pub fn get_str(&self) -> &str {
-    let bytes = self.0.content();
-    // Validity was already checked during `glyph_decode`.
-    unsafe { core::str::from_utf8_unchecked(bytes) }
-  }
-
-  /// Returns the raw bytes of the string
-  pub fn get_bytes(&self) -> &[u8] {
-    self.0.content()
-  }
-}
-
-impl<G> Debug for StringGlyph<G>
-where
-  G: Glyph,
-{
-  fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "Utf8Glyph(\"{}\")", self.get_str())
-  }
-}
-
-impl<G> FromGlyph<G> for StringGlyph<G>
-where
-  G: Glyph,
-{
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::String) {
-      return Err(err.into_fge(source));
-    }
-
-    // Check for valid UTF-8 string.
-    if let Err(err) = from_utf8(source.content()) {
-      return Err(FromGlyphErr::new(source, err.into()));
-    }
-    Ok(StringGlyph(source))
-  }
-}
-
-impl<G: Glyph> PartialEq for StringGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.get_str() == other.get_str()
-  }
-}
-
-impl<G: Glyph> Eq for StringGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for StringGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for StringGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    let a = self.get_bytes();
-    let b = other.get_bytes();
-    let c = COLLATOR.get();
-    c.compare_utf8(a, b)
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for StringGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
   }
 }
 
@@ -466,6 +567,38 @@ where
   }
 }
 
+impl ToGlyph for str {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    str_glyph_encode(self.as_bytes(), None, None, target, cursor)
+  }
+
+  fn glyph_len(&self) -> usize {
+    str_glyph_len(self.as_bytes().len())
+    // round_to_word(size_of::<GlyphHeader>() + self.len())
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl ToGlyph for String {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    str_glyph_encode(self.as_bytes(), None, None, target, cursor)
+    // self.as_str().glyph_encode(target, cursor)
+  }
+
+  fn glyph_len(&self) -> usize {
+    str_glyph_len(self.as_bytes().len())
+    // self.as_str().glyph_len()
+  }
+}
+
 impl ToGlyph for char {
   fn glyph_encode(
     &self,
@@ -483,67 +616,44 @@ impl ToGlyph for char {
   }
 }
 
-/// A glyph containing a unicode character `char`.
-pub struct CharGlyph<G: Glyph>(G);
-
-impl<G: Glyph> CharGlyph<G> {
-  /// The `char` contained by this glyph.
-  pub fn get(&self) -> char {
-    let bytes = self.0.header().short_content();
-    // SAFETY: A valid value was confirmed when the CharGlyph was created.
-    unsafe { char::from_u32_unchecked(u32::from_le_bytes(*bytes)) }
-  }
+/// Writes a string glyph.
+///
+/// # Parameters:
+///
+/// - `content`.  The contents of the string.  The caller is responsible for
+///   ensuring that the contents are valid UTF-8 bytes.
+/// - `language`.  The human language of the string, if any.  This is not only
+///   useful metadata for the user, but can influence collation.  If not
+///   provided, the resulting glyph will indicate an unknown language.
+/// - `direction`.  The direction of the text can be specified, if desired. If
+///   not provided, the resulting glyph will indicate an unspecified text
+///   direction.
+fn str_glyph_encode(
+  content: &[u8],
+  language: Option<Language>,
+  direction: Option<StringDirection>,
+  target: &mut [u8],
+  cursor: &mut usize,
+) -> Result<(), GlyphErr> {
+  GlyphHeader::new(
+    GlyphType::String,
+    size_of::<StringMetadata>() + content.len(),
+  )?
+  .bbwr(target, cursor)?;
+  StringMetadata::new(language, direction).bbwr(target, cursor)?;
+  u8::bbwrs(content, target, cursor)?;
+  pad_to_word(target, cursor)?;
+  Ok(())
 }
 
-impl<G: Glyph> FromGlyph<G> for CharGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
-      return Err(err.into_fge(source));
-    }
-    // Check for valid unicode char.
-    unsafe {
-      if let Err(err) = <char>::from_glyph(source.borrow().detach()) {
-        return Err(FromGlyphErr::new(source, err.into()));
-      }
-    }
-    Ok(CharGlyph(source))
-  }
-}
-
-impl<G: Glyph> Debug for CharGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "CharGlyph({:?})", self.get())
-  }
-}
-
-impl<G: Glyph> PartialEq for CharGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.get() == other.get()
-  }
-}
-
-impl<G: Glyph> Eq for CharGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for CharGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for CharGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.get().cmp(&other.get())
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for CharGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
-  }
+/// Returns the length of a contemplated string glyph, in bytes.
+///
+/// `content_len` is the length of the string's UTF-8 content, in bytes.  The
+/// resulting length is this content length plus headers, rounded to the nearest
+/// word.
+#[inline]
+fn str_glyph_len(content_len: usize) -> usize {
+  size_of::<GlyphHeader>() + round_to_word(2 + content_len)
 }
 
 #[cfg(test)]

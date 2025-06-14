@@ -90,7 +90,7 @@ mod test {
   };
   use ::test::Bencher;
   use alloc::boxed::Box;
-  use std::{dbg, hint::black_box, iter::repeat, string::String};
+  use std::{dbg, hint::black_box, iter::repeat, ops::Deref, string::String};
 
   #[test]
   fn codec_basic() {
@@ -229,7 +229,7 @@ mod test {
     assert_eq!(read_string.as_str(), text);
 
     let str_glyph = StringGlyph::from_glyph(glyph.borrow())?;
-    assert_eq!(str_glyph.get_str(), text);
+    assert_eq!(str_glyph.deref(), text);
 
     Ok(())
   }

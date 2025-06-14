@@ -345,7 +345,8 @@ pub unsafe trait Glyph: AsRef<[u8]> + Clone + Debug + ToGlyph {
   /// let message = "Hello, World!";
   /// let glyph = glyph_new(message).unwrap();
   /// println!("Glyph encoded as: {:?}", &glyph);
-  /// assert_eq!(glyph.content(), message.as_bytes());
+  /// let decoded = <&str>::from_glyph(glyph.borrow()).unwrap();
+  /// assert_eq!(decoded, message);
   /// ```
   #[inline(always)]
   fn content(&self) -> &[u8] {
