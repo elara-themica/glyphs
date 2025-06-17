@@ -4,8 +4,10 @@ use crate::{
   GlyphType::{Float, SignedInt, UnsignedInt},
   ParsedGlyph,
 };
-use core::fmt::{Debug, Formatter};
-use std::{cmp::Ordering, ops::Deref};
+use core::{
+  cmp::Ordering,
+  fmt::{Debug, Formatter},
+};
 
 /// Signed integers
 ///
@@ -30,10 +32,28 @@ pub struct IntGlyph<G: Glyph>(G, i128);
 
 impl<G: Glyph> IntGlyph<G> {
   /// Returns the value in the glyph.
-  pub fn get(&self) -> &i128 {
-    &self.1
+  pub fn get(&self) -> i128 {
+    self.1
   }
 }
+
+impl<G: Glyph> Debug for IntGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "IntGlyph({})", self.1)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for IntGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
+impl<G: Glyph> Eq for IntGlyph<G> {}
 
 impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
@@ -59,63 +79,9 @@ impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for IntGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "IntGlyph({})", self.1)
-  }
-}
-
-impl<G: Glyph> Deref for IntGlyph<G> {
-  type Target = i128;
-
-  fn deref(&self) -> &Self::Target {
-    &self.1
-  }
-}
-
-impl<G: Glyph> From<IntGlyph<G>> for i128 {
-  fn from(value: IntGlyph<G>) -> Self {
-    value.1
-  }
-}
-
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i64 {
-  type Error = GlyphErr;
-
-  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i32 {
-  type Error = GlyphErr;
-
-  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i16 {
-  type Error = GlyphErr;
-
-  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i8 {
-  type Error = GlyphErr;
-
-  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
+impl<G: Glyph> Ord for IntGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
   }
 }
 
@@ -125,27 +91,9 @@ impl<G: Glyph> PartialEq for IntGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for IntGlyph<G> {}
-
 impl<G: Glyph> PartialOrd for IntGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for IntGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.1.cmp(&other.1)
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for IntGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
   }
 }
 
@@ -158,10 +106,28 @@ pub struct UIntGlyph<G: Glyph>(G, u128);
 
 impl<G: Glyph> UIntGlyph<G> {
   /// Gets the value in the glyph.
-  pub fn get(&self) -> &u128 {
-    &self.1
+  pub fn get(&self) -> u128 {
+    self.1
   }
 }
+
+impl<G: Glyph> Debug for UIntGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "UIntGlyph({})", self.1)
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for UIntGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
+impl<G: Glyph> Eq for UIntGlyph<G> {}
 
 impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
@@ -187,57 +153,9 @@ impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
   }
 }
 
-impl<G: Glyph> Deref for UIntGlyph<G> {
-  type Target = u128;
-
-  fn deref(&self) -> &Self::Target {
-    &self.1
-  }
-}
-
-impl<G: Glyph> From<UIntGlyph<G>> for u128 {
-  fn from(value: UIntGlyph<G>) -> Self {
-    value.1
-  }
-}
-
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u64 {
-  type Error = GlyphErr;
-
-  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u32 {
-  type Error = GlyphErr;
-
-  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u16 {
-  type Error = GlyphErr;
-
-  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
-  }
-}
-
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u8 {
-  type Error = GlyphErr;
-
-  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
-    Ok(value)
+impl<G: Glyph> Ord for UIntGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
   }
 }
 
@@ -247,33 +165,9 @@ impl<G: Glyph> PartialEq for UIntGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for UIntGlyph<G> {}
-
 impl<G: Glyph> PartialOrd for UIntGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for UIntGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.1.cmp(&other.1)
-  }
-}
-
-impl<G: Glyph> Debug for UIntGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "UIntGlyph({})", self.1)
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for UIntGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
   }
 }
 
@@ -286,8 +180,14 @@ pub struct FloatGlyph<G: Glyph>(G, f64);
 
 impl<G: Glyph> FloatGlyph<G> {
   /// Returns the value in the glyph.
-  pub fn get(&self) -> &f64 {
-    &self.1
+  pub fn get(&self) -> f64 {
+    self.1
+  }
+}
+
+impl<G: Glyph> Debug for FloatGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "FloatGlyph({})", self.1)
   }
 }
 
@@ -313,31 +213,21 @@ impl<G: Glyph> FromGlyph<G> for FloatGlyph<G> {
   }
 }
 
-impl<G: Glyph> Deref for FloatGlyph<G> {
-  type Target = f64;
-
-  fn deref(&self) -> &Self::Target {
-    &self.1
+impl<G: Glyph> EncodedGlyph<G> for FloatGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
   }
-}
 
-impl<G: Glyph> From<FloatGlyph<G>> for f32 {
-  fn from(value: FloatGlyph<G>) -> Self {
-    value.1 as f32
-  }
-}
-
-impl<G: Glyph> PartialEq for FloatGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
 impl<G: Glyph> Eq for FloatGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for FloatGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
+impl<G: Glyph> From<FloatGlyph<G>> for f32 {
+  fn from(value: FloatGlyph<G>) -> Self {
+    value.1 as f32
   }
 }
 
@@ -347,19 +237,111 @@ impl<G: Glyph> Ord for FloatGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for FloatGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "FloatGlyph({})", self.1)
+impl<G: Glyph> PartialEq for FloatGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for FloatGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
+impl<G: Glyph> PartialOrd for FloatGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
+}
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+impl<G: Glyph> TryFrom<IntGlyph<G>> for i8 {
+  type Error = GlyphErr;
+
+  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      i8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<IntGlyph<G>> for i16 {
+  type Error = GlyphErr;
+
+  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      i16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<IntGlyph<G>> for i32 {
+  type Error = GlyphErr;
+
+  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      i32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<IntGlyph<G>> for i64 {
+  type Error = GlyphErr;
+
+  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      i64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<IntGlyph<G>> for i128 {
+  type Error = GlyphErr;
+
+  fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
+    Ok(value.1 as i128)
+  }
+}
+
+impl<G: Glyph> TryFrom<UIntGlyph<G>> for u8 {
+  type Error = GlyphErr;
+
+  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      u8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<UIntGlyph<G>> for u16 {
+  type Error = GlyphErr;
+
+  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      u16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<UIntGlyph<G>> for u32 {
+  type Error = GlyphErr;
+
+  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      u32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<UIntGlyph<G>> for u64 {
+  type Error = GlyphErr;
+
+  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
+    let value =
+      u64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    Ok(value)
+  }
+}
+
+impl<G: Glyph> TryFrom<UIntGlyph<G>> for u128 {
+  type Error = GlyphErr;
+
+  fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
+    Ok(value.1)
   }
 }
 
@@ -429,42 +411,60 @@ gen_prim_slice_to_glyph!(F64);
 
 gen_prim_from_glyph!(u8, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
   ParsedGlyph,
->| { u8::try_from(*gl) });
+>| {
+  u8::try_from(gl.get())
+});
 gen_prim_from_glyph!(u16, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
   ParsedGlyph,
->| { u16::try_from(*gl) });
+>| {
+  u16::try_from(gl.get())
+});
 gen_prim_from_glyph!(u32, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
   ParsedGlyph,
->| { u32::try_from(*gl) });
+>| {
+  u32::try_from(gl.get())
+});
 gen_prim_from_glyph!(u64, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
   ParsedGlyph,
->| { u64::try_from(*gl) });
+>| {
+  u64::try_from(gl.get())
+});
 gen_prim_from_glyph!(u128, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
   ParsedGlyph,
 >| {
-  u128::try_from(*gl)
+  Result::<u128, GlyphErr>::Ok(gl.get())
 });
 gen_prim_from_glyph!(i8, try_conv_glyph, IntGlyph, |gl: IntGlyph<
   ParsedGlyph,
->| { i8::try_from(*gl) });
+>| {
+  i8::try_from(gl.get())
+});
 gen_prim_from_glyph!(i16, try_conv_glyph, IntGlyph, |gl: IntGlyph<
   ParsedGlyph,
->| { i16::try_from(*gl) });
+>| {
+  i16::try_from(gl.get())
+});
 gen_prim_from_glyph!(i32, try_conv_glyph, IntGlyph, |gl: IntGlyph<
   ParsedGlyph,
->| { i32::try_from(*gl) });
+>| {
+  i32::try_from(gl.get())
+});
 gen_prim_from_glyph!(i64, try_conv_glyph, IntGlyph, |gl: IntGlyph<
   ParsedGlyph,
->| { i64::try_from(*gl) });
+>| {
+  i64::try_from(gl.get())
+});
 gen_prim_from_glyph!(i128, try_conv_glyph, IntGlyph, |gl: IntGlyph<
   ParsedGlyph,
 >| {
-  i128::try_from(*gl)
+  Result::<i128, GlyphErr>::Ok(gl.get())
 });
 gen_prim_from_glyph!(f32, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| {
-  (*gl) as f32
+  gl.get() as f32
 });
-gen_prim_from_glyph!(f64, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| { *gl });
+gen_prim_from_glyph!(f64, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| {
+  gl.get()
+});
 gen_prim_from_glyph!(U32, conv, u32, |val| { U32::from(val) });
 gen_prim_from_glyph!(U64, conv, u64, |val| { U64::from(val) });
 gen_prim_from_glyph!(U128, conv, u128, |val| { U128::from(val) });

@@ -167,15 +167,15 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
       GlyphType::UnicodeChar => self.deserialize_char(visitor),
       GlyphType::UnsignedInt => {
         let int = UIntGlyph::from_glyph(self.0)?;
-        visitor.visit_u128(*int)
+        visitor.visit_u128(int.get())
       },
       GlyphType::SignedInt => {
         let int = IntGlyph::from_glyph(self.0)?;
-        visitor.visit_i128(*int)
+        visitor.visit_i128(int.get())
       },
       GlyphType::Float => {
         let float = FloatGlyph::from_glyph(self.0)?;
-        visitor.visit_f64(*float)
+        visitor.visit_f64(float.get())
       },
       GlyphType::Vec => self.deserialize_seq(visitor),
       GlyphType::VecBasic => self.deserialize_seq(visitor),

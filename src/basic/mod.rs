@@ -209,7 +209,7 @@ mod test {
       loop {
         let glyph = glyph_read(&buf, cursor)?;
         let decoded = IntGlyph::from_glyph(glyph)?;
-        outside = *decoded;
+        outside = decoded.get();
       }
     });
     Ok(())

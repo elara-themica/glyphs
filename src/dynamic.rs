@@ -230,37 +230,37 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
 
       //=== Inter Type Comparisons
       (DynGlyph::UInt(a), DynGlyph::Int(b)) => {
-        if *b.get() < 0 {
+        if b.get() < 0 {
           Ordering::Greater
         } else {
-          let b = *b.get() as u128;
+          let b = b.get() as u128;
           a.get().cmp(&b)
         }
       },
       (DynGlyph::Int(a), DynGlyph::UInt(b)) => {
-        if *a.get() < 0 {
+        if a.get() < 0 {
           Ordering::Less
         } else {
-          let a = *a.get() as u128;
-          a.cmp(b.get())
+          let a = a.get() as u128;
+          a.cmp(&b.get())
         }
       },
       //=== Comparisons with floats; convert both to float ===//
       (DynGlyph::Float(a), DynGlyph::Int(b)) => {
-        let b = *b.get() as f64;
-        a.total_cmp(&b)
+        let b = b.get() as f64;
+        a.get().total_cmp(&b)
       },
       (DynGlyph::Int(a), DynGlyph::Float(b)) => {
-        let a = *a.get() as f64;
-        a.total_cmp(b.get())
+        let a = a.get() as f64;
+        a.total_cmp(&b.get())
       },
       (DynGlyph::Float(a), DynGlyph::UInt(b)) => {
-        let b = *b.get() as f64;
-        a.total_cmp(&b)
+        let b = b.get() as f64;
+        a.get().total_cmp(&b)
       },
       (DynGlyph::UInt(a), DynGlyph::Float(b)) => {
-        let a = *a.get() as f64;
-        a.total_cmp(b.get())
+        let a = a.get() as f64;
+        a.total_cmp(&b.get())
       },
 
       //=== Error Comparisons: Errors always sort last. ===/
