@@ -145,9 +145,38 @@ impl<G: Glyph> DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for DynGlyph<G> {
-  fn from_glyph(src: G) -> Result<Self, FromGlyphErr<G>> {
-    Ok(DynGlyph::from_glyph_u(src))
+impl<G: Glyph> Debug for DynGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    match self {
+      DynGlyph::Unit(g) => Debug::fmt(g, f)?,
+      DynGlyph::Bool(g) => Debug::fmt(g, f)?,
+      DynGlyph::Int(g) => Debug::fmt(g, f)?,
+      DynGlyph::UInt(g) => Debug::fmt(g, f)?,
+      DynGlyph::Float(g) => Debug::fmt(g, f)?,
+      DynGlyph::Tuple(g) => Debug::fmt(g, f)?,
+      DynGlyph::Vec(g) => Debug::fmt(g, f)?,
+      DynGlyph::BitVec(g) => Debug::fmt(g, f)?,
+      DynGlyph::BasicVec(g) => Debug::fmt(g, f)?,
+      DynGlyph::Map(g) => Debug::fmt(g, f)?,
+      DynGlyph::Obj(g) => Debug::fmt(g, f)?,
+      DynGlyph::Doc(g) => Debug::fmt(g, f)?,
+      DynGlyph::String(g) => Debug::fmt(g, f)?,
+      DynGlyph::Char(g) => Debug::fmt(g, f)?,
+      DynGlyph::DateTime(g) => Debug::fmt(g, f)?,
+      DynGlyph::UUID(g) => Debug::fmt(g, f)?,
+      DynGlyph::CryptoHash(g) => Debug::fmt(g, f)?,
+      DynGlyph::EncryptedPassword(g) => Debug::fmt(g, f)?,
+      DynGlyph::UnknownType(g) => {
+        write!(f, "UnknownGlyphType({:?})", g)?;
+      },
+      DynGlyph::DecodeErr(err, g) => {
+        let mut df = f.debug_struct("DecodeErr");
+        df.field("glyph", g);
+        df.field("error", err);
+        df.finish()?;
+      },
+    }
+    Ok(())
   }
 }
 
@@ -283,17 +312,11 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for DynGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
 impl<G: Glyph> Eq for DynGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for DynGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
+impl<G: Glyph> FromGlyph<G> for DynGlyph<G> {
+  fn from_glyph(src: G) -> Result<Self, FromGlyphErr<G>> {
+    Ok(DynGlyph::from_glyph_u(src))
   }
 }
 
@@ -303,38 +326,15 @@ impl<G: Glyph> Ord for DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for DynGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    match self {
-      DynGlyph::Unit(g) => Debug::fmt(g, f)?,
-      DynGlyph::Bool(g) => Debug::fmt(g, f)?,
-      DynGlyph::Int(g) => Debug::fmt(g, f)?,
-      DynGlyph::UInt(g) => Debug::fmt(g, f)?,
-      DynGlyph::Float(g) => Debug::fmt(g, f)?,
-      DynGlyph::Tuple(g) => Debug::fmt(g, f)?,
-      DynGlyph::Vec(g) => Debug::fmt(g, f)?,
-      DynGlyph::BitVec(g) => Debug::fmt(g, f)?,
-      DynGlyph::BasicVec(g) => Debug::fmt(g, f)?,
-      DynGlyph::Map(g) => Debug::fmt(g, f)?,
-      DynGlyph::Obj(g) => Debug::fmt(g, f)?,
-      DynGlyph::Doc(g) => Debug::fmt(g, f)?,
-      DynGlyph::String(g) => Debug::fmt(g, f)?,
-      DynGlyph::Char(g) => Debug::fmt(g, f)?,
-      DynGlyph::DateTime(g) => Debug::fmt(g, f)?,
-      DynGlyph::UUID(g) => Debug::fmt(g, f)?,
-      DynGlyph::CryptoHash(g) => Debug::fmt(g, f)?,
-      DynGlyph::EncryptedPassword(g) => Debug::fmt(g, f)?,
-      DynGlyph::UnknownType(g) => {
-        write!(f, "UnknownGlyphType({:?})", g)?;
-      },
-      DynGlyph::DecodeErr(err, g) => {
-        let mut df = f.debug_struct("DecodeErr");
-        df.field("glyph", g);
-        df.field("error", err);
-        df.finish()?;
-      },
-    }
-    Ok(())
+impl<G: Glyph> PartialEq for DynGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for DynGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 

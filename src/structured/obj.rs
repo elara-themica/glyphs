@@ -38,7 +38,6 @@ pub(crate) struct ObjGlyphHeader {
 }
 
 /// SAFETY: All components are zero copy
-unsafe impl ZeroCopy for ObjGlyphHeader {}
 
 impl ObjGlyphHeader {
   /// The fields in the glyph are ordered by field name.
@@ -158,6 +157,8 @@ impl Debug for ObjGlyphHeader {
   }
 }
 
+unsafe impl ZeroCopy for ObjGlyphHeader {}
+
 /*
 Format:
 - GlyphHeader, ObjGlyphHeader.
@@ -186,7 +187,6 @@ Format:
 ///   string (a u8 with its length and then the UTF-8 bytes).
 /// - Zero padding to the nearest 8-byte word.
 ///
-
 #[derive(Clone)]
 pub struct ObjGlyph<B>
 where
@@ -201,7 +201,375 @@ where
   field_offsets: NonNull<[GlyphOffset]>,
 }
 
+impl<B> ObjGlyph<B>
+where
+  B: Glyph,
+{
+  /// Returns a [`GlyphHash`] if the object's type is identified by a hash.
+  pub fn type_hash(&self) -> Option<&GlyphHash> {
+    unsafe { self.type_hash.map(|ptr| ptr.as_ref()) }
+  }
+
+  /// The name of the object's type, if present.
+  pub fn type_name(&self) -> Option<&str> {
+    unsafe { self.type_name.map(|p| p.as_ref()) }
+  }
+
+  /// The id of the object's variant, if present.
+  pub fn variant_id(&self) -> Option<u64> {
+    self.variant_id
+  }
+
+  /// The name of the object's variant, if present.
+  pub fn variant_name(&self) -> Option<&str> {
+    unsafe { self.variant_name.map(|p| p.as_ref()) }
+  }
+
+  /// The offsets of the fields in the glyph.
+  fn offsets(&self) -> &[GlyphOffset] {
+    unsafe { self.field_offsets.as_ref() }
+  }
+
+  /// Returns `true` if the object has field names.
+  pub fn has_field_names(&self) -> bool {
+    self.header.has_field_names()
+  }
+
+  /// Returns the number of fields in the object.
+  pub fn len(&self) -> usize {
+    self.header.num_fields()
+  }
+
+  /// Returns the field name and value of the `index`-th field.
+  pub fn nth(
+    &self,
+    index: usize,
+  ) -> Result<(Option<&str>, ParsedGlyph<'_>), GlyphErr> {
+    let content = self.glyph.content_padded();
+
+    let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
+      index,
+      length: self.offsets().len(),
+    })?;
+    let mut cursor = offset.cursor(0);
+
+    let field_name = if self.header.has_field_names() {
+      let len = u8::bbrf(content, &mut cursor)?;
+      let bytes = u8::bbrfs(content, &mut cursor, *len as usize)?;
+      cursor = round_to_word(cursor);
+      let name = from_utf8(bytes)?;
+      Some(name)
+    } else {
+      None
+    };
+
+    let field_value = glyph_read(content, &mut cursor)?;
+    Ok((field_name, field_value))
+  }
+
+  /// Returns the value of the field with the provided name.
+  ///
+  /// This function performs a binary search by field name, and so can find
+  /// a named field if present in `O=log(n)` time.
+  pub fn by_name(&self, name: &str) -> Option<ParsedGlyph<'_>> {
+    if !self.has_field_names() {
+      None
+    } else {
+      if self.header.has_fields_ordered() {
+        let content = self.glyph.content_padded();
+        if let Ok(position) = self.offsets().binary_search_by(|offset| {
+          let field_name =
+            str::glyph_tiny_str_from_offset(content, *offset).unwrap_or("");
+          field_name.cmp(name)
+        }) {
+          // Found a match, now just need some incantations to return it.
+          self.nth(position).ok().map(|(_name, value)| value)
+        } else {
+          None // Did a binary search of the list; nothing found.
+        }
+      } else {
+        for (field_name, field) in self.fields_iter() {
+          if let Some(field_name) = field_name {
+            if field_name.eq(name) {
+              return Some(field);
+            }
+          }
+        }
+        None // Got to the end of list; nothing found.
+      }
+    }
+  }
+
+  /// Returns an iterator through fields and field names (if present).
+  fn fields_iter(
+    &self,
+  ) -> impl Iterator<Item = (Option<&str>, ParsedGlyph<'_>)>
+       + Clone
+       + DoubleEndedIterator {
+    IterFields {
+      content:      self.glyph.content_padded(),
+      offsets:      self.offsets(),
+      named_fields: self.header.has_field_names(),
+    }
+  }
+}
+
+impl<'a> ObjGlyph<ParsedGlyph<'a>> {
+  fn offsets_parsed(&self) -> &'a [GlyphOffset] {
+    unsafe { self.field_offsets.as_ref() }
+  }
+
+  /// Returns the `index`-th field in the object.
+  ///
+  /// This function retrieves the field name and value at the specified `index`.
+  /// If the object has field names, the returned tuple will include the field
+  /// name as `Some(&str)`; otherwise, it will be `None`. The field value is
+  /// returned as a [`ParsedGlyph`].
+  ///
+  /// # Arguments
+  ///
+  /// * `index` - The zero-based index of the field to retrieve.
+  ///
+  /// # Returns
+  ///
+  /// * `Ok((Option<&'a str>, ParsedGlyph<'a>))` - A tuple containing the
+  ///   optional field name and the field value if the field exists at the
+  ///   specified index.
+  ///
+  /// # Errors
+  ///
+  /// This function will return:
+  /// * `GlyphErr::OutOfBounds` if the provided `index` is greater than or equal to the number of fields.
+  /// * Any error that occurs during decoding of the field name or content.
+  pub fn nth_parse(
+    &self,
+    index: usize,
+  ) -> Result<(Option<&'a str>, ParsedGlyph<'a>), GlyphErr> {
+    let content = self.glyph.content_padded_parsed();
+
+    let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
+      index,
+      length: self.offsets().len(),
+    })?;
+    let mut cursor = offset.cursor(0);
+
+    let field_name = if self.header.has_field_names() {
+      let len = u8::bbrf(content, &mut cursor)?;
+      let bytes = u8::bbrfs(content, &mut cursor, *len as usize)?;
+      cursor = round_to_word(cursor);
+      let name = from_utf8(bytes)?;
+      Some(name)
+    } else {
+      None
+    };
+
+    let field_value = glyph_read(content, &mut cursor)?;
+    Ok((field_name, field_value))
+  }
+
+  /// Returns an iterator through fields, parsed from the underlying buffer.
+  ///
+  /// This function creates an iterator that traverses all the fields in the object
+  /// and yields a tuple consisting of an optional field name and the corresponding
+  /// [`ParsedGlyph`] value.
+  ///
+  /// # Returns
+  ///
+  /// * `impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>` - An iterator
+  ///   where each item is a tuple containing:
+  ///     - `Option<&'a str>`: The field name if it exists, or `None` if the
+  ///       object does not have named fields.
+  ///     - `ParsedGlyph<'a>`: The parsed value of the field.
+  pub fn fields_iter_parse(
+    &self,
+  ) -> impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>
+       + Clone
+       + DoubleEndedIterator {
+    IterFields {
+      content:      self.glyph.content_padded_parsed(),
+      offsets:      self.offsets_parsed(),
+      named_fields: self.header.has_field_names(),
+    }
+  }
+
+  /// Returns a [`GlyphHash`] if the object's type is identified by a hash.
+  pub fn type_hash_parsed(&self) -> Option<&'a GlyphHash> {
+    unsafe { self.type_hash.map(|ptr| ptr.as_ref()) }
+  }
+
+  /// Returns the object's type name, if present, parsed from the underlying
+  /// buffer.
+  pub fn type_name_parsed(&self) -> Option<&'a str> {
+    unsafe { self.type_name.map(|p| p.as_ref()) }
+  }
+
+  /// Returns the object's variant name, if present, parsed from the underlying
+  /// buffer.
+  pub fn variant_name_parsed(&self) -> Option<&'a str> {
+    unsafe { self.variant_name.map(|p| p.as_ref()) }
+  }
+
+  /// Returns the value of the field with the provided name, with lifetime bound
+  /// by the backing buffer rather than this `ObjGlyph`.
+  ///
+  /// This function searches for a field by its name. If the field names are
+  /// ordered, a binary search is performed for efficiency. Otherwise, an
+  /// iterative search is used.
+  ///
+  /// # Arguments
+  ///
+  /// * `name` - A `&str` reference representing the name of the field to search for.
+  ///
+  /// # Returns
+  ///
+  /// * `Option<ParsedGlyph>` - If a field with the provided name exists, returns
+  ///   its value wrapped in `Some`. Otherwise, returns `None`.
+  pub fn by_name_parsed(&self, name: &str) -> Option<ParsedGlyph<'_>> {
+    if !self.has_field_names() {
+      None
+    } else {
+      if self.header.has_fields_ordered() {
+        let content = self.glyph.content_padded_parsed();
+        if let Ok(position) = self.offsets().binary_search_by(|offset| {
+          let field_name =
+            str::glyph_tiny_str_from_offset(content, *offset).unwrap_or("");
+          field_name.cmp(name)
+        }) {
+          // Found a match, now just need some incantations to return it.
+          self.nth(position).ok().map(|(_name, value)| value)
+        } else {
+          None // Did a binary search of the list; nothing found.
+        }
+      } else {
+        for (field_name, field) in self.fields_iter() {
+          if let Some(field_name) = field_name {
+            if field_name.eq(name) {
+              return Some(field);
+            }
+          }
+        }
+        None // Got to the end of list; nothing found.
+      }
+    }
+  }
+}
+
+// TODO: This is dangerous given the unsafe... do we need it?
 impl<B> Copy for ObjGlyph<B> where B: Copy + Glyph {}
+
+impl<T: Glyph> Debug for ObjGlyph<T> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    struct TupleFields<'a, T>(T)
+    where
+      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
+
+    impl<'a, T> Debug for TupleFields<'a, T>
+    where
+      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
+    {
+      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut df = f.debug_list();
+        for (_field_name, field) in self.0.clone() {
+          let field = DynGlyph::from_glyph_u(field);
+          df.entry(&field);
+        }
+        df.finish()
+      }
+    }
+
+    struct NamedFields<'a, T>(T)
+    where
+      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
+
+    impl<'a, T> Debug for NamedFields<'a, T>
+    where
+      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
+    {
+      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut df = f.debug_map();
+        for (field_name, field) in self.0.clone() {
+          let field_name = field_name.unwrap_or("MISSING");
+          let field = DynGlyph::from_glyph_u(field);
+          df.entry(&field_name, &field);
+        }
+        df.finish()
+      }
+    }
+
+    let mut df = f.debug_struct("ObjGlyph");
+    if let Some(type_hash) = self.type_hash() {
+      df.field("type_hash", &type_hash);
+    } else {
+      df.field("type_hash", &Option::<()>::None);
+    }
+    if let Some(type_name) = self.type_name() {
+      df.field("type_name", &type_name);
+    } else {
+      df.field("type_name", &Option::<()>::None);
+    }
+    if let Some(id) = self.variant_id() {
+      df.field("variant_id", &id);
+    } else {
+      df.field("variant_id", &Option::<()>::None);
+    }
+    if let Some(name) = self.variant_name() {
+      df.field("variant_name", &name);
+    } else {
+      df.field("variant_name", &Option::<()>::None);
+    }
+    if self.has_field_names() {
+      let nf = NamedFields(self.fields_iter());
+      df.field("fields", &nf);
+    } else {
+      let tf = TupleFields(self.fields_iter());
+      df.field("fields", &tf);
+    }
+
+    df.finish()
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
+  fn into_inner(self) -> G {
+    self.glyph
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.glyph.borrow()
+  }
+
+  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
+    match sorting {
+      GlyphSorting::ByteOrder => {
+        self.glyph.content().cmp(&other.glyph.content())
+      },
+      GlyphSorting::Experimental => {
+        let mut self_iter = self.fields_iter();
+        let mut other_iter = other.fields_iter();
+
+        loop {
+          match (self_iter.next(), other_iter.next()) {
+            (Some((a_fn, a_val)), Some((b_fn, b_val))) => {
+              let ordering = a_fn.cmp(&b_fn).then_with(|| {
+                let a_val = DynGlyph::from_glyph_u(a_val);
+                let b_val = DynGlyph::from_glyph_u(b_val);
+                a_val.glyph_ord(&b_val, sorting)
+              });
+              if ordering != Ordering::Equal {
+                return ordering;
+              }
+            },
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+          }
+        }
+      },
+    }
+  }
+}
+
+impl<G: Glyph> Eq for ObjGlyph<G> {}
 
 impl<B> FromGlyph<B> for ObjGlyph<B>
 where
@@ -293,257 +661,9 @@ where
   }
 }
 
-impl<B> ObjGlyph<B>
-where
-  B: Glyph,
-{
-  /// Returns a [`GlyphHash`] if the object's type is identified by a hash.
-  pub fn type_hash(&self) -> Option<&GlyphHash> {
-    unsafe { self.type_hash.map(|ptr| ptr.as_ref()) }
-  }
-
-  /// The name of the object's type, if present.
-  pub fn type_name(&self) -> Option<&str> {
-    unsafe { self.type_name.map(|p| p.as_ref()) }
-  }
-
-  /// The id of the object's variant, if present.
-  pub fn variant_id(&self) -> Option<u64> {
-    self.variant_id
-  }
-
-  /// The name of the object's variant, if present.
-  pub fn variant_name(&self) -> Option<&str> {
-    unsafe { self.variant_name.map(|p| p.as_ref()) }
-  }
-
-  /// The offsets of the fields in the glyph.
-  fn offsets(&self) -> &[GlyphOffset] {
-    unsafe { self.field_offsets.as_ref() }
-  }
-
-  /// Returns `true` if the object has field names.
-  pub fn has_field_names(&self) -> bool {
-    self.header.has_field_names()
-  }
-
-  /// Returns the number of fields in the object.
-  pub fn len(&self) -> usize {
-    self.header.num_fields()
-  }
-
-  /// Returns the field name and value of the `index`-th field.
-  pub fn nth(
-    &self,
-    index: usize,
-  ) -> Result<(Option<&str>, ParsedGlyph<'_>), GlyphErr> {
-    let content = self.glyph.content_padded();
-
-    let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
-      index,
-      length: self.offsets().len(),
-    })?;
-    let mut cursor = offset.cursor(0);
-
-    let field_name = if self.header.has_field_names() {
-      let len = u8::bbrf(content, &mut cursor)?;
-      let bytes = u8::bbrfs(content, &mut cursor, *len as usize)?;
-      cursor = round_to_word(cursor);
-      let name = from_utf8(bytes)?;
-      Some(name)
-    } else {
-      None
-    };
-
-    let field_value = glyph_read(content, &mut cursor)?;
-    Ok((field_name, field_value))
-  }
-
-  /// Returns the value of the field with the provided name.
-  ///
-  /// This function performs a binary search by field name, and so can find
-  /// a named field if present in `O=log(n)` time.
-  pub fn by_name(&self, name: &str) -> Option<ParsedGlyph> {
-    if !self.has_field_names() {
-      None
-    } else {
-      if self.header.has_fields_ordered() {
-        let content = self.glyph.content_padded();
-        if let Ok(position) = self.offsets().binary_search_by(|offset| {
-          let field_name =
-            str::glyph_tiny_str_from_offset(content, *offset).unwrap_or("");
-          field_name.cmp(name)
-        }) {
-          // Found a match, now just need some incantations to return it.
-          self.nth(position).ok().map(|(_name, value)| value)
-        } else {
-          None // Did a binary search of the list; nothing found.
-        }
-      } else {
-        for (field_name, field) in self.fields_iter() {
-          if let Some(field_name) = field_name {
-            if field_name.eq(name) {
-              return Some(field);
-            }
-          }
-        }
-        None // Got to the end of list; nothing found.
-      }
-    }
-  }
-
-  /// Returns an iterator through fields and field names (if present).
-  fn fields_iter(
-    &self,
-  ) -> impl Iterator<Item = (Option<&str>, ParsedGlyph)> + Clone + DoubleEndedIterator
-  {
-    IterFields {
-      content:      self.glyph.content_padded(),
-      offsets:      self.offsets(),
-      named_fields: self.header.has_field_names(),
-    }
-  }
-}
-
-impl<'a> ObjGlyph<ParsedGlyph<'a>> {
-  fn offsets_parsed(&self) -> &'a [GlyphOffset] {
-    unsafe { self.field_offsets.as_ref() }
-  }
-
-  /// Returns the `index`-th field in the object.
-  ///
-  /// This function retrieves the field name and value at the specified `index`.
-  /// If the object has field names, the returned tuple will include the field
-  /// name as `Some(&str)`; otherwise, it will be `None`. The field value is
-  /// returned as a [`ParsedGlyph`].
-  ///
-  /// # Arguments
-  ///
-  /// * `index` - The zero-based index of the field to retrieve.
-  ///
-  /// # Returns
-  ///
-  /// * `Ok((Option<&'a str>, ParsedGlyph<'a>))` - A tuple containing the
-  ///   optional field name and the field value if the field exists at the
-  ///   specified index.
-  ///
-  /// # Errors
-  ///
-  /// This function will return:
-  /// * `GlyphErr::OutOfBounds` if the provided `index` is greater than or equal to the number of fields.
-  /// * Any error that occurs during decoding of the field name or content.
-  pub fn nth_parse(
-    &self,
-    index: usize,
-  ) -> Result<(Option<&'a str>, ParsedGlyph<'a>), GlyphErr> {
-    let content = self.glyph.content_padded_parsed();
-
-    let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
-      index,
-      length: self.offsets().len(),
-    })?;
-    let mut cursor = offset.cursor(0);
-
-    let field_name = if self.header.has_field_names() {
-      let len = u8::bbrf(content, &mut cursor)?;
-      let bytes = u8::bbrfs(content, &mut cursor, *len as usize)?;
-      cursor = round_to_word(cursor);
-      let name = from_utf8(bytes)?;
-      Some(name)
-    } else {
-      None
-    };
-
-    let field_value = glyph_read(content, &mut cursor)?;
-    Ok((field_name, field_value))
-  }
-
-  /// Returns an iterator through fields, parsed from the underlying buffer.
-  ///
-  /// This function creates an iterator that traverses all the fields in the object
-  /// and yields a tuple consisting of an optional field name and the corresponding
-  /// [`ParsedGlyph`] value.
-  ///
-  /// # Returns
-  ///
-  /// * `impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>` - An iterator
-  ///   where each item is a tuple containing:
-  ///     - `Option<&'a str>`: The field name if it exists, or `None` if the
-  ///       object does not have named fields.
-  ///     - `ParsedGlyph<'a>`: The parsed value of the field.
-  pub fn fields_iter_parse(
-    &self,
-  ) -> impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>
-       + Clone
-       + DoubleEndedIterator {
-    IterFields {
-      content:      self.glyph.content_padded_parsed(),
-      offsets:      self.offsets_parsed(),
-      named_fields: self.header.has_field_names(),
-    }
-  }
-}
-
-impl<'a> ObjGlyph<ParsedGlyph<'a>> {
-  /// Returns a [`GlyphHash`] if the object's type is identified by a hash.
-  pub fn type_hash_parsed(&self) -> Option<&'a GlyphHash> {
-    unsafe { self.type_hash.map(|ptr| ptr.as_ref()) }
-  }
-
-  /// Returns the object's type name, if present, parsed from the underlying
-  /// buffer.
-  pub fn type_name_parsed(&self) -> Option<&'a str> {
-    unsafe { self.type_name.map(|p| p.as_ref()) }
-  }
-
-  /// Returns the object's variant name, if present, parsed from the underlying
-  /// buffer.
-  pub fn variant_name_parsed(&self) -> Option<&'a str> {
-    unsafe { self.variant_name.map(|p| p.as_ref()) }
-  }
-
-  /// Returns the value of the field with the provided name, with lifetime bound
-  /// by the backing buffer rather than this `ObjGlyph`.
-  ///
-  /// This function searches for a field by its name. If the field names are
-  /// ordered, a binary search is performed for efficiency. Otherwise, an
-  /// iterative search is used.
-  ///
-  /// # Arguments
-  ///
-  /// * `name` - A `&str` reference representing the name of the field to search for.
-  ///
-  /// # Returns
-  ///
-  /// * `Option<ParsedGlyph>` - If a field with the provided name exists, returns
-  ///   its value wrapped in `Some`. Otherwise, returns `None`.
-  pub fn by_name_parsed(&self, name: &str) -> Option<ParsedGlyph> {
-    if !self.has_field_names() {
-      None
-    } else {
-      if self.header.has_fields_ordered() {
-        let content = self.glyph.content_padded_parsed();
-        if let Ok(position) = self.offsets().binary_search_by(|offset| {
-          let field_name =
-            str::glyph_tiny_str_from_offset(content, *offset).unwrap_or("");
-          field_name.cmp(name)
-        }) {
-          // Found a match, now just need some incantations to return it.
-          self.nth(position).ok().map(|(_name, value)| value)
-        } else {
-          None // Did a binary search of the list; nothing found.
-        }
-      } else {
-        for (field_name, field) in self.fields_iter() {
-          if let Some(field_name) = field_name {
-            if field_name.eq(name) {
-              return Some(field);
-            }
-          }
-        }
-        None // Got to the end of list; nothing found.
-      }
-    }
+impl<G: Glyph> Ord for ObjGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
   }
 }
 
@@ -553,129 +673,9 @@ impl<G: Glyph> PartialEq for ObjGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for ObjGlyph<G> {}
-
 impl<G: Glyph> PartialOrd for ObjGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for ObjGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
-  fn into_inner(self) -> G {
-    self.glyph
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
-  }
-
-  fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
-    match sorting {
-      GlyphSorting::ByteOrder => {
-        self.glyph.content().cmp(&other.glyph.content())
-      },
-      GlyphSorting::Experimental => {
-        let mut self_iter = self.fields_iter();
-        let mut other_iter = other.fields_iter();
-
-        loop {
-          match (self_iter.next(), other_iter.next()) {
-            (Some((a_fn, a_val)), Some((b_fn, b_val))) => {
-              let ordering = a_fn.cmp(&b_fn).then_with(|| {
-                let a_val = DynGlyph::from_glyph_u(a_val);
-                let b_val = DynGlyph::from_glyph_u(b_val);
-                a_val.glyph_ord(&b_val, sorting)
-              });
-              if ordering != Ordering::Equal {
-                return ordering;
-              }
-            },
-            (Some(_), None) => return Ordering::Greater,
-            (None, Some(_)) => return Ordering::Less,
-            (None, None) => return Ordering::Equal,
-          }
-        }
-      },
-    }
-  }
-}
-
-impl<T: Glyph> Debug for ObjGlyph<T> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    struct TupleFields<'a, T>(T)
-    where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
-
-    impl<'a, T> Debug for TupleFields<'a, T>
-    where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
-    {
-      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        let mut df = f.debug_list();
-        for (_field_name, field) in self.0.clone() {
-          let field = DynGlyph::from_glyph_u(field);
-          df.entry(&field);
-        }
-        df.finish()
-      }
-    }
-
-    struct NamedFields<'a, T>(T)
-    where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
-
-    impl<'a, T> Debug for NamedFields<'a, T>
-    where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
-    {
-      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        let mut df = f.debug_map();
-        for (field_name, field) in self.0.clone() {
-          let field_name = field_name.unwrap_or("MISSING");
-          let field = DynGlyph::from_glyph_u(field);
-          df.entry(&field_name, &field);
-        }
-        df.finish()
-      }
-    }
-
-    let mut df = f.debug_struct("ObjGlyph");
-    if let Some(type_hash) = self.type_hash() {
-      df.field("type_hash", &type_hash);
-    } else {
-      df.field("type_hash", &Option::<()>::None);
-    }
-    if let Some(type_name) = self.type_name() {
-      df.field("type_name", &type_name);
-    } else {
-      df.field("type_name", &Option::<()>::None);
-    }
-    if let Some(id) = self.variant_id() {
-      df.field("variant_id", &id);
-    } else {
-      df.field("variant_id", &Option::<()>::None);
-    }
-    if let Some(name) = self.variant_name() {
-      df.field("variant_name", &name);
-    } else {
-      df.field("variant_name", &Option::<()>::None);
-    }
-    if self.has_field_names() {
-      let nf = NamedFields(self.fields_iter());
-      df.field("fields", &nf);
-    } else {
-      let tf = TupleFields(self.fields_iter());
-      df.field("fields", &tf);
-    }
-
-    df.finish()
   }
 }
 
@@ -692,11 +692,9 @@ pub(crate) struct IterFields<'a> {
   named_fields: bool,
 }
 
-impl<'a> Iterator for IterFields<'a> {
-  type Item = (Option<&'a str>, ParsedGlyph<'a>);
-
-  fn next(&mut self) -> Option<Self::Item> {
-    let (offset, remainder) = self.offsets.split_first()?;
+impl<'a> DoubleEndedIterator for IterFields<'a> {
+  fn next_back(&mut self) -> Option<Self::Item> {
+    let (offset, remainder) = self.offsets.split_last()?;
     self.offsets = remainder;
     let cursor = &mut offset.cursor(0);
 
@@ -715,9 +713,17 @@ impl<'a> Iterator for IterFields<'a> {
   }
 }
 
-impl<'a> DoubleEndedIterator for IterFields<'a> {
-  fn next_back(&mut self) -> Option<Self::Item> {
-    let (offset, remainder) = self.offsets.split_last()?;
+impl<'a> ExactSizeIterator for IterFields<'a> {
+  fn len(&self) -> usize {
+    self.offsets.len()
+  }
+}
+
+impl<'a> Iterator for IterFields<'a> {
+  type Item = (Option<&'a str>, ParsedGlyph<'a>);
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let (offset, remainder) = self.offsets.split_first()?;
     self.offsets = remainder;
     let cursor = &mut offset.cursor(0);
 

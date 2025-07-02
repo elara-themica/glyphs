@@ -17,131 +17,81 @@ use core::{
 };
 use std::cmp::Ordering;
 
-// TODO: Test implementing these from another crate, and fully convert trait
-//       call reference style to
-macro_rules! hash_impls {
-  ($hash_name:ident, $hash_len:expr, $hash_tid:ident, $zc_tid:ident, $context_name:ident) => {
-    unsafe impl $crate::zerocopy::ZeroCopy for $hash_name {}
-
-    impl $crate::zerocopy::HasZeroCopyID for $hash_name {
-      const ZERO_COPY_ID: $crate::zerocopy::ZeroCopyTypeID =
-        $crate::zerocopy::ZeroCopyTypeID::$zc_tid;
-    }
-
-    impl $crate::crypto::CryptographicHash for $hash_name {
-      type Context = $context_name;
-
-      const HASH_LEN: usize = $hash_len;
-      const HASH_TYPE_ID: $crate::crypto::CryptoHashType =
-        $crate::crypto::CryptoHashType::$hash_tid;
-
-      fn from_hash_bytes(hash_bytes: [u8; $hash_len]) -> Self {
-        $hash_name(hash_bytes)
-      }
-
-      fn hash_bytes(&self) -> &[u8; $hash_len] {
-        &self.0
-      }
-
-      fn suffix_bytes(&self) -> [u8; 4] {
-        [
-          self.0[Self::HASH_LEN - 4],
-          self.0[Self::HASH_LEN - 3],
-          self.0[Self::HASH_LEN - 2],
-          self.0[Self::HASH_LEN - 1],
-        ]
-      }
-    }
-
-    /// The default value is all zeroes.
-    impl core::default::Default for $hash_name {
-      fn default() -> Self {
-        Self([0u8; $hash_len])
-      }
-    }
-
-    impl core::convert::AsRef<[u8]> for $hash_name {
-      fn as_ref(&self) -> &[u8] {
-        &self.0[..]
-      }
-    }
-
-    impl core::fmt::Debug for $hash_name {
-      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-          f,
-          "{}({})",
-          stringify!($hash_name),
-          &$crate::util::debug::ShortHexDump(&self.0[..], 128)
-        )
-      }
-    }
-
-    impl core::fmt::Display for $hash_name {
-      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(
-          &$crate::util::debug::ShortHexDump(&self.0[..], 128),
-          f,
-        )
-      }
-    }
-
-    impl $crate::ToGlyph for $hash_name {
-      fn glyph_encode(
-        &self,
-        target: &mut [u8],
-        cursor: &mut usize,
-      ) -> Result<(), $crate::GlyphErr> {
-        let content_len = $crate::zerocopy::round_to_word(
-          core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
-            + core::mem::size_of::<$hash_name>(),
-        );
-        let glyph_header =
-          $crate::GlyphHeader::new($crate::GlyphType::CryptoHash, content_len)?;
-        $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
-        let hash_header = $crate::crypto::CryptoHashHeader::new::<$hash_name>();
-        $crate::zerocopy::ZeroCopy::bbwr(&hash_header, target, cursor)?;
-        $crate::zerocopy::ZeroCopy::bbwr(self, target, cursor)?;
-        $crate::zerocopy::pad_to_word(target, cursor)?;
-        Ok(())
-      }
-
-      fn glyph_len(&self) -> usize {
-        core::mem::size_of::<$crate::GlyphHeader>()
-          + $crate::zerocopy::round_to_word(
-            core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
-              + core::mem::size_of::<$hash_name>(),
-          )
-      }
-    }
-
-    impl<G: $crate::Glyph> $crate::FromGlyph<G> for $hash_name {
-      fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
-        let hg =
-          match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.borrow()) {
-            Ok(hg) => hg,
-            Err(err) => {
-              let (_glyph, err) = err.into_parts();
-              return Err(err.into_fge(glyph));
-            },
-          };
-        let hash = match hg.get::<$hash_name>() {
-          Ok(hash) => hash,
-          Err(err) => return Err(err.into_fge(glyph)),
-        };
-        Ok(*hash)
-      }
-    }
-
-    gen_prim_slice_to_glyph!($hash_name);
-    gen_prim_slice_from_glyph_parsed!($hash_name);
-  };
-}
-
 /// The default cryptographic hash for glyphs.
 pub type GlyphHash = blake3::Blake3Hash;
 /// The default cryptographic hash context for glyphs.
 pub type GlyphHashContext = blake3::Blake3Context;
+
+/// Glyphs trait for cryptographic hash functions.
+pub trait CryptographicHash:
+  ZeroCopy
+  + Default
+  + AsRef<[u8]>
+  + ToGlyph
+  + for<'a> FromGlyph<ParsedGlyph<'a>>
+  + Send
+  + Sync
+  + 'static
+{
+  /// The length of the hash produced by the function, in bytes.
+  const HASH_LEN: usize;
+
+  /// The glyph hash type ID associated with this type of cryptographic hash.
+  ///
+  /// See [`CryptoHashType`].
+  const HASH_TYPE_ID: CryptoHashType;
+
+  /// The type used for generating more hashes of this type.
+  type Context: HashContext<Output = Self>;
+
+  /// Calculate a new hash of this type from the byte slice provided.
+  ///
+  /// Note that, if you need to include more than just a single byte slice,
+  /// you'll need to use this type's hash context instead.
+  fn new(bytes: &[u8]) -> Self {
+    let mut context = <Self as CryptographicHash>::Context::new();
+    context.update(bytes.as_ref());
+    context.finish()
+  }
+
+  /// The raw hash bytes.
+  fn hash_bytes(&self) -> &[u8; <Self as CryptographicHash>::HASH_LEN];
+
+  /// Returns the last 4 bytes of the hash.
+  fn suffix_bytes(&self) -> [u8; 4];
+
+  /// Create a new hash from an array of bytes.
+  fn from_hash_bytes(
+    hash_bytes: [u8; <Self as CryptographicHash>::HASH_LEN],
+  ) -> Self;
+
+  /// Create a new random hash.
+  // TODO: Is this necessary?
+  #[cfg(feature = "rand")]
+  fn random<R: rand::RngCore>(rng: &mut R) -> Self
+  where
+    [(); <Self as CryptographicHash>::HASH_LEN]:,
+  {
+    let mut hash_bytes = [0u8; <Self as CryptographicHash>::HASH_LEN];
+    rng.fill_bytes(&mut hash_bytes[..]);
+    <Self as CryptographicHash>::from_hash_bytes(hash_bytes)
+  }
+}
+
+/// An internal trait for cryptographic hash contexts.
+pub trait HashContext {
+  /// The type of output returned by this hash context
+  type Output;
+
+  /// Creates a new context
+  fn new() -> Self;
+
+  /// Update the context with additional data
+  fn update(&mut self, bytes: &[u8]);
+
+  /// Complete the calculation and return the hash value
+  fn finish(self) -> Self::Output;
+}
 
 /// A header used to identify a type of cryptographic hash.
 #[repr(packed)]
@@ -235,62 +185,6 @@ impl From<CryptoHashType> for u16 {
 impl From<CryptoHashType> for U16 {
   fn from(value: CryptoHashType) -> Self {
     U16::from(value as u16)
-  }
-}
-
-/// Glyphs trait for cryptographic hash functions.
-pub trait CryptographicHash:
-  ZeroCopy
-  + Default
-  + AsRef<[u8]>
-  + ToGlyph
-  + for<'a> FromGlyph<ParsedGlyph<'a>>
-  + Send
-  + Sync
-  + 'static
-{
-  /// The length of the hash produced by the function, in bytes.
-  const HASH_LEN: usize;
-
-  /// The glyph hash type ID associated with this type of cryptographic hash.
-  ///
-  /// See [`CryptoHashType`].
-  const HASH_TYPE_ID: CryptoHashType;
-
-  /// The type used for generating more hashes of this type.
-  type Context: HashContext<Output = Self>;
-
-  /// Calculate a new hash of this type from the byte slice provided.
-  ///
-  /// Note that, if you need to include more than just a single byte slice,
-  /// you'll need to use this type's hash context instead.
-  fn new(bytes: &[u8]) -> Self {
-    let mut context = <Self as CryptographicHash>::Context::new();
-    context.update(bytes.as_ref());
-    context.finish()
-  }
-
-  /// The raw hash bytes.
-  fn hash_bytes(&self) -> &[u8; <Self as CryptographicHash>::HASH_LEN];
-
-  /// Returns the last 4 bytes of the hash.
-  fn suffix_bytes(&self) -> [u8; 4];
-
-  /// Create a new hash from an array of bytes.
-  fn from_hash_bytes(
-    hash_bytes: [u8; <Self as CryptographicHash>::HASH_LEN],
-  ) -> Self;
-
-  /// Create a new random hash.
-  // TODO: Is this necessary?
-  #[cfg(feature = "rand")]
-  fn random<R: rand::RngCore>(rng: &mut R) -> Self
-  where
-    [(); <Self as CryptographicHash>::HASH_LEN]:,
-  {
-    let mut hash_bytes = [0u8; <Self as CryptographicHash>::HASH_LEN];
-    rng.fill_bytes(&mut hash_bytes[..]);
-    <Self as CryptographicHash>::from_hash_bytes(hash_bytes)
   }
 }
 
@@ -416,21 +310,6 @@ impl<G: Glyph> EncodedGlyph<G> for HashGlyph<G> {
   fn glyph(&self) -> ParsedGlyph<'_> {
     self.0.borrow()
   }
-}
-
-/// An internal trait for cryptographic hash contexts.
-pub trait HashContext {
-  /// The type of output returned by this hash context
-  type Output;
-
-  /// Creates a new context
-  fn new() -> Self;
-
-  /// Update the context with additional data
-  fn update(&mut self, bytes: &[u8]);
-
-  /// Complete the calculation and return the hash value
-  fn finish(self) -> Self::Output;
 }
 
 /// A CIDR-like prefix for cryptographic hashes.
@@ -645,6 +524,127 @@ impl Debug for HashPrefix {
       )
     }
   }
+}
+
+// TODO: Test implementing these from another crate, and fully convert trait
+//       call reference style to
+macro_rules! hash_impls {
+  ($hash_name:ident, $hash_len:expr, $hash_tid:ident, $zc_tid:ident, $context_name:ident) => {
+    unsafe impl $crate::zerocopy::ZeroCopy for $hash_name {}
+
+    impl $crate::zerocopy::HasZeroCopyID for $hash_name {
+      const ZERO_COPY_ID: $crate::zerocopy::ZeroCopyTypeID =
+        $crate::zerocopy::ZeroCopyTypeID::$zc_tid;
+    }
+
+    impl $crate::crypto::CryptographicHash for $hash_name {
+      type Context = $context_name;
+
+      const HASH_LEN: usize = $hash_len;
+      const HASH_TYPE_ID: $crate::crypto::CryptoHashType =
+        $crate::crypto::CryptoHashType::$hash_tid;
+
+      fn from_hash_bytes(hash_bytes: [u8; $hash_len]) -> Self {
+        $hash_name(hash_bytes)
+      }
+
+      fn hash_bytes(&self) -> &[u8; $hash_len] {
+        &self.0
+      }
+
+      fn suffix_bytes(&self) -> [u8; 4] {
+        [
+          self.0[Self::HASH_LEN - 4],
+          self.0[Self::HASH_LEN - 3],
+          self.0[Self::HASH_LEN - 2],
+          self.0[Self::HASH_LEN - 1],
+        ]
+      }
+    }
+
+    /// The default value is all zeroes.
+    impl core::default::Default for $hash_name {
+      fn default() -> Self {
+        Self([0u8; $hash_len])
+      }
+    }
+
+    impl core::convert::AsRef<[u8]> for $hash_name {
+      fn as_ref(&self) -> &[u8] {
+        &self.0[..]
+      }
+    }
+
+    impl core::fmt::Debug for $hash_name {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+          f,
+          "{}({})",
+          stringify!($hash_name),
+          &$crate::util::debug::ShortHexDump(&self.0[..], 128)
+        )
+      }
+    }
+
+    impl core::fmt::Display for $hash_name {
+      fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(
+          &$crate::util::debug::ShortHexDump(&self.0[..], 128),
+          f,
+        )
+      }
+    }
+
+    impl $crate::ToGlyph for $hash_name {
+      fn glyph_encode(
+        &self,
+        target: &mut [u8],
+        cursor: &mut usize,
+      ) -> Result<(), $crate::GlyphErr> {
+        let content_len = $crate::zerocopy::round_to_word(
+          core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
+            + core::mem::size_of::<$hash_name>(),
+        );
+        let glyph_header =
+          $crate::GlyphHeader::new($crate::GlyphType::CryptoHash, content_len)?;
+        $crate::zerocopy::ZeroCopy::bbwr(&glyph_header, target, cursor)?;
+        let hash_header = $crate::crypto::CryptoHashHeader::new::<$hash_name>();
+        $crate::zerocopy::ZeroCopy::bbwr(&hash_header, target, cursor)?;
+        $crate::zerocopy::ZeroCopy::bbwr(self, target, cursor)?;
+        $crate::zerocopy::pad_to_word(target, cursor)?;
+        Ok(())
+      }
+
+      fn glyph_len(&self) -> usize {
+        core::mem::size_of::<$crate::GlyphHeader>()
+          + $crate::zerocopy::round_to_word(
+            core::mem::size_of::<$crate::crypto::CryptoHashHeader>()
+              + core::mem::size_of::<$hash_name>(),
+          )
+      }
+    }
+
+    impl<G: $crate::Glyph> $crate::FromGlyph<G> for $hash_name {
+      fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
+        let hg =
+          match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.borrow()) {
+            Ok(hg) => hg,
+            Err(err) => {
+              let (_glyph, err) = err.into_parts();
+              return Err(err.into_fge(glyph));
+            },
+          };
+        let hash = match hg.get::<$hash_name>() {
+          Ok(hash) => hash,
+          Err(err) => return Err(err.into_fge(glyph)),
+        };
+        Ok(*hash)
+      }
+    }
+
+    gen_prim_slice_to_glyph!($hash_name);
+    gen_prim_slice_from_glyph_parsed!($hash_name);
+  };
 }
 
 pub(crate) mod md5 {

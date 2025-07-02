@@ -18,100 +18,7 @@ use serde::{
   Deserialize, Deserializer,
 };
 
-/// Deserialize a type that implements `serde`'s [`Deserialize`] trait.
-///
-/// Glyphs are deserialized as follows (which also corresponds to how these
-/// types are serialized):
-///
-/// - _Numeric Primitives_.  Numeric primitives can be deserialized from any
-///   valid numeric glyph type, provided there is no overflow.
-/// - _Strings_.  [`String`]s and [`str`]s are deserialized from
-///  [`StringGlyph`]s, which currently only support the UTF-8 type.
-/// - _Options_.  When deserializing an option, a [`NothingGlyph`] will be
-///   deserialized as `None`, otherwise it will be a `Some` of the type present.
-/// - _Sequences_.  Sequence types can be deserialized from either a
-///   [`VecGlyph`] or the various specialized vector glyph types containing
-///   primitives, such as [`VecU32Glyph`].
-/// - _Tuples_.  Deserialized from [`TupleGlyph`]s.
-/// - _Maps_.  Deserialized from [`MapGlyph`]s.
-/// - _Structs_.  Deserialized from [`ObjGlyph`]s with matching type names.
-///   Unit structs must have no fields, tuple structs must have unnamed fields,
-///   and regular structs must have named fields.  Newtype structs are
-///   deserialized transparently, e.g., `struct T(U)` can be deserialized from
-///   just a `U`.
-/// - _Enums_.  Like structs, except (1) the source `ObjGlyph` must contain a
-///   variant name, and (2) newtype variants are deserialized from tuple
-///   variants with a single field.
-pub fn glyph_serde_deserialize<'a, T>(
-  glyph: ParsedGlyph<'a>,
-) -> Result<T, SerdeGlyphErr>
-where
-  T: Deserialize<'a>,
-{
-  let gd = GlyphDeserializer(glyph);
-  let t = T::deserialize(gd)?;
-  Ok(t)
-}
-
 struct GlyphDeserializer<'de>(ParsedGlyph<'de>);
-
-impl<'de> GlyphDeserializer<'de> {
-  // fn numbers<V>(&self, visitor: V) -> Result<V::Value, SerdeGlyphErr>
-  // where
-  //   V: Visitor<'de>,
-  // {
-  //   let type_id = self.0.type_id_enum();
-  //   match type_id {
-  //     GlyphType::UnsignedInt => {
-  //       let value = u128::from_glyph(self.0)?;
-  //       visitor.visit_u128(value)
-  //     },
-  //     GlyphType::SignedInt => {
-  //       let value = i128::from_glyph(self.0)?;
-  //       visitor.visit_i128(value)
-  //     },
-  //     GlyphType::Float => {
-  //       let value = f64::from_glyph(self.0)?;
-  //       visitor.visit_f64(value)
-  //     },
-  //     //
-  //     //
-  //     // GlyphType::U32 => {
-  //     //   let value = u32::from_glyph(self.0)?;
-  //     //   visitor.visit_u32(value)
-  //     // },
-  //     // GlyphType::U64 => {
-  //     //   let value = u64::from_glyph(self.0)?;
-  //     //   visitor.visit_u64(value)
-  //     // },
-  //     // GlyphType::U128 => {
-  //     //   let value = u128::from_glyph(self.0)?;
-  //     //   visitor.visit_u128(value)
-  //     // },
-  //     // GlyphType::I32 => {
-  //     //   let value = i32::from_glyph(self.0)?;
-  //     //   visitor.visit_i32(value)
-  //     // },
-  //     // GlyphType::I64 => {
-  //     //   let value = i64::from_glyph(self.0)?;
-  //     //   visitor.visit_i64(value)
-  //     // },
-  //     // GlyphType::I128 => {
-  //     //   let value = i128::from_glyph(self.0)?;
-  //     //   visitor.visit_i128(value)
-  //     // },
-  //     // GlyphType::F32 => {
-  //     //   let value = f32::from_glyph(self.0)?;
-  //     //   visitor.visit_f32(value)
-  //     // },
-  //     // GlyphType::F64 => {
-  //     //   let value = f64::from_glyph(self.0)?;
-  //     //   visitor.visit_f64(value)
-  //     // },
-  //     _ => Err(SerdeGlyphErr::InvalidSourceGlyphTypeEnum(type_id)),
-  //   }
-  // }
-}
 
 impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   type Error = SerdeGlyphErr;
@@ -1247,4 +1154,39 @@ impl<'de> Deserializer<'de> for PassthroughDeserializer<'de> {
   {
     Err(SerdeGlyphErr::Unreachable)
   }
+}
+
+/// Deserialize a type that implements `serde`'s [`Deserialize`] trait.
+///
+/// Glyphs are deserialized as follows (which also corresponds to how these
+/// types are serialized):
+///
+/// - _Numeric Primitives_.  Numeric primitives can be deserialized from any
+///   valid numeric glyph type, provided there is no overflow.
+/// - _Strings_.  [`String`]s and [`str`]s are deserialized from
+///  [`StringGlyph`]s, which currently only support the UTF-8 type.
+/// - _Options_.  When deserializing an option, a [`NothingGlyph`] will be
+///   deserialized as `None`, otherwise it will be a `Some` of the type present.
+/// - _Sequences_.  Sequence types can be deserialized from either a
+///   [`VecGlyph`] or the various specialized vector glyph types containing
+///   primitives, such as [`VecU32Glyph`].
+/// - _Tuples_.  Deserialized from [`TupleGlyph`]s.
+/// - _Maps_.  Deserialized from [`MapGlyph`]s.
+/// - _Structs_.  Deserialized from [`ObjGlyph`]s with matching type names.
+///   Unit structs must have no fields, tuple structs must have unnamed fields,
+///   and regular structs must have named fields.  Newtype structs are
+///   deserialized transparently, e.g., `struct T(U)` can be deserialized from
+///   just a `U`.
+/// - _Enums_.  Like structs, except (1) the source `ObjGlyph` must contain a
+///   variant name, and (2) newtype variants are deserialized from tuple
+///   variants with a single field.
+pub fn glyph_serde_deserialize<'a, T>(
+  glyph: ParsedGlyph<'a>,
+) -> Result<T, SerdeGlyphErr>
+where
+  T: Deserialize<'a>,
+{
+  let gd = GlyphDeserializer(glyph);
+  let t = T::deserialize(gd)?;
+  Ok(t)
 }

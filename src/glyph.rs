@@ -15,11 +15,7 @@ use crate::{
   },
 };
 #[cfg(feature = "alloc")]
-use alloc::{
-  alloc::{AllocError, Allocator, Global, Layout},
-  boxed::Box,
-  sync::Arc,
-};
+use alloc::{alloc::AllocError, boxed::Box, sync::Arc};
 use core::{
   cell::UnsafeCell,
   cmp::Ordering,
@@ -30,272 +26,6 @@ use core::{
   slice::from_raw_parts,
   str::Utf8Error,
 };
-
-/// The common header for every glyph.
-///
-/// The format is documented [here](http://www.glifs.org/docs/books/format/general.html).
-#[repr(C)]
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct GlyphHeader {
-  version:  u8,
-  padding:  u8,
-  type_id:  [u8; 2],
-  len_data: [u8; 4],
-}
-
-unsafe impl ZeroCopy for GlyphHeader {}
-
-impl GlyphHeader {
-  /// If set, this is a long glyph.
-  const LONG_BIT: u8 = 0b0000_1000;
-  /// The maximum content length that can be expressed in a glyph header.
-  const MAX_CONTENT_LEN: u64 = (u32::MAX as u64) << 3;
-  /// Bits to store the number of padding bytes at the end of a glyph.
-  ///
-  /// Useful primarily for UTF-8 strings and other types which can have an
-  /// arbitrary byte length.
-  const PADDING_BITS: u8 = 0b0000_0111;
-  /// Bits to store the glyph version, for future compatibility.  Currently,
-  /// these bits must be zero.
-  const VERSION_BITS: u8 = 0b0000_1111;
-
-  /// Creates a new glyph header, containing content_len bytes.
-  ///
-  /// The caller must ensure that `content_len <= GLYPH_MAX_CONTENT_LEN`, or
-  /// the resulting header will not be inaccurate (as longer lengths cannot be
-  /// represented in the existing format).
-  #[inline]
-  pub const fn new(
-    glyph_type: GlyphType,
-    content_len: usize,
-  ) -> Result<GlyphHeader, GlyphErr> {
-    if content_len as u64 <= Self::MAX_CONTENT_LEN {
-      let padded_len = (content_len + 7) & !7;
-      let padding = padded_len - content_len; // always 0-7.
-      let padding = (padding as u8) | Self::LONG_BIT; // add long bit
-      let word_len = (padded_len >> 3) as u32;
-      Ok(GlyphHeader {
-        version: 0,
-        padding,
-        type_id: (glyph_type as u16).to_le_bytes(),
-        len_data: word_len.to_le_bytes(),
-      })
-    } else {
-      Err(GlyphErr::GlyphLenOverflow(content_len))
-    }
-  }
-
-  /// Creates a new header for a short glyph, with the content fully specified.
-  pub const fn new_short(
-    glyph_type: GlyphType,
-    content: [u8; 4],
-  ) -> GlyphHeader {
-    GlyphHeader {
-      version:  0,
-      padding:  0,
-      type_id:  (glyph_type as u16).to_le_bytes(),
-      len_data: content,
-    }
-  }
-
-  /// Returns the GLIFS version specified in the header.
-  #[inline(always)]
-  pub const fn version(self) -> u8 {
-    self.version & Self::VERSION_BITS
-  }
-
-  /// Returns the numerical glyph type id.  See [`GlyphType`].
-  #[inline(always)]
-  pub fn glyph_type(self) -> GlyphType {
-    u16::from_le_bytes(self.type_id).into()
-  }
-
-  /// Returns `GlyphErr::UnexpectedType` if the header's type does not match
-  /// the provided `type_id`.
-  #[inline]
-  pub fn confirm_type(self, type_id: GlyphType) -> Result<(), GlyphErr> {
-    let id = u16::from_le_bytes(self.type_id);
-    if (type_id as u16) == id {
-      Ok(())
-    } else {
-      Err(err!(
-        trace,
-        GlyphErr::UnexpectedType {
-          expected_type_id: type_id as u16,
-          observed_type_id: id,
-        }
-      ))
-    }
-  }
-
-  /// Returns `true` iff this header describes a short glyph.
-  #[inline(always)]
-  pub const fn is_short(self) -> bool {
-    (self.padding & Self::LONG_BIT) == 0
-  }
-
-  /// Returns the length of the glyph's content, in bytes.
-  ///
-  /// The length returned represents the number of bytes after the glyph header,
-  /// including any padding if present.
-  ///
-  /// - It should always be a multiple of 8 bytes.
-  /// - The content length for short glyphs will be zero.
-  #[inline(always)]
-  pub const fn content_len(self) -> usize {
-    let len_factor = (self.padding & Self::LONG_BIT) as u64;
-    let content_words = u32::from_le_bytes(self.len_data) as u64;
-    (content_words * len_factor) as usize
-  }
-
-  /// Returns the number of bytes of zero padding at the end of the glyph.
-  ///
-  /// This value is typically needed for types which require their length to
-  /// be specified in exact number of bytes, such as a string.
-  pub const fn padding(self) -> usize {
-    (self.padding & Self::PADDING_BITS) as usize
-  }
-
-  /// Returns the length of the glyph, in bytes, including the header.
-  #[inline(always)]
-  pub fn glyph_len(self) -> usize {
-    size_of::<GlyphHeader>() + self.content_len()
-  }
-
-  // #[inline(always)]
-  // pub fn short_content(self) -> [u8; 4] {
-  //   self.len_data
-  // }
-
-  /// Returns the (4-byte) contents of a short glyph.
-  ///
-  /// - For short glyphs, the source of these bytes is the header length field.
-  #[inline(always)]
-  pub fn short_content(&self) -> &[u8; 4] {
-    &self.len_data
-  }
-
-  /// Advances the cursor by the size of the header and returns the position
-  /// at which it would have been written.
-  ///
-  /// ```
-  /// use glyphs::GlyphHeader;
-  ///
-  /// let cursor = &mut 8usize;
-  /// let offset = GlyphHeader::skip(cursor);
-  /// assert_eq!(offset, 8);
-  /// assert_eq!(*cursor, 16);
-  ///
-  /// ```
-  pub fn skip(cursor: &mut usize) -> usize {
-    let glyph_start = *cursor;
-    *cursor += size_of::<Self>();
-    glyph_start
-  }
-}
-
-impl Debug for GlyphHeader {
-  fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
-    let mut builder = f.debug_struct("GlyphHeader");
-    builder.field("version", &format_args!("0x{:X}", self.version()));
-    builder.field("type", &self.glyph_type());
-    builder.field(
-      "type_id",
-      &format_args!("0x{:X}", &u16::from_le_bytes(self.type_id)),
-    );
-    builder.field("short", &self.is_short());
-    if self.is_short() {
-      builder.field("content", &ShortHexDump(&self.len_data, 4));
-    } else {
-      builder.field("content_length", &self.content_len());
-    }
-    builder.finish()
-  }
-}
-
-/// Describes an offset in a glyph at which some other data is present.
-#[repr(transparent)]
-#[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
-pub struct GlyphOffset(U32);
-
-/// Safety: All components are also `ZeroCopy`
-unsafe impl ZeroCopy for GlyphOffset {}
-
-impl HasZeroCopyID for GlyphOffset {
-  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::GlyphOffset;
-}
-
-impl GlyphOffset {
-  /// Creates a new instance from the specified start and position.
-  ///
-  /// - When reading content from glyphs, the start will typically be `0` (the
-  ///   start of the content section).
-  /// - When writing offsets in glyphs, the start and position will typically
-  ///   be determined by the write cursor.
-  ///
-  /// # Parameters
-  /// - `start`: The starting byte position, which must be aligned to an 8-byte
-  ///   boundary.
-  /// - `position`: The target byte position, which must also be aligned to an
-  ///   8-byte boundary.
-  ///
-  /// # Returns
-  /// - `Ok(Self)`: A new `GlyphOffset` instance representing the offset, if
-  ///   the inputs are valid.
-  /// - `Err(GlyphErr)`: An error if either of the positions is not aligned to
-  ///    an 8-byte boundary or if the length exceeds `u32::MAX * 8`.
-  pub fn new(start: usize, position: usize) -> Result<Self, GlyphErr> {
-    if (start % 8 != 0) || (position % 8 != 0) {
-      return Err(err!(
-        error,
-        GlyphErr::GlyphOffsetInvalid { start, position }
-      ));
-    }
-
-    let len = position.saturating_sub(start);
-    let len_words = u32::try_from(len / 8)?;
-    Ok(Self(len_words.into()))
-  }
-
-  /// Generate a cursor an offset number of bytes past `start`.
-  pub fn cursor(&self, start: usize) -> usize {
-    let words: usize = self.0.get() as usize;
-    let bytes = words * 8;
-    start + bytes
-  }
-
-  // TODO: Revise glyph_encode functions to use this rather than doing it
-  //       manually each time.
-  pub(crate) fn skip(
-    target: &mut [u8],
-    cursor: &mut usize,
-    num: usize,
-    zero_pad: bool,
-  ) -> Result<usize, GlyphErr> {
-    let offsets_cursor = *cursor;
-    let offsets_len = size_of::<Self>().saturating_mul(num);
-    *cursor = (*cursor).saturating_add(offsets_len);
-    if zero_pad {
-      pad_to_word(target, cursor)?;
-    }
-    Ok(offsets_cursor)
-  }
-
-  /// Returns the length of an offsets table with the specified number of items.
-  ///
-  /// This will be equal to the number of items, multiplied by the size of a
-  /// `GlyphOffset`, and rounded to the nearest word.
-  // TODO: Revise glyph_len functions to use this rather than doing it manually
-  pub(crate) fn table_len(num_items: usize) -> usize {
-    round_to_word(size_of::<Self>().saturating_mul(num_items))
-  }
-}
-
-impl Debug for GlyphOffset {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "GlyphOffset(0x{:x} bytes)", self.cursor(0))
-  }
-}
 
 /// Semi-structured data designed to be read without deserialization.
 /* === IMPORTANT: SAFETY ===
@@ -477,6 +207,313 @@ pub trait EncodedGlyph<G: Glyph>:
   }
 }
 
+/// Types based on data read that can be read directly from a glyph, without deserialization.
+pub trait FromGlyph<G>: Sized
+where
+  G: Glyph,
+{
+  //  /// Create a new instance of the type from a source glyph.
+  //  ///
+  //  /// ```
+  //  /// use glifs::glyph::*;
+  //  /// use glifs::buffers::U32;
+  //  ///
+  //  /// let number: u32 = 42;
+  //  /// let glyph = glyph_new(&number).unwrap();
+  //  /// let decoded = U32::from_glyph(glyph).unwrap();
+  //  /// assert_eq!(decoded, number);
+  //  /// ```
+  //  ///
+  /// This function must return an error if the target type cannot be
+  /// definitively decoded.  E.g., because the glyph's type id is not
+  /// appropriate for the target type.
+  // This is a `T` and not a `&T` because we want to be able to have something
+  // like a `VectorGlyph` take a `HashGlyph` in which case the `VectorGlyph`'s
+  // lifetime won't be bound to some other object.
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>>;
+}
+
+/// Types that can be encoded into glyphs.
+///
+/// SAFETY:
+pub trait ToGlyph {
+  /// Encodes the glyph to the buffer `target` at position `offset`.
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr>;
+
+  /// Returns the number of bytes necessary to encode the type into a glyph.
+  fn glyph_len(&self) -> usize;
+}
+
+/// The common header for every glyph.
+///
+/// The format is documented [here](http://www.glifs.org/docs/books/format/general.html).
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct GlyphHeader {
+  version:  u8,
+  padding:  u8,
+  type_id:  [u8; 2],
+  len_data: [u8; 4],
+}
+
+impl GlyphHeader {
+  /// If set, this is a long glyph.
+  const LONG_BIT: u8 = 0b0000_1000;
+  /// The maximum content length that can be expressed in a glyph header.
+  const MAX_CONTENT_LEN: u64 = (u32::MAX as u64) << 3;
+  /// Bits to store the number of padding bytes at the end of a glyph.
+  ///
+  /// Useful primarily for UTF-8 strings and other types which can have an
+  /// arbitrary byte length.
+  const PADDING_BITS: u8 = 0b0000_0111;
+  /// Bits to store the glyph version, for future compatibility.  Currently,
+  /// these bits must be zero.
+  const VERSION_BITS: u8 = 0b0000_1111;
+
+  /// Creates a new glyph header, containing content_len bytes.
+  ///
+  /// The caller must ensure that `content_len <= GLYPH_MAX_CONTENT_LEN`, or
+  /// the resulting header will not be inaccurate (as longer lengths cannot be
+  /// represented in the existing format).
+  #[inline]
+  pub const fn new(
+    glyph_type: GlyphType,
+    content_len: usize,
+  ) -> Result<GlyphHeader, GlyphErr> {
+    if content_len as u64 <= Self::MAX_CONTENT_LEN {
+      let padded_len = (content_len + 7) & !7;
+      let padding = padded_len - content_len; // always 0-7.
+      let padding = (padding as u8) | Self::LONG_BIT; // add long bit
+      let word_len = (padded_len >> 3) as u32;
+      Ok(GlyphHeader {
+        version: 0,
+        padding,
+        type_id: (glyph_type as u16).to_le_bytes(),
+        len_data: word_len.to_le_bytes(),
+      })
+    } else {
+      Err(GlyphErr::GlyphLenOverflow(content_len))
+    }
+  }
+
+  /// Creates a new header for a short glyph, with the content fully specified.
+  pub const fn new_short(
+    glyph_type: GlyphType,
+    content: [u8; 4],
+  ) -> GlyphHeader {
+    GlyphHeader {
+      version:  0,
+      padding:  0,
+      type_id:  (glyph_type as u16).to_le_bytes(),
+      len_data: content,
+    }
+  }
+
+  /// Returns the GLIFS version specified in the header.
+  #[inline(always)]
+  pub const fn version(self) -> u8 {
+    self.version & Self::VERSION_BITS
+  }
+
+  /// Returns the numerical glyph type id.  See [`GlyphType`].
+  #[inline(always)]
+  pub fn glyph_type(self) -> GlyphType {
+    u16::from_le_bytes(self.type_id).into()
+  }
+
+  /// Returns `GlyphErr::UnexpectedType` if the header's type does not match
+  /// the provided `type_id`.
+  #[inline]
+  pub fn confirm_type(self, type_id: GlyphType) -> Result<(), GlyphErr> {
+    let id = u16::from_le_bytes(self.type_id);
+    if (type_id as u16) == id {
+      Ok(())
+    } else {
+      Err(err!(
+        trace,
+        GlyphErr::UnexpectedType {
+          expected_type_id: type_id as u16,
+          observed_type_id: id,
+        }
+      ))
+    }
+  }
+
+  /// Returns `true` iff this header describes a short glyph.
+  #[inline(always)]
+  pub const fn is_short(self) -> bool {
+    (self.padding & Self::LONG_BIT) == 0
+  }
+
+  /// Returns the length of the glyph's content, in bytes.
+  ///
+  /// The length returned represents the number of bytes after the glyph header,
+  /// including any padding if present.
+  ///
+  /// - It should always be a multiple of 8 bytes.
+  /// - The content length for short glyphs will be zero.
+  #[inline(always)]
+  pub const fn content_len(self) -> usize {
+    let len_factor = (self.padding & Self::LONG_BIT) as u64;
+    let content_words = u32::from_le_bytes(self.len_data) as u64;
+    (content_words * len_factor) as usize
+  }
+
+  /// Returns the number of bytes of zero padding at the end of the glyph.
+  ///
+  /// This value is typically needed for types which require their length to
+  /// be specified in exact number of bytes, such as a string.
+  pub const fn padding(self) -> usize {
+    (self.padding & Self::PADDING_BITS) as usize
+  }
+
+  /// Returns the length of the glyph, in bytes, including the header.
+  #[inline(always)]
+  pub fn glyph_len(self) -> usize {
+    size_of::<GlyphHeader>() + self.content_len()
+  }
+
+  // #[inline(always)]
+  // pub fn short_content(self) -> [u8; 4] {
+  //   self.len_data
+  // }
+
+  /// Returns the (4-byte) contents of a short glyph.
+  ///
+  /// - For short glyphs, the source of these bytes is the header length field.
+  #[inline(always)]
+  pub fn short_content(&self) -> &[u8; 4] {
+    &self.len_data
+  }
+
+  /// Advances the cursor by the size of the header and returns the position
+  /// at which it would have been written.
+  ///
+  /// ```
+  /// use glyphs::GlyphHeader;
+  ///
+  /// let cursor = &mut 8usize;
+  /// let offset = GlyphHeader::skip(cursor);
+  /// assert_eq!(offset, 8);
+  /// assert_eq!(*cursor, 16);
+  ///
+  /// ```
+  pub fn skip(cursor: &mut usize) -> usize {
+    let glyph_start = *cursor;
+    *cursor += size_of::<Self>();
+    glyph_start
+  }
+}
+
+impl Debug for GlyphHeader {
+  fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
+    let mut builder = f.debug_struct("GlyphHeader");
+    builder.field("version", &format_args!("0x{:X}", self.version()));
+    builder.field("type", &self.glyph_type());
+    builder.field(
+      "type_id",
+      &format_args!("0x{:X}", &u16::from_le_bytes(self.type_id)),
+    );
+    builder.field("short", &self.is_short());
+    if self.is_short() {
+      builder.field("content", &ShortHexDump(&self.len_data, 4));
+    } else {
+      builder.field("content_length", &self.content_len());
+    }
+    builder.finish()
+  }
+}
+
+unsafe impl ZeroCopy for GlyphHeader {}
+
+/// Describes an offset in a glyph at which some other data is present.
+#[repr(transparent)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
+pub struct GlyphOffset(U32);
+
+impl GlyphOffset {
+  /// Creates a new instance from the specified start and position.
+  ///
+  /// - When reading content from glyphs, the start will typically be `0` (the
+  ///   start of the content section).
+  /// - When writing offsets in glyphs, the start and position will typically
+  ///   be determined by the write cursor.
+  ///
+  /// # Parameters
+  /// - `start`: The starting byte position, which must be aligned to an 8-byte
+  ///   boundary.
+  /// - `position`: The target byte position, which must also be aligned to an
+  ///   8-byte boundary.
+  ///
+  /// # Returns
+  /// - `Ok(Self)`: A new `GlyphOffset` instance representing the offset, if
+  ///   the inputs are valid.
+  /// - `Err(GlyphErr)`: An error if either of the positions is not aligned to
+  ///    an 8-byte boundary or if the length exceeds `u32::MAX * 8`.
+  pub fn new(start: usize, position: usize) -> Result<Self, GlyphErr> {
+    if (start % 8 != 0) || (position % 8 != 0) {
+      return Err(err!(
+        error,
+        GlyphErr::GlyphOffsetInvalid { start, position }
+      ));
+    }
+
+    let len = position.saturating_sub(start);
+    let len_words = u32::try_from(len / 8)?;
+    Ok(Self(len_words.into()))
+  }
+
+  /// Generate a cursor an offset number of bytes past `start`.
+  pub fn cursor(&self, start: usize) -> usize {
+    let words: usize = self.0.get() as usize;
+    let bytes = words * 8;
+    start + bytes
+  }
+
+  // TODO: Revise glyph_encode functions to use this rather than doing it
+  //       manually each time.
+  pub(crate) fn skip(
+    target: &mut [u8],
+    cursor: &mut usize,
+    num: usize,
+    zero_pad: bool,
+  ) -> Result<usize, GlyphErr> {
+    let offsets_cursor = *cursor;
+    let offsets_len = size_of::<Self>().saturating_mul(num);
+    *cursor = (*cursor).saturating_add(offsets_len);
+    if zero_pad {
+      pad_to_word(target, cursor)?;
+    }
+    Ok(offsets_cursor)
+  }
+
+  /// Returns the length of an offsets table with the specified number of items.
+  ///
+  /// This will be equal to the number of items, multiplied by the size of a
+  /// `GlyphOffset`, and rounded to the nearest word.
+  // TODO: Revise glyph_len functions to use this rather than doing it manually
+  pub(crate) fn table_len(num_items: usize) -> usize {
+    round_to_word(size_of::<Self>().saturating_mul(num_items))
+  }
+}
+
+impl Debug for GlyphOffset {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "GlyphOffset(0x{:x} bytes)", self.cursor(0))
+  }
+}
+
+impl HasZeroCopyID for GlyphOffset {
+  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::GlyphOffset;
+}
+
+/// Safety: All components are also `ZeroCopy`
+unsafe impl ZeroCopy for GlyphOffset {}
+
 /// Sorting methods used for glyphs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
@@ -553,6 +590,25 @@ impl<'a> ParsedGlyph<'a> {
     let content_padded = NonNull::from(self.content_padded());
     unsafe { content_padded.as_ref() }
   }
+
+  /// Assumes the provided buffer contains a glyph.
+  pub unsafe fn from_buffer(buffer: &'a [u8]) -> Self {
+    Self {
+      glyph_bytes: buffer,
+    }
+  }
+}
+
+impl<'a> AsRef<[u8]> for ParsedGlyph<'a> {
+  fn as_ref(&self) -> &[u8] {
+    self.glyph_bytes
+  }
+}
+
+impl<'a> Debug for ParsedGlyph<'a> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    glyph_debug(self, f)
+  }
 }
 
 unsafe impl<'a> Glyph for ParsedGlyph<'a> {}
@@ -572,53 +628,26 @@ impl<'a> ToGlyph for ParsedGlyph<'a> {
   }
 }
 
-impl<'a> AsRef<[u8]> for ParsedGlyph<'a> {
-  fn as_ref(&self) -> &[u8] {
-    self.glyph_bytes
-  }
-}
-
-impl<'a> Debug for ParsedGlyph<'a> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    glyph_debug(self, f)
-  }
-}
-
-/// A pointer to a [`Glyph`].
-///
-/// A `GlyphPtr` is just a pointer to a glyph somewhere in memory.  It's
-/// typically used for an internal self-reference
-#[derive(Clone, Copy)]
-pub struct GlyphPtr(NonNull<[u8]>);
-
-impl GlyphPtr {
-  /// Creates a new pointer from a [`ParsedGlyph`].
-  pub fn from_parsed(parsed: ParsedGlyph) -> Self {
-    GlyphPtr(NonNull::from(parsed.as_ref()))
-  }
-
-  /// Dereference the pointer into a [`ParsedGlyph`].
-  pub unsafe fn deref<'a>(self) -> ParsedGlyph<'a> {
-    ParsedGlyph {
-      glyph_bytes: self.0.as_ref(),
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-#[derive(Clone, Copy, Debug)]
-struct GlyphAlloc;
-
-#[cfg(feature = "alloc")]
-unsafe impl Allocator for GlyphAlloc {
-  fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-    Global.allocate(layout.align_to(8).unwrap())
-  }
-
-  unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-    Global.deallocate(ptr, layout.align_to(8).unwrap())
-  }
-}
+// /// A pointer to a [`Glyph`].
+// ///
+// /// A `GlyphPtr` is just a pointer to a glyph somewhere in memory.  It's
+// /// typically used for an internal self-reference
+// #[derive(Clone, Copy)]
+// pub struct GlyphPtr(NonNull<[u8]>);
+//
+// impl GlyphPtr {
+//   /// Creates a new pointer from a [`ParsedGlyph`].
+//   pub fn from_parsed(parsed: ParsedGlyph) -> Self {
+//     GlyphPtr(NonNull::from(parsed.as_ref()))
+//   }
+//
+//   /// Dereference the pointer into a [`ParsedGlyph`].
+//   pub unsafe fn deref<'a>(self) -> ParsedGlyph<'a> {
+//     ParsedGlyph {
+//       glyph_bytes: self.0.as_ref(),
+//     }
+//   }
+// }
 
 /// For glyphs stored separately on the heap, we maintain a header that
 /// header memoizing its [`GlyphHash`].
@@ -657,7 +686,7 @@ struct HeapGlyphHeader {
 /// assert_eq!(value, 0xDEAD_BEEF_DEAD_BEEF);
 /// ```
 #[cfg(feature = "alloc")]
-pub struct BoxGlyphBuf(Box<[u8], GlyphAlloc>);
+pub struct BoxGlyphBuf(Box<[u8]>);
 
 #[cfg(feature = "alloc")]
 impl BoxGlyphBuf {
@@ -668,9 +697,8 @@ impl BoxGlyphBuf {
     };
 
     unsafe {
-      let mut b = Box::<[u8], GlyphAlloc>::try_new_uninit_slice_in(
+      let mut b = Box::<[u8]>::try_new_uninit_slice(
         size_of::<HeapGlyphHeader>() + length,
-        GlyphAlloc,
       )?
       .assume_init();
       let ptr = b.as_mut_ptr();
@@ -723,7 +751,7 @@ impl AsMut<[u8]> for BoxGlyphBuf {
 /// A glyph stored on the heap.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Eq, PartialEq)]
-pub struct BoxGlyph(Box<[u8], GlyphAlloc>);
+pub struct BoxGlyph(Box<[u8]>);
 
 #[cfg(feature = "alloc")]
 impl BoxGlyph {
@@ -731,11 +759,8 @@ impl BoxGlyph {
   /// heap.
   pub fn copy_from_parsed(parsed: ParsedGlyph) -> Result<Self, GlyphErr> {
     unsafe {
-      let mut b = Box::<[u8], GlyphAlloc>::try_new_uninit_slice_in(
-        parsed.len(),
-        GlyphAlloc,
-      )?
-      .assume_init();
+      let mut b =
+        Box::<[u8]>::try_new_uninit_slice(parsed.len())?.assume_init();
       b.as_mut().copy_from_slice(parsed.as_ref());
       Ok(BoxGlyph(b))
     }
@@ -790,7 +815,7 @@ impl Debug for BoxGlyph {
 /// the type system to enforce the restriction that the buffer is immutable once
 /// finalized and contains a valid glyph.
 #[cfg(feature = "alloc")]
-pub struct ArcGlyphBuf(Arc<UnsafeCell<[u8]>, GlyphAlloc>);
+pub struct ArcGlyphBuf(Arc<UnsafeCell<[u8]>>);
 
 #[cfg(feature = "alloc")]
 unsafe impl Send for ArcGlyphBuf {}
@@ -803,9 +828,8 @@ impl ArcGlyphBuf {
   pub fn new(length: usize) -> Result<Self, GlyphErr> {
     unsafe {
       // TODO: There's no try version?  There is in Box, is this an oversight by std?
-      let arc = alloc::sync::Arc::<[u8], GlyphAlloc>::new_uninit_slice_in(
+      let arc = alloc::sync::Arc::<[u8]>::new_uninit_slice(
         size_of::<HeapGlyphHeader>() + length,
-        GlyphAlloc,
       )
       .assume_init();
       let buf = Self(transmute::<_, _>(arc));
@@ -820,8 +844,7 @@ impl ArcGlyphBuf {
   pub fn finalize(self) -> Result<ArcGlyph, GlyphErr> {
     // Make sure it reads correctly.
     let _ = glyph_read(self.as_ref(), &mut 0)?;
-    // SAFETY: We just did the check, using unchecked version to DRY.
-    unsafe { Ok(self.finalize_unchecked()) }
+    Ok(ArcGlyph(self.0))
   }
 
   /// Finalize the buffer into a glyph, skipping validity checks.
@@ -856,7 +879,7 @@ impl AsMut<[u8]> for ArcGlyphBuf {
 /// A glyph in a reference-counted byte buffer.
 #[cfg(feature = "alloc")]
 #[derive(Clone)]
-pub struct ArcGlyph(Arc<UnsafeCell<[u8]>, GlyphAlloc>);
+pub struct ArcGlyph(Arc<UnsafeCell<[u8]>>);
 
 #[cfg(feature = "alloc")]
 impl ArcGlyph {
@@ -931,27 +954,6 @@ unsafe impl Glyph for ArcGlyph {
 
 unsafe impl Send for ArcGlyph {}
 unsafe impl Sync for ArcGlyph {}
-
-pub(crate) fn glyph_debug<G>(
-  glyph: &G,
-  f: &mut Formatter<'_>,
-) -> core::fmt::Result
-where
-  G: Glyph,
-{
-  let mut d = f.debug_struct(core::any::type_name::<G>());
-  let addr = glyph.as_ref().as_ptr();
-  d.field("address", &addr);
-  d.field("glifs_hash", &GlyphHash::new(glyph.as_ref()));
-  d.field("header", &glyph.header());
-  #[cfg(feature = "alloc")]
-  if !glyph.header().is_short() {
-    d.field("content", &HexDump(glyph.content_padded()));
-  } else {
-    d.field("content", &glyph.short_content());
-  }
-  d.finish()
-}
 
 /// A pointer to a glyph.
 #[derive(Copy, Clone)]
@@ -1040,107 +1042,6 @@ impl AsRef<[u8]> for UnsafeGlyph {
   }
 }
 
-/// Creates a new glyph in its own, heap-allocated buffer.
-#[cfg(feature = "alloc")]
-pub fn glyph_new<T>(src: T) -> Result<BoxGlyph, GlyphErr>
-where
-  T: ToGlyph,
-{
-  let buf_len = src.glyph_len();
-  debug_assert_eq!(buf_len % 8, 0);
-  let mut buf = BoxGlyphBuf::new(buf_len)?;
-  let cursor = &mut 0;
-  src.glyph_encode(buf.as_mut(), cursor)?;
-
-  #[cfg(test)]
-  {
-    if *cursor != buf_len {
-      std::dbg!(HexDump(buf.as_ref()));
-    }
-  }
-
-  // Check for (1) buffer overflows and (2) missing zero padding to the word.
-  if *cursor != buf_len {
-    panic!(
-      "Glyph requested {} bytes but wrote {} bytes",
-      buf_len, *cursor
-    );
-  }
-
-  // glyph reads correctly.
-  debug_assert!(glyph_read(buf.as_ref(), &mut 0).is_ok());
-  // SAFETY: Glyph was created by local code, checks needed for debugging.
-  let glyph = unsafe { buf.finalize_unchecked() };
-  Ok(glyph)
-}
-
-/// Creates a new glyph in its own, heap-allocated buffer.
-#[cfg(feature = "alloc")]
-pub fn glyph_new_arc<T>(src: T) -> Result<ArcGlyph, GlyphErr>
-where
-  T: ToGlyph,
-{
-  let buf_len = src.glyph_len();
-  debug_assert_eq!(buf_len % 8, 0);
-  let mut buf = ArcGlyphBuf::new(buf_len)?;
-  let cursor = &mut 0;
-  src.glyph_encode(buf.as_mut(), cursor)?;
-  let glyph = buf.finalize()?;
-
-  // Check for (1) buffer overflows and (2) missing zero padding to the word.
-  if *cursor != buf_len {
-    panic!(
-      "Glyph requested {} bytes but wrote {} bytes",
-      buf_len, *cursor
-    );
-  }
-  Ok(glyph)
-}
-
-/// Reads a glyph from a byte buffer.
-pub fn glyph_read<'a, T>(
-  source: &'a T,
-  cursor: &mut usize,
-) -> Result<ParsedGlyph<'a>, GlyphErr>
-where
-  T: AsRef<[u8]> + ?Sized,
-{
-  let source = source.as_ref();
-  let offset = *cursor;
-
-  // At the very least, a glyph must start with an 8 byte header.
-  let header = GlyphHeader::bbrf(source, cursor)?;
-  *cursor += header.content_len();
-
-  // SAFETY: We're going to do our own bounds check here, so we can return a
-  // GlyphErr instead of panicking.  We've already done bounds checks for
-  // the headers we've read with tha calls to `SafelyReadable::bbrf`, now we
-  // just need to check the cursor, which we've advanced based on the glyphs'
-  // stated lengths.
-  unsafe {
-    bounds_check(source, *cursor)?;
-    let ptr = source.as_ptr().add(offset);
-    let length = *cursor - offset;
-    let bytes = from_raw_parts(ptr, length);
-    Ok(ParsedGlyph { glyph_bytes: bytes })
-  }
-}
-
-/// Types that can be encoded into glyphs.
-///
-/// SAFETY:
-pub trait ToGlyph {
-  /// Encodes the glyph to the buffer `target` at position `offset`.
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr>;
-
-  /// Returns the number of bytes necessary to encode the type into a glyph.
-  fn glyph_len(&self) -> usize;
-}
-
 impl<T> ToGlyph for &T
 where
   T: ToGlyph + ?Sized,
@@ -1158,32 +1059,6 @@ where
   }
 }
 
-/// Types based on data read that can be read directly from a glyph, without deserialization.
-pub trait FromGlyph<G>: Sized
-where
-  G: Glyph,
-{
-  //  /// Create a new instance of the type from a source glyph.
-  //  ///
-  //  /// ```
-  //  /// use glifs::glyph::*;
-  //  /// use glifs::buffers::U32;
-  //  ///
-  //  /// let number: u32 = 42;
-  //  /// let glyph = glyph_new(&number).unwrap();
-  //  /// let decoded = U32::from_glyph(glyph).unwrap();
-  //  /// assert_eq!(decoded, number);
-  //  /// ```
-  //  ///
-  /// This function must return an error if the target type cannot be
-  /// definitively decoded.  E.g., because the glyph's type id is not
-  /// appropriate for the target type.
-  // This is a `T` and not a `&T` because we want to be able to have something
-  // like a `VectorGlyph` take a `HashGlyph` in which case the `VectorGlyph`'s
-  // lifetime won't be bound to some other object.
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>>;
-}
-
 // /// A generic type for all decoded glyphs (e.g., [`DocGlyph`]) that allows
 // /// access to the underlying glyph.
 // pub trait DecodedGlyph<T>
@@ -1192,32 +1067,6 @@ where
 // {
 //   fn into_glyph(self) -> Glyph<T>;
 // }
-
-/// Finishes encoding a glyph by writing the header and (optionally) zeroing
-/// any unused bytes.
-///
-/// This function writes a glyph header to `target` at position `offset`, with
-/// length of the glyph's content calculated from `cursor`.
-///
-#[inline(always)]
-pub(crate) fn glyph_close<B>(
-  glyph_type: GlyphType,
-  target: &mut B,
-  mut offset: usize,
-  cursor: &mut usize,
-  pad: bool,
-) -> Result<(), GlyphErr>
-where
-  B: AsRef<[u8]> + AsMut<[u8]> + ?Sized,
-{
-  let header =
-    GlyphHeader::new(glyph_type, *cursor - offset - size_of::<GlyphHeader>())?;
-  header.bbwr(target, &mut offset)?;
-  if pad {
-    pad_to_word(target.as_mut(), cursor)?;
-  }
-  Ok(())
-}
 
 /// The mapping of glyph types to `u16` values for the `type_id` field of
 /// [`GlyphHeader`].
@@ -1732,6 +1581,139 @@ impl<G: Glyph> FromGlyphErr<G> {
   pub fn into_parts(self) -> (G, GlyphErr) {
     (self.0, self.1)
   }
+}
+
+pub(crate) fn glyph_debug<G>(
+  glyph: &G,
+  f: &mut Formatter<'_>,
+) -> core::fmt::Result
+where
+  G: Glyph,
+{
+  let mut d = f.debug_struct(core::any::type_name::<G>());
+  let addr = glyph.as_ref().as_ptr();
+  d.field("address", &addr);
+  d.field("glifs_hash", &GlyphHash::new(glyph.as_ref()));
+  d.field("header", &glyph.header());
+  #[cfg(feature = "alloc")]
+  if !glyph.header().is_short() {
+    d.field("content", &HexDump(glyph.content_padded()));
+  } else {
+    d.field("content", &glyph.short_content());
+  }
+  d.finish()
+}
+
+/// Creates a new glyph in its own, heap-allocated buffer.
+#[cfg(feature = "alloc")]
+pub fn glyph_new<T>(src: T) -> Result<BoxGlyph, GlyphErr>
+where
+  T: ToGlyph,
+{
+  let buf_len = src.glyph_len();
+  debug_assert_eq!(buf_len % 8, 0);
+  let mut buf = BoxGlyphBuf::new(buf_len)?;
+  let cursor = &mut 0;
+  src.glyph_encode(buf.as_mut(), cursor)?;
+
+  #[cfg(test)]
+  {
+    if *cursor != buf_len {
+      std::dbg!(HexDump(buf.as_ref()));
+    }
+  }
+
+  // Check for (1) buffer overflows and (2) missing zero padding to the word.
+  if *cursor != buf_len {
+    panic!(
+      "Glyph requested {} bytes but wrote {} bytes",
+      buf_len, *cursor
+    );
+  }
+
+  // glyph reads correctly.
+  debug_assert!(glyph_read(buf.as_ref(), &mut 0).is_ok());
+  // SAFETY: Glyph was created by local code, checks needed for debugging.
+  let glyph = unsafe { buf.finalize_unchecked() };
+  Ok(glyph)
+}
+
+/// Creates a new glyph in its own, heap-allocated buffer.
+#[cfg(feature = "alloc")]
+pub fn glyph_new_arc<T>(src: T) -> Result<ArcGlyph, GlyphErr>
+where
+  T: ToGlyph,
+{
+  let buf_len = src.glyph_len();
+  debug_assert_eq!(buf_len % 8, 0);
+  let mut buf = ArcGlyphBuf::new(buf_len)?;
+  let cursor = &mut 0;
+  src.glyph_encode(buf.as_mut(), cursor)?;
+  let glyph = buf.finalize()?;
+
+  // Check for (1) buffer overflows and (2) missing zero padding to the word.
+  if *cursor != buf_len {
+    panic!(
+      "Glyph requested {} bytes but wrote {} bytes",
+      buf_len, *cursor
+    );
+  }
+  Ok(glyph)
+}
+
+/// Reads a glyph from a byte buffer.
+pub fn glyph_read<'a, T>(
+  source: &'a T,
+  cursor: &mut usize,
+) -> Result<ParsedGlyph<'a>, GlyphErr>
+where
+  T: AsRef<[u8]> + ?Sized,
+{
+  let source = source.as_ref();
+  let offset = *cursor;
+
+  // At the very least, a glyph must start with an 8 byte header.
+  let header = GlyphHeader::bbrf(source, cursor)?;
+  *cursor += header.content_len();
+
+  // SAFETY: We're going to do our own bounds check here, so we can return a
+  // GlyphErr instead of panicking.  We've already done bounds checks for
+  // the headers we've read with tha calls to `SafelyReadable::bbrf`, now we
+  // just need to check the cursor, which we've advanced based on the glyphs'
+  // stated lengths.
+  unsafe {
+    bounds_check(source, *cursor)?;
+    let ptr = source.as_ptr().add(offset);
+    let length = *cursor - offset;
+    let bytes = from_raw_parts(ptr, length);
+    Ok(ParsedGlyph { glyph_bytes: bytes })
+  }
+}
+
+/// Finishes encoding a glyph by writing the header and (optionally) zeroing
+/// any unused bytes.
+///
+/// This function writes a glyph header to `target` at position `offset`, with
+/// length of the glyph's content calculated from `cursor`.
+///
+#[inline(always)]
+pub(crate) fn glyph_close<B>(
+  glyph_type: GlyphType,
+  target: &mut B,
+  mut offset: usize,
+  cursor: &mut usize,
+  pad: bool,
+) -> Result<(), GlyphErr>
+where
+  B: AsRef<[u8]> + AsMut<[u8]> + ?Sized,
+{
+  let header =
+    GlyphHeader::new(glyph_type, *cursor - offset - size_of::<GlyphHeader>())?;
+  header.bbwr(target, &mut offset)?;
+  if pad {
+    pad_to_word(target.as_mut(), cursor)?;
+  }
+  Ok(())
 }
 
 #[allow(unused)]

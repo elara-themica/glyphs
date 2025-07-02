@@ -22,6 +22,8 @@ type Aes256Ctr = ctr::Ctr128LE<::aes::Aes256>;
 /// An AES Key.
 ///
 /// The development version of GLIFS uses only AES-256 in CTR mode.
+// Can't be Copy (or therefore ZeroCopy) because of the impl Drop to zero the
+// key.
 #[derive(Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct AesKey([u8; 32]);
@@ -39,8 +41,8 @@ impl AesKey {
 
   /// Returns the bytes of the key as a byte slice.
   ///
-  /// If you need convert to/from a fixed length array, use the provided `From`
-  /// implementation.
+  /// If you need to convert to/from a fixed length array, use the provided
+  /// `From` implementation.
   pub fn bytes(&self) -> &[u8] {
     &self.0[..]
   }
@@ -64,6 +66,20 @@ impl AesKey {
 
   pub fn fingerprint(&self) -> Sha3Hash {
     Sha3Hash::new(self.bytes())
+  }
+}
+
+impl Debug for AesKey {
+  fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
+    write!(f, "AesKey({:?})", ShortHexDump(&self.0[..], 0))?;
+    Ok(())
+  }
+}
+
+/// We zero the key on drop to prevent it from being leaked.
+impl Drop for AesKey {
+  fn drop(&mut self) {
+    self.0.fill(0)
   }
 }
 
@@ -99,25 +115,10 @@ impl TryFrom<&[u8]> for AesKey {
   }
 }
 
-impl Debug for AesKey {
-  fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "AesKey({:?})", ShortHexDump(&self.0[..], 0))?;
-    Ok(())
-  }
-}
-
-impl Drop for AesKey {
-  fn drop(&mut self) {
-    self.0.fill(0)
-  }
-}
-
 /// An AES initialization vector.
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(packed)]
 pub struct AesIv([u8; AES_BLOCK_SIZE]);
-
-unsafe impl ZeroCopy for AesIv {}
 
 /// An AES Nonce
 impl AesIv {
@@ -163,6 +164,9 @@ impl Debug for AesIv {
     Ok(())
   }
 }
+
+unsafe impl ZeroCopy for AesIv {}
+
 //
 // impl EncryptionKey for AesKey {
 //   fn metadata_glyph_len(&self) -> usize {
@@ -194,6 +198,27 @@ impl Debug for AesIv {
 //     }
 //   }
 // }
+
+/// A custom message authentication code based on the encrypted [`GlifsHash`] of
+/// the plaintext (MAC-then-Encrypt).
+#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(packed)]
+pub struct AesMac(pub(crate) [u8; size_of::<GlyphHash>()]);
+
+/// SAFETY: Byte arrays are inherently zero copy
+unsafe impl ZeroCopy for AesMac {}
+
+impl From<GlyphHash> for AesMac {
+  fn from(src: GlyphHash) -> Self {
+    AesMac(*src.hash_bytes())
+  }
+}
+
+impl Debug for AesMac {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "AesMac({:?})", &ShortHexDump(&self.0[..], 0))
+  }
+}
 
 /// Common AES-256 encryption function.
 ///
@@ -232,27 +257,6 @@ pub fn aes_256ctr_decrypt(
     Ok(mac_hash)
   } else {
     Err(err!(trace, GlyphErr::CiphertextInvalid))
-  }
-}
-
-/// A custom message authentication code based on the encrypted [`GlifsHash`] of
-/// the plaintext (MAC-then-Encrypt).
-#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
-#[repr(packed)]
-pub struct AesMac(pub(crate) [u8; size_of::<GlyphHash>()]);
-
-/// SAFETY: Byte arrays are inherently zero copy
-unsafe impl ZeroCopy for AesMac {}
-
-impl From<GlyphHash> for AesMac {
-  fn from(src: GlyphHash) -> Self {
-    AesMac(*src.hash_bytes())
-  }
-}
-
-impl Debug for AesMac {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "AesMac({:?})", &ShortHexDump(&self.0[..], 0))
   }
 }
 

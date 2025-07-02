@@ -24,21 +24,25 @@ use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
 // TODO: Write doc example.
 pub struct BasicGlyph<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
 
-impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(T::GLYPH_TYPE_ID) {
-      return Err(err.into_fge(glyph));
+impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
+  /// Returns a reference to the target type from the underlying buffer (i.e.,
+  /// not also this `BasicGlyph`.
+  pub fn get_parsed(&self) -> &'a T {
+    // SAFETY: We already did the bounds check in `FromGlyph`.
+    unsafe {
+      let buf = if size_of::<T>() > 4 {
+        self.0.content_padded_parsed()
+      } else {
+        &self.0.header_parsed().short_content()[..]
+      };
+      T::bbrf_u(buf, &mut 0)
     }
+  }
+}
 
-    if size_of::<T>() > 4 {
-      if let Err(err) = bounds_check(glyph.content_padded(), size_of::<T>()) {
-        return Err(FromGlyphErr::new(glyph, err.into()));
-      }
-
-      Ok(Self(glyph, PhantomData::default()))
-    } else {
-      Ok(Self(glyph, PhantomData::default()))
-    }
+impl<G: Glyph, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    Debug::fmt(self.deref(), f)
   }
 }
 
@@ -58,33 +62,33 @@ impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
   }
 }
 
-impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
-  /// Returns a reference to the target type from the underlying buffer (i.e.,
-  /// not also this `BasicGlyph`.
-  pub fn get_parsed(&self) -> &'a T {
-    // SAFETY: We already did the bounds check in `FromGlyph`.
-    unsafe {
-      let buf = if size_of::<T>() > 4 {
-        self.0.content_padded_parsed()
-      } else {
-        &self.0.header_parsed().short_content()[..]
-      };
-      T::bbrf_u(buf, &mut 0)
-    }
+impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph<G> for BasicGlyph<G, T> {
+  fn into_inner(self) -> G {
+    self.0
   }
-}
 
-impl<G: Glyph, T: ZeroCopyGlyph> PartialEq for BasicGlyph<G, T> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
   }
 }
 
 impl<G: Glyph, T: ZeroCopyGlyph> Eq for BasicGlyph<G, T> {}
 
-impl<G: Glyph, T: ZeroCopyGlyph> PartialOrd for BasicGlyph<G, T> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
+impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(T::GLYPH_TYPE_ID) {
+      return Err(err.into_fge(glyph));
+    }
+
+    if size_of::<T>() > 4 {
+      if let Err(err) = bounds_check(glyph.content_padded(), size_of::<T>()) {
+        return Err(FromGlyphErr::new(glyph, err.into()));
+      }
+
+      Ok(Self(glyph, PhantomData::default()))
+    } else {
+      Ok(Self(glyph, PhantomData::default()))
+    }
   }
 }
 
@@ -98,18 +102,14 @@ impl<G: Glyph, T: ZeroCopyGlyph> Ord for BasicGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    Debug::fmt(self.deref(), f)
+impl<G: Glyph, T: ZeroCopyGlyph> PartialEq for BasicGlyph<G, T> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph<G> for BasicGlyph<G, T> {
-  fn into_inner(self) -> G {
-    self.0
-  }
-
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+impl<G: Glyph, T: ZeroCopyGlyph> PartialOrd for BasicGlyph<G, T> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }

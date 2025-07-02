@@ -15,109 +15,6 @@ use serde::{
   Serialize, Serializer,
 };
 
-/// Serializes a type that implements [`Serialize`] into a glyph contained
-/// in a heap-allocated buffer of the appropriate size.
-///
-/// For details regarding the encoding, see the documentation for
-/// [`glyph_serde_serialize()`].
-pub fn glyph_new_serde<T>(value: &T) -> Result<BoxGlyph, SerdeGlyphErr>
-where
-  T: Serialize,
-{
-  let glyph_len = value.serialize(GlyphLenCalc)?;
-  let mut buffer = BoxGlyphBuf::new(glyph_len)?;
-  let mut cursor = 0;
-  let gs = GlyphSerializer {
-    target: buffer.as_mut(),
-    cursor: &mut cursor,
-  };
-  value.serialize(gs)?;
-  let glyph = buffer.finalize()?;
-  Ok(glyph)
-}
-
-/// Serializes a type that implements [`Serialize`] into a glyph.
-///
-/// Parameters:
-///
-/// - `target`: The byte buffer into which the glyph will be serialized.  It
-///   must be of sufficient length to contain the glyph, which will start at
-///   the provided cursor position.  Note that this size can be determined by
-///   calling [`glyph_serde_length()`].
-/// - `cursor`: A cursor into the target byte buffer.  Upon return, its value
-///   should be to the byte immediately following the encoded glyph.
-///
-/// Types are serialized as follows (which also corresponds to how these types
-/// are deserialized):
-///
-/// - _Numeric Primitives_.  Any integer type that is 32 bits or less are
-///   encoded as a [`U32Glyph`] or [`I32Glyph`].  Other primitives are encoded
-///   as their more specific types (e.g., [`F64Glyph`], [`U128Glyph`].
-/// - _Strings_. Encoded as [`StringGlyph`].  Currently only UTF-8 is
-///   supported.
-/// - _Options_. `None` is encoded as a [`NothingGlyph`].  `Some(T)` is encoded
-///   as a `T`.
-/// - _Sequences_.  All sequences are encoded as [`VecGlyph`].  Specialized
-///   sequences of a single primitive type are not yet supported, but this may
-///   be possible in a future revision.
-/// - _Tuples_.  Serialized as [`TupleGlyph`]s.
-/// - _Maps_.  Serialized as [`MapGlyph`]s.
-/// - _Structs_.  Serialized as [`ObjGlyph`]s with corresponding type names.
-///   Unit structs have no fields, tuple structs have unnamed fields, and
-///   regular structs have named fields.  Newtype structs are serialized
-///   transparently, e.g., `struct T(U)` will be serialized as if it were of
-///   type `U`.
-/// - _Enums_.  Serialized like structs, except that (1) the target `ObjGlyph`
-///   will also contain the variant name and (2) newtype variants are serialized
-///   as tuple variants with a single item.
-pub fn glyph_serde_serialize<T>(
-  value: &T,
-  target: &mut [u8],
-  cursor: &mut usize,
-) -> Result<(), SerdeGlyphErr>
-where
-  T: Serialize,
-{
-  value.serialize(GlyphSerializer { target, cursor })
-}
-
-/// Calculates the length of the buffer necessary to serialize a type as a
-/// glyph with `serde`.
-pub fn glyph_serde_length<T>(value: &T) -> Result<usize, SerdeGlyphErr>
-where
-  T: Serialize,
-{
-  value.serialize(GlyphLenCalc)
-}
-
-/// Allows internal GLIFS serializers that expect `ToGlyph` objects to serialize
-/// types that implement [`Serialize`].
-///
-/// This is primarily useful when serializing e.g., [`VecGlyphs`], as it allows
-/// us to use the same GLIFS native serializers rather than writing and
-/// maintaining a parallel implementation here.
-struct ToGlyphSerializer<'a, T>(&'a T)
-where
-  T: ?Sized;
-
-impl<'a, T> ToGlyph for ToGlyphSerializer<'a, T>
-where
-  T: ?Sized + Serialize,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    self.0.serialize(GlyphSerializer { target, cursor })?;
-    Ok(())
-  }
-
-  fn glyph_len(&self) -> usize {
-    self.0.serialize(GlyphLenCalc).unwrap_or(0)
-  }
-}
-
 /// Main GLIFS [`Serializer`] type.
 struct GlyphSerializer<'a> {
   target: &'a mut [u8],
@@ -903,4 +800,107 @@ impl SerializeMap for MapGlyphLenCalc {
   fn end(self) -> Result<Self::Ok, Self::Error> {
     Ok(self.finish())
   }
+}
+
+/// Allows internal GLIFS serializers that expect `ToGlyph` objects to serialize
+/// types that implement [`Serialize`].
+///
+/// This is primarily useful when serializing e.g., [`VecGlyphs`], as it allows
+/// us to use the same GLIFS native serializers rather than writing and
+/// maintaining a parallel implementation here.
+struct ToGlyphSerializer<'a, T>(&'a T)
+where
+  T: ?Sized;
+
+impl<'a, T> ToGlyph for ToGlyphSerializer<'a, T>
+where
+  T: ?Sized + Serialize,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    self.0.serialize(GlyphSerializer { target, cursor })?;
+    Ok(())
+  }
+
+  fn glyph_len(&self) -> usize {
+    self.0.serialize(GlyphLenCalc).unwrap_or(0)
+  }
+}
+
+/// Serializes a type that implements [`Serialize`] into a glyph contained
+/// in a heap-allocated buffer of the appropriate size.
+///
+/// For details regarding the encoding, see the documentation for
+/// [`glyph_serde_serialize()`].
+pub fn glyph_new_serde<T>(value: &T) -> Result<BoxGlyph, SerdeGlyphErr>
+where
+  T: Serialize,
+{
+  let glyph_len = value.serialize(GlyphLenCalc)?;
+  let mut buffer = BoxGlyphBuf::new(glyph_len)?;
+  let mut cursor = 0;
+  let gs = GlyphSerializer {
+    target: buffer.as_mut(),
+    cursor: &mut cursor,
+  };
+  value.serialize(gs)?;
+  let glyph = buffer.finalize()?;
+  Ok(glyph)
+}
+
+/// Serializes a type that implements [`Serialize`] into a glyph.
+///
+/// Parameters:
+///
+/// - `target`: The byte buffer into which the glyph will be serialized.  It
+///   must be of sufficient length to contain the glyph, which will start at
+///   the provided cursor position.  Note that this size can be determined by
+///   calling [`glyph_serde_length()`].
+/// - `cursor`: A cursor into the target byte buffer.  Upon return, its value
+///   should be to the byte immediately following the encoded glyph.
+///
+/// Types are serialized as follows (which also corresponds to how these types
+/// are deserialized):
+///
+/// - _Numeric Primitives_.  Any integer type that is 32 bits or less are
+///   encoded as a [`U32Glyph`] or [`I32Glyph`].  Other primitives are encoded
+///   as their more specific types (e.g., [`F64Glyph`], [`U128Glyph`].
+/// - _Strings_. Encoded as [`StringGlyph`].  Currently only UTF-8 is
+///   supported.
+/// - _Options_. `None` is encoded as a [`NothingGlyph`].  `Some(T)` is encoded
+///   as a `T`.
+/// - _Sequences_.  All sequences are encoded as [`VecGlyph`].  Specialized
+///   sequences of a single primitive type are not yet supported, but this may
+///   be possible in a future revision.
+/// - _Tuples_.  Serialized as [`TupleGlyph`]s.
+/// - _Maps_.  Serialized as [`MapGlyph`]s.
+/// - _Structs_.  Serialized as [`ObjGlyph`]s with corresponding type names.
+///   Unit structs have no fields, tuple structs have unnamed fields, and
+///   regular structs have named fields.  Newtype structs are serialized
+///   transparently, e.g., `struct T(U)` will be serialized as if it were of
+///   type `U`.
+/// - _Enums_.  Serialized like structs, except that (1) the target `ObjGlyph`
+///   will also contain the variant name and (2) newtype variants are serialized
+///   as tuple variants with a single item.
+pub fn glyph_serde_serialize<T>(
+  value: &T,
+  target: &mut [u8],
+  cursor: &mut usize,
+) -> Result<(), SerdeGlyphErr>
+where
+  T: Serialize,
+{
+  value.serialize(GlyphSerializer { target, cursor })
+}
+
+/// Calculates the length of the buffer necessary to serialize a type as a
+/// glyph with `serde`.
+pub fn glyph_serde_length<T>(value: &T) -> Result<usize, SerdeGlyphErr>
+where
+  T: Serialize,
+{
+  value.serialize(GlyphLenCalc)
 }

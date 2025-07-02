@@ -3,7 +3,7 @@ use crate::{
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
   GlyphType, ParsedGlyph, ToGlyph,
 };
-use core::mem::transmute;
+use core::{fmt::Debug, mem::transmute};
 use std::cmp::Ordering;
 
 /// Glyph for Unit Types
@@ -20,6 +20,25 @@ impl<G: Glyph> UnitGlyph<G> {
     &self.1
   }
 }
+
+impl<G: Glyph> Debug for UnitGlyph<G> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "UnitGlyph({:?})", self.type_id())?;
+    Ok(())
+  }
+}
+
+impl<G: Glyph> EncodedGlyph<G> for UnitGlyph<G> {
+  fn into_inner(self) -> G {
+    self.0
+  }
+
+  fn glyph(&self) -> ParsedGlyph<'_> {
+    self.0.borrow()
+  }
+}
+
+impl<G: Glyph> Eq for UnitGlyph<G> {}
 
 impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
@@ -39,10 +58,21 @@ impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
   }
 }
 
-impl<G: Glyph> core::fmt::Debug for UnitGlyph<G> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "UnitGlyph({:?})", self.type_id())?;
-    Ok(())
+impl<G: Glyph> Ord for UnitGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.1.cmp(&other.1)
+  }
+}
+
+impl<G: Glyph> PartialEq for UnitGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for UnitGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 
@@ -94,23 +124,6 @@ impl From<UnitTypes> for U32 {
   }
 }
 
-impl ToGlyph for UnitTypes {
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let type_id = u32::from(*self);
-    let bytes = type_id.to_le_bytes();
-    GlyphHeader::new_short(GlyphType::Unit, bytes).bbwr(target, cursor)?;
-    Ok(())
-  }
-
-  fn glyph_len(&self) -> usize {
-    size_of::<GlyphHeader>()
-  }
-}
-
 impl<G> FromGlyph<G> for UnitTypes
 where
   G: Glyph,
@@ -126,17 +139,20 @@ where
   }
 }
 
-impl ToGlyph for () {
+impl ToGlyph for UnitTypes {
   fn glyph_encode(
     &self,
     target: &mut [u8],
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
-    UnitTypes::Nothing.glyph_encode(target, cursor)
+    let type_id = u32::from(*self);
+    let bytes = type_id.to_le_bytes();
+    GlyphHeader::new_short(GlyphType::Unit, bytes).bbwr(target, cursor)?;
+    Ok(())
   }
 
   fn glyph_len(&self) -> usize {
-    UnitTypes::Nothing.glyph_len()
+    size_of::<GlyphHeader>()
   }
 }
 
@@ -169,33 +185,17 @@ where
   }
 }
 
-impl<G: Glyph> PartialEq for UnitGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for UnitGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for UnitGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for UnitGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.1.cmp(&other.1)
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for UnitGlyph<G> {
-  fn into_inner(self) -> G {
-    self.0
+impl ToGlyph for () {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    UnitTypes::Nothing.glyph_encode(target, cursor)
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph_len(&self) -> usize {
+    UnitTypes::Nothing.glyph_len()
   }
 }
 

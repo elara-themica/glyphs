@@ -250,7 +250,7 @@ impl<G: Glyph> SignatureGlyph<G> {
           &[],
         )?;
         if key
-          .verify(self.signature_metadata().as_bytes(), &sig)
+          .authenticate(self.signature_metadata().as_bytes(), &sig)
           .is_ok()
         {
           Ok(*key.fingerprint())

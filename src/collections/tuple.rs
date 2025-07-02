@@ -11,156 +11,6 @@ use core::{
 };
 use std::cmp::Ordering;
 
-impl<'a, A, B> ToGlyph for (A, B)
-where
-  A: ToGlyph,
-  B: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
-    tgs.add_item(&self.0)?;
-    tgs.add_item(&self.1)?;
-    tgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut tglc = TupleGlyphLenCalc::new();
-    tglc.add_item(self.0.glyph_len());
-    tglc.add_item(self.1.glyph_len());
-    tglc.finish()
-  }
-}
-
-impl<A, B, C> ToGlyph for (A, B, C)
-where
-  A: ToGlyph,
-  B: ToGlyph,
-  C: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
-    tgs.add_item(&self.0)?;
-    tgs.add_item(&self.1)?;
-    tgs.add_item(&self.2)?;
-    tgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut tglc = TupleGlyphLenCalc::new();
-    tglc.add_item(self.0.glyph_len());
-    tglc.add_item(self.1.glyph_len());
-    tglc.add_item(self.2.glyph_len());
-    tglc.finish()
-  }
-}
-
-impl<A, B, C, D> ToGlyph for (A, B, C, D)
-where
-  A: ToGlyph,
-  B: ToGlyph,
-  C: ToGlyph,
-  D: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
-    tgs.add_item(&self.0)?;
-    tgs.add_item(&self.1)?;
-    tgs.add_item(&self.2)?;
-    tgs.add_item(&self.3)?;
-    tgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut tglc = TupleGlyphLenCalc::new();
-    tglc.add_item(self.0.glyph_len());
-    tglc.add_item(self.1.glyph_len());
-    tglc.add_item(self.2.glyph_len());
-    tglc.add_item(self.3.glyph_len());
-    tglc.finish()
-  }
-}
-
-impl<A, B, C, D, E> ToGlyph for (A, B, C, D, E)
-where
-  A: ToGlyph,
-  B: ToGlyph,
-  C: ToGlyph,
-  D: ToGlyph,
-  E: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
-    tgs.add_item(&self.0)?;
-    tgs.add_item(&self.1)?;
-    tgs.add_item(&self.2)?;
-    tgs.add_item(&self.3)?;
-    tgs.add_item(&self.4)?;
-    tgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut tglc = TupleGlyphLenCalc::new();
-    tglc.add_item(self.0.glyph_len());
-    tglc.add_item(self.1.glyph_len());
-    tglc.add_item(self.2.glyph_len());
-    tglc.add_item(self.3.glyph_len());
-    tglc.add_item(self.4.glyph_len());
-    tglc.finish()
-  }
-}
-
-impl<A, B, C, D, E, F> ToGlyph for (A, B, C, D, E, F)
-where
-  A: ToGlyph,
-  B: ToGlyph,
-  C: ToGlyph,
-  D: ToGlyph,
-  E: ToGlyph,
-  F: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
-    tgs.add_item(&self.0)?;
-    tgs.add_item(&self.1)?;
-    tgs.add_item(&self.2)?;
-    tgs.add_item(&self.3)?;
-    tgs.add_item(&self.4)?;
-    tgs.add_item(&self.5)?;
-    tgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut tglc = TupleGlyphLenCalc::new();
-    tglc.add_item(self.0.glyph_len());
-    tglc.add_item(self.1.glyph_len());
-    tglc.add_item(self.2.glyph_len());
-    tglc.add_item(self.3.glyph_len());
-    tglc.add_item(self.4.glyph_len());
-    tglc.add_item(self.5.glyph_len());
-    tglc.finish()
-  }
-}
-
 /// A glyph containing a series of other glyphs.
 ///
 /// A `TupleGlyph` differs from a [`VecGlyph`] in that the latter has an offsets
@@ -452,38 +302,6 @@ where
   }
 }
 
-impl<T> FromGlyph<T> for TupleGlyph<T>
-where
-  T: Glyph,
-{
-  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
-    match source.header().confirm_type(GlyphType::Tuple) {
-      Ok(_) => Ok(TupleGlyph(source)),
-      Err(err) => Err(err.into_fge(source)),
-    }
-  }
-}
-
-impl<G: Glyph> PartialEq for TupleGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for TupleGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for TupleGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for TupleGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
-  }
-}
-
 impl<G: Glyph> EncodedGlyph<G> for TupleGlyph<G> {
   fn into_inner(self) -> G {
     self.0
@@ -502,6 +320,104 @@ impl<G: Glyph> EncodedGlyph<G> for TupleGlyph<G> {
         GlyphSorting::dyn_ord(self.0.borrow(), other.0.borrow(), sorting)
       },
     }
+  }
+}
+
+impl<G: Glyph> Eq for TupleGlyph<G> {}
+
+impl<T> FromGlyph<T> for TupleGlyph<T>
+where
+  T: Glyph,
+{
+  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+    match source.header().confirm_type(GlyphType::Tuple) {
+      Ok(_) => Ok(TupleGlyph(source)),
+      Err(err) => Err(err.into_fge(source)),
+    }
+  }
+}
+
+impl<G: Glyph> Ord for TupleGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for TupleGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for TupleGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+/// An iterator through the glyphs in a [`TupleGlyph`].
+pub(crate) struct IterTuple<'a>(&'a [u8], usize);
+
+impl<'a> Iterator for IterTuple<'a> {
+  type Item = ParsedGlyph<'a>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    match glyph_read(self.0, &mut self.1) {
+      Ok(glyph_ref) => Some(glyph_ref),
+      Err(_) => None,
+    }
+  }
+}
+
+#[derive(Default)]
+pub(crate) struct TupleGlyphLenCalc(usize);
+
+impl TupleGlyphLenCalc {
+  pub fn new() -> Self {
+    Default::default()
+  }
+
+  pub fn add_item(&mut self, item_len: usize) {
+    self.0 = self.0.saturating_add(item_len);
+  }
+
+  pub fn finish(self) -> usize {
+    size_of::<GlyphHeader>() + self.0
+  }
+}
+
+pub(crate) struct TupleGlyphSerializer<'a> {
+  target:      &'a mut [u8],
+  cursor:      &'a mut usize,
+  glyph_start: usize,
+}
+
+impl<'a> TupleGlyphSerializer<'a> {
+  pub fn new(
+    target: &'a mut [u8],
+    cursor: &'a mut usize,
+  ) -> Result<Self, GlyphErr> {
+    let glyph_start = GlyphHeader::skip(cursor);
+    Ok(Self {
+      target,
+      cursor,
+      glyph_start,
+    })
+  }
+
+  pub fn add_item<T: ToGlyph>(&mut self, item: &T) -> Result<(), GlyphErr> {
+    item.glyph_encode(self.target, self.cursor)
+  }
+
+  pub fn finish(self) -> Result<(), GlyphErr> {
+    glyph_close(
+      GlyphType::Tuple,
+      self.target,
+      self.glyph_start,
+      self.cursor,
+      false,
+    )?;
+    Ok(())
   }
 }
 
@@ -715,69 +631,153 @@ where
   }
 }
 
-/// An iterator through the glyphs in a [`TupleGlyph`].
-pub(crate) struct IterTuple<'a>(&'a [u8], usize);
+impl<'a, A, B> ToGlyph for (A, B)
+where
+  A: ToGlyph,
+  B: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
+    tgs.add_item(&self.0)?;
+    tgs.add_item(&self.1)?;
+    tgs.finish()
+  }
 
-impl<'a> Iterator for IterTuple<'a> {
-  type Item = ParsedGlyph<'a>;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    match glyph_read(self.0, &mut self.1) {
-      Ok(glyph_ref) => Some(glyph_ref),
-      Err(_) => None,
-    }
+  fn glyph_len(&self) -> usize {
+    let mut tglc = TupleGlyphLenCalc::new();
+    tglc.add_item(self.0.glyph_len());
+    tglc.add_item(self.1.glyph_len());
+    tglc.finish()
   }
 }
 
-#[derive(Default)]
-pub(crate) struct TupleGlyphLenCalc(usize);
-
-impl TupleGlyphLenCalc {
-  pub fn new() -> Self {
-    Default::default()
+impl<A, B, C> ToGlyph for (A, B, C)
+where
+  A: ToGlyph,
+  B: ToGlyph,
+  C: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
+    tgs.add_item(&self.0)?;
+    tgs.add_item(&self.1)?;
+    tgs.add_item(&self.2)?;
+    tgs.finish()
   }
 
-  pub fn add_item(&mut self, item_len: usize) {
-    self.0 = self.0.saturating_add(item_len);
-  }
-
-  pub fn finish(self) -> usize {
-    size_of::<GlyphHeader>() + self.0
+  fn glyph_len(&self) -> usize {
+    let mut tglc = TupleGlyphLenCalc::new();
+    tglc.add_item(self.0.glyph_len());
+    tglc.add_item(self.1.glyph_len());
+    tglc.add_item(self.2.glyph_len());
+    tglc.finish()
   }
 }
 
-pub(crate) struct TupleGlyphSerializer<'a> {
-  target:      &'a mut [u8],
-  cursor:      &'a mut usize,
-  glyph_start: usize,
+impl<A, B, C, D> ToGlyph for (A, B, C, D)
+where
+  A: ToGlyph,
+  B: ToGlyph,
+  C: ToGlyph,
+  D: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
+    tgs.add_item(&self.0)?;
+    tgs.add_item(&self.1)?;
+    tgs.add_item(&self.2)?;
+    tgs.add_item(&self.3)?;
+    tgs.finish()
+  }
+
+  fn glyph_len(&self) -> usize {
+    let mut tglc = TupleGlyphLenCalc::new();
+    tglc.add_item(self.0.glyph_len());
+    tglc.add_item(self.1.glyph_len());
+    tglc.add_item(self.2.glyph_len());
+    tglc.add_item(self.3.glyph_len());
+    tglc.finish()
+  }
 }
 
-impl<'a> TupleGlyphSerializer<'a> {
-  pub fn new(
-    target: &'a mut [u8],
-    cursor: &'a mut usize,
-  ) -> Result<Self, GlyphErr> {
-    let glyph_start = GlyphHeader::skip(cursor);
-    Ok(Self {
-      target,
-      cursor,
-      glyph_start,
-    })
+impl<A, B, C, D, E> ToGlyph for (A, B, C, D, E)
+where
+  A: ToGlyph,
+  B: ToGlyph,
+  C: ToGlyph,
+  D: ToGlyph,
+  E: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
+    tgs.add_item(&self.0)?;
+    tgs.add_item(&self.1)?;
+    tgs.add_item(&self.2)?;
+    tgs.add_item(&self.3)?;
+    tgs.add_item(&self.4)?;
+    tgs.finish()
   }
 
-  pub fn add_item<T: ToGlyph>(&mut self, item: &T) -> Result<(), GlyphErr> {
-    item.glyph_encode(self.target, self.cursor)
+  fn glyph_len(&self) -> usize {
+    let mut tglc = TupleGlyphLenCalc::new();
+    tglc.add_item(self.0.glyph_len());
+    tglc.add_item(self.1.glyph_len());
+    tglc.add_item(self.2.glyph_len());
+    tglc.add_item(self.3.glyph_len());
+    tglc.add_item(self.4.glyph_len());
+    tglc.finish()
+  }
+}
+
+impl<A, B, C, D, E, F> ToGlyph for (A, B, C, D, E, F)
+where
+  A: ToGlyph,
+  B: ToGlyph,
+  C: ToGlyph,
+  D: ToGlyph,
+  E: ToGlyph,
+  F: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut tgs = TupleGlyphSerializer::new(target, cursor)?;
+    tgs.add_item(&self.0)?;
+    tgs.add_item(&self.1)?;
+    tgs.add_item(&self.2)?;
+    tgs.add_item(&self.3)?;
+    tgs.add_item(&self.4)?;
+    tgs.add_item(&self.5)?;
+    tgs.finish()
   }
 
-  pub fn finish(self) -> Result<(), GlyphErr> {
-    glyph_close(
-      GlyphType::Tuple,
-      self.target,
-      self.glyph_start,
-      self.cursor,
-      false,
-    )?;
-    Ok(())
+  fn glyph_len(&self) -> usize {
+    let mut tglc = TupleGlyphLenCalc::new();
+    tglc.add_item(self.0.glyph_len());
+    tglc.add_item(self.1.glyph_len());
+    tglc.add_item(self.2.glyph_len());
+    tglc.add_item(self.3.glyph_len());
+    tglc.add_item(self.4.glyph_len());
+    tglc.add_item(self.5.glyph_len());
+    tglc.finish()
   }
 }
 

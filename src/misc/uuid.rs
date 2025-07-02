@@ -27,8 +27,6 @@ impl ToGlyph for Uuid {
   }
 }
 
-unsafe impl ZeroCopy for Uuid {}
-
 impl HasZeroCopyID for Uuid {
   const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::UUID;
 }
@@ -68,8 +66,7 @@ impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a Uuid {
   }
 }
 
-gen_prim_slice_to_glyph!(Uuid);
-gen_prim_slice_from_glyph_parsed!(Uuid);
+unsafe impl ZeroCopy for Uuid {}
 
 /// Glyph containing a UUID.
 pub struct UuidGlyph<T>(T)
@@ -97,41 +94,6 @@ where
   }
 }
 
-impl<T> FromGlyph<T> for UuidGlyph<T>
-where
-  T: Glyph,
-{
-  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
-    if let Err(err) = source.confirm_type(GlyphType::UUID) {
-      return Err(err.into_fge(source));
-    }
-    if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
-      return Err(FromGlyphErr::new(source, err.into()));
-    }
-    Ok(UuidGlyph(source))
-  }
-}
-
-impl<G: Glyph> PartialEq for UuidGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for UuidGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for UuidGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for UuidGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
-  }
-}
-
 impl<G: Glyph> EncodedGlyph<G> for UuidGlyph<G> {
   fn into_inner(self) -> G {
     self.0
@@ -147,6 +109,44 @@ impl<G: Glyph> EncodedGlyph<G> for UuidGlyph<G> {
     }
   }
 }
+
+impl<G: Glyph> Eq for UuidGlyph<G> {}
+
+impl<T> FromGlyph<T> for UuidGlyph<T>
+where
+  T: Glyph,
+{
+  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+      return Err(err.into_fge(source));
+    }
+    if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
+      return Err(FromGlyphErr::new(source, err.into()));
+    }
+    Ok(UuidGlyph(source))
+  }
+}
+
+impl<G: Glyph> Ord for UuidGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for UuidGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for UuidGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+gen_prim_slice_from_glyph_parsed!(Uuid);
+gen_prim_slice_to_glyph!(Uuid);
 
 #[cfg(test)]
 mod test {

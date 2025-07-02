@@ -32,6 +32,19 @@ use rand::Rng;
 pub(super) mod aes;
 pub(super) mod ed25519;
 
+/// Keys used to authenticate digital signatures.
+pub trait AuthenticationKey: CryptoKey {
+  /// The type of signature that can be verified by this key.
+  type Signature: CryptoSignature;
+
+  /// Returns `Ok(())` if the signature is valid or an `Err` otherwise.
+  fn authenticate(
+    &self,
+    bytes: &[u8],
+    signature: &Self::Signature,
+  ) -> Result<(), CryptoErr>;
+}
+
 /// Internal trait for Cryptographic Keys
 pub trait CryptoKey: Debug + Sized + Send {
   type PublicBytes<'a>: AsRef<[u8]>
@@ -42,6 +55,13 @@ pub trait CryptoKey: Debug + Sized + Send {
   where
     Self: 'a;
 
+  /// Read the serialized key from the provided buffer.
+  fn deserialize(
+    key_type: CryptoKeyTypes,
+    public_bytes: &[u8],
+    secret_bytes: &[u8],
+  ) -> Result<Self, CryptoErr>;
+
   /// Returns the fingerprint of this key
   fn fingerprint(&self) -> &Sha3Hash;
 
@@ -50,24 +70,48 @@ pub trait CryptoKey: Debug + Sized + Send {
   /// This is intended to be used for serialization.
   fn key_type(&self) -> CryptoKeyTypes;
 
-  /// The length serialized key's public component (if any), in bytes.
-  fn public_len(&self) -> usize;
-
-  /// The length serialized key's secret component (if any), in bytes.
-  fn secret_len(&self) -> usize;
-
   /// The serialized bytes of the public key component (if any).
   fn public_bytes(&self) -> Self::PublicBytes<'_>;
+
+  /// The length serialized key's public component (if any), in bytes.
+  fn public_len(&self) -> usize;
 
   /// The serialized bytes of the private key component (if any).
   fn secret_bytes(&self) -> Self::SecretBytes<'_>;
 
-  /// Read the serialized key from the provided buffer.
+  /// The length serialized key's secret component (if any), in bytes.
+  fn secret_len(&self) -> usize;
+}
+
+/// Cryptographic signatures created by a [`SigningKey`],
+pub trait CryptoSignature: Sized {
+  /// The type of key used to authenticate this signature.
+  type AuthenticationKey: AuthenticationKey;
+
+  type SignatureBytes<'a>: AsRef<[u8]>
+  where
+    Self: 'a;
+
+  /// Deserialize a signature from the provided buffer.
   fn deserialize(
-    key_type: CryptoKeyTypes,
-    public_bytes: &[u8],
-    secret_bytes: &[u8],
+    sig_type: CryptoSignatureTypes,
+    source: &[u8],
   ) -> Result<Self, CryptoErr>;
+
+  /// R
+  fn signature_bytes(&self) -> Self::SignatureBytes<'_>;
+
+  /// The length of the serialized signature, in bytes.
+  ///
+  /// The default implementation just uses the `signature_bytes()` function;
+  /// this can be overridden if/when serialization is non-trivial.
+  fn signature_length(&self) -> usize {
+    self.signature_bytes().as_ref().len()
+  }
+
+  /// Identifies the type of cryptographic signature.
+  // TODO: Can't this just be a constant?
+  fn signature_type(&self) -> CryptoSignatureTypes;
 }
 
 pub trait GenerableCryptoKey: CryptoKey {
@@ -90,45 +134,4 @@ pub trait SigningKey: CryptoKey {
   /// Note that this is distinct from the full signature provided by a
   /// [`SignatureGlyph`]; this is for the cryptographic signature only.
   fn sign(&self, bytes: &[u8]) -> Self::Signature;
-}
-
-/// Keys used to authenticate digital signatures.
-pub trait AuthenticationKey: CryptoKey {
-  /// The type of signature that can be verified by this key.
-  type Signature: CryptoSignature;
-
-  /// Returns `Ok(())` if the signature is valid or an `Err` otherwise.
-  fn verify(
-    &self,
-    bytes: &[u8],
-    signature: &Self::Signature,
-  ) -> Result<(), CryptoErr>;
-}
-
-/// Cryptographic signatures created by a [`SigningKey`],
-pub trait CryptoSignature: Sized {
-  /// The type of key used to authenticate this signature.
-  type AuthenticationKey: AuthenticationKey;
-
-  type SignatureBytes<'a>: AsRef<[u8]>
-  where
-    Self: 'a;
-
-  fn signature_type(&self) -> CryptoSignatureTypes;
-
-  /// The length of the serialized signature, in bytes.
-  ///
-  /// The default implementation just uses the `signature_bytes()` function;
-  /// this can be overridden if/when serialization is non-trivial.
-  fn signature_length(&self) -> usize {
-    self.signature_bytes().as_ref().len()
-  }
-
-  fn signature_bytes(&self) -> Self::SignatureBytes<'_>;
-
-  /// Deserialize a signature from the provided buffer.
-  fn deserialize(
-    sig_type: CryptoSignatureTypes,
-    source: &[u8],
-  ) -> Result<Self, CryptoErr>;
 }

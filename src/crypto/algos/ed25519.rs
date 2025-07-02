@@ -34,7 +34,7 @@ pub struct Ed25519PublicKey {
 impl AuthenticationKey for Ed25519PublicKey {
   type Signature = Ed25519Signature;
 
-  fn verify(
+  fn authenticate(
     &self,
     bytes: &[u8],
     signature: &Self::Signature,
@@ -121,12 +121,12 @@ pub struct Ed25519SecretKey {
 impl AuthenticationKey for Ed25519SecretKey {
   type Signature = Ed25519Signature;
 
-  fn verify(
+  fn authenticate(
     &self,
     bytes: &[u8],
     signature: &Self::Signature,
   ) -> Result<(), CryptoErr> {
-    self.public_key.verify(bytes, signature)
+    self.public_key.authenticate(bytes, signature)
   }
 }
 
@@ -295,10 +295,10 @@ mod tests {
     let public_key = secret_key.authentication_key();
     let signature = secret_key.sign(TEST_PLAINTEXT);
 
-    public_key.verify(TEST_PLAINTEXT, &signature).unwrap();
-    secret_key.verify(TEST_PLAINTEXT, &signature).unwrap();
-    assert!(public_key.verify(b"IMPOSTER!", &signature).is_err());
-    assert!(secret_key.verify(b"IMPOSTER!", &signature).is_err());
+    public_key.authenticate(TEST_PLAINTEXT, &signature).unwrap();
+    secret_key.authenticate(TEST_PLAINTEXT, &signature).unwrap();
+    assert!(public_key.authenticate(b"IMPOSTER!", &signature).is_err());
+    assert!(secret_key.authenticate(b"IMPOSTER!", &signature).is_err());
 
     // Serialize keys and the signature.
     let secret_bytes = secret_key.secret_bytes();

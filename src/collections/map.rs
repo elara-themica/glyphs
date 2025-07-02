@@ -51,33 +51,6 @@ impl MapGlyphHeader {
 /// SAFETY: Components are all ZeroCopy
 unsafe impl ZeroCopy for MapGlyphHeader {}
 
-#[cfg(feature = "alloc")]
-impl<K, V> ToGlyph for BTreeMap<K, V>
-where
-  K: ToGlyph,
-  V: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut mgs = MapGlyphSerializer::new(self.len(), target, cursor)?;
-    for (key, value) in self.iter() {
-      mgs.add_item(key, value)?;
-    }
-    mgs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    let mut mglc = MapGlyphLenCalc::new();
-    for (key, value) in self.iter() {
-      mglc.add_item(key.glyph_len(), value.glyph_len());
-    }
-    mglc.finish()
-  }
-}
-
 /// A glyph-based associative array.
 pub struct MapGlyph<G>
 where
@@ -85,36 +58,6 @@ where
 {
   glyph:   G,
   offsets: NonNull<[GlyphOffset]>,
-}
-
-impl<G> FromGlyph<G> for MapGlyph<G>
-where
-  G: Glyph,
-{
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.confirm_type(GlyphType::Map) {
-      return Err(err.into_fge(source));
-    }
-
-    let content = source.content_padded();
-    let cursor = &mut 0;
-
-    let mgh = match MapGlyphHeader::bbrf(content, cursor) {
-      Ok(mgh) => mgh,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
-      Ok(offsets) => offsets,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-
-    // Keep internal self references
-    let offsets = NonNull::from(offsets);
-    Ok(Self {
-      glyph: source,
-      offsets,
-    })
-  }
 }
 
 impl<G> MapGlyph<G>
@@ -138,7 +81,10 @@ where
   }
 
   /// Returns the _index_-th Key/Value pair.
-  pub fn get(&self, index: usize) -> Option<(ParsedGlyph, ParsedGlyph)> {
+  pub fn get(
+    &self,
+    index: usize,
+  ) -> Option<(ParsedGlyph<'_>, ParsedGlyph<'_>)> {
     let offset = self.offsets().get(index)?;
     let content = self.glyph.content_padded();
     let mut cursor = offset.cursor(0);
@@ -216,26 +162,6 @@ where
   }
 }
 
-impl<G: Glyph> PartialEq for MapGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for MapGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for MapGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for MapGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
-  }
-}
-
 impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
@@ -279,11 +205,79 @@ impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
   }
 }
 
+impl<G: Glyph> Eq for MapGlyph<G> {}
+
+impl<G> FromGlyph<G> for MapGlyph<G>
+where
+  G: Glyph,
+{
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.confirm_type(GlyphType::Map) {
+      return Err(err.into_fge(source));
+    }
+
+    let content = source.content_padded();
+    let cursor = &mut 0;
+
+    let mgh = match MapGlyphHeader::bbrf(content, cursor) {
+      Ok(mgh) => mgh,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
+      Ok(offsets) => offsets,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+
+    // Keep internal self references
+    let offsets = NonNull::from(offsets);
+    Ok(Self {
+      glyph: source,
+      offsets,
+    })
+  }
+}
+
+impl<G: Glyph> Ord for MapGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for MapGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for MapGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
 /// Iterates through the entries of a [`MapGlyph`]
 #[derive(Copy, Clone)]
 pub(crate) struct IterMap<'a> {
   offsets: &'a [GlyphOffset],
   content: &'a [u8],
+}
+
+impl<'a> DoubleEndedIterator for IterMap<'a> {
+  fn next_back(&mut self) -> Option<Self::Item> {
+    let (offset, remainder) = self.offsets.split_last()?;
+    self.offsets = remainder;
+
+    let mut cursor = offset.cursor(0);
+    let key = glyph_read(self.content, &mut cursor).ok()?;
+    let value = glyph_read(self.content, &mut cursor).ok()?;
+    Some((key, value))
+  }
+}
+
+impl<'a> ExactSizeIterator for IterMap<'a> {
+  fn len(&self) -> usize {
+    self.offsets.len()
+  }
 }
 
 impl<'a> Iterator for IterMap<'a> {
@@ -302,24 +296,6 @@ impl<'a> Iterator for IterMap<'a> {
   fn size_hint(&self) -> (usize, Option<usize>) {
     let len = self.len();
     (len, Some(len))
-  }
-}
-
-impl<'a> ExactSizeIterator for IterMap<'a> {
-  fn len(&self) -> usize {
-    self.offsets.len()
-  }
-}
-
-impl<'a> DoubleEndedIterator for IterMap<'a> {
-  fn next_back(&mut self) -> Option<Self::Item> {
-    let (offset, remainder) = self.offsets.split_last()?;
-    self.offsets = remainder;
-
-    let mut cursor = offset.cursor(0);
-    let key = glyph_read(self.content, &mut cursor).ok()?;
-    let value = glyph_read(self.content, &mut cursor).ok()?;
-    Some((key, value))
   }
 }
 
@@ -416,6 +392,33 @@ impl<'a> MapGlyphSerializer<'a> {
       false,
     )?;
     Ok(())
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl<K, V> ToGlyph for BTreeMap<K, V>
+where
+  K: ToGlyph,
+  V: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut mgs = MapGlyphSerializer::new(self.len(), target, cursor)?;
+    for (key, value) in self.iter() {
+      mgs.add_item(key, value)?;
+    }
+    mgs.finish()
+  }
+
+  fn glyph_len(&self) -> usize {
+    let mut mglc = MapGlyphLenCalc::new();
+    for (key, value) in self.iter() {
+      mglc.add_item(key.glyph_len(), value.glyph_len());
+    }
+    mglc.finish()
   }
 }
 

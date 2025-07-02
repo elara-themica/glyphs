@@ -22,12 +22,14 @@ use crate::{
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use core::{
+  cmp::Ordering,
   fmt::{Debug, Formatter},
   mem::size_of,
   ptr::NonNull,
 };
-use std::cmp::Ordering;
 use uuid::Uuid;
 
 /// The specific type header for (non-primitive) vector glyphs.
@@ -40,8 +42,6 @@ use uuid::Uuid;
 pub(crate) struct VecGlyphHeader {
   num_items: U32,
 }
-
-unsafe impl ZeroCopy for VecGlyphHeader {}
 
 impl VecGlyphHeader {
   /// Creates a new type-specific header for a [`VecGlyph`].
@@ -62,33 +62,7 @@ impl VecGlyphHeader {
   }
 }
 
-/// Vectors of primitives and very common types with fixed-length
-/// representations may have a more specific implementation.  This `impl`
-/// is the default used for all other types (e.g., `str`).
-impl<T> ToGlyph for [T]
-where
-  T: ToGlyph,
-{
-  default fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut vgs = VecGlyphSerializer::new(self.len(), target, cursor)?;
-    for field in self.iter() {
-      vgs.add_field(field)?;
-    }
-    vgs.finish()
-  }
-
-  default fn glyph_len(&self) -> usize {
-    let mut vglc = VecGlyphLenCalc::new();
-    for field in self.iter() {
-      vglc.add_item(field.glyph_len());
-    }
-    vglc.finish()
-  }
-}
+unsafe impl ZeroCopy for VecGlyphHeader {}
 
 /// A glyph that contains a vector of other glyphs.
 pub struct VecGlyph<G>
@@ -148,7 +122,7 @@ where
        + Clone
        + DoubleEndedIterator
        + ExactSizeIterator {
-    IterVec {
+    VecGlyphIterator {
       offsets: self.offsets(),
       content: self.glyph.content_padded(),
     }
@@ -189,45 +163,13 @@ impl<'a> VecGlyph<ParsedGlyph<'a>> {
   /// An iterator over contained glyphs.
   pub fn iter_parsed(&self) -> impl Iterator<Item = ParsedGlyph<'a>> + Clone {
     unsafe {
-      IterVec {
+      VecGlyphIterator {
         offsets: self.offsets.as_ref(),
         content: self.glyph.content_padded_parsed(),
       }
     }
   }
 }
-
-impl<G> FromGlyph<G> for VecGlyph<G>
-where
-  G: Glyph,
-{
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
-      return Err(err.into_fge(source));
-    }
-    let contents = source.content_padded();
-    let mut cursor = 0;
-    let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
-      Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let offsets =
-      match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
-        Ok(offsets) => offsets,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-      };
-    let offsets = NonNull::from(offsets);
-    Ok(Self {
-      glyph: source,
-      offsets,
-    })
-  }
-}
-
-// TODO
-// impl<'a, G: Glyph> IntoIterator for &'a VecGlyph<G> {
-//
-// }
 
 impl<G> Debug for VecGlyph<G>
 where
@@ -241,26 +183,6 @@ where
       df.entry(&dg);
     }
     df.finish()
-  }
-}
-
-impl<G: Glyph> PartialEq for VecGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for VecGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for VecGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for VecGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
   }
 }
 
@@ -293,39 +215,76 @@ impl<G: Glyph> EncodedGlyph<G> for VecGlyph<G> {
   }
 }
 
-/// Encodes a `Vec<T>` into a glyph, provided `T` implements `ToGlyph`.
-///
-/// This is the default implementation when there's not a more specialized
-/// version, e.g., that uses a specific type of vector glyph to avoid the
-/// overhead of each item being encoded as a glyph, that avoids the per-item
-/// overhead of storing individual items as glyphs.  This would be extremely
-/// inefficient, for example, for a vector of `u8`
-#[cfg(feature = "alloc")]
-impl<'a, T> ToGlyph for alloc::vec::Vec<T>
-where
-  T: ToGlyph,
-{
-  default fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    (&self[..]).glyph_encode(target, cursor)
-  }
+impl<G: Glyph> Eq for VecGlyph<G> {}
 
-  default fn glyph_len(&self) -> usize {
-    (self[..]).glyph_len()
+impl<G> FromGlyph<G> for VecGlyph<G>
+where
+  G: Glyph,
+{
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
+      return Err(err.into_fge(source));
+    }
+    let contents = source.content_padded();
+    let mut cursor = 0;
+    let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let offsets =
+      match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
+        Ok(offsets) => offsets,
+        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      };
+    let offsets = NonNull::from(offsets);
+    Ok(Self {
+      glyph: source,
+      offsets,
+    })
+  }
+}
+
+impl<G: Glyph> Ord for VecGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for VecGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for VecGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 
 /// An iterator through the items of a [`VecGlyph`].
 #[derive(Copy, Clone)]
-struct IterVec<'a> {
+struct VecGlyphIterator<'a> {
   offsets: &'a [GlyphOffset],
   content: &'a [u8],
 }
 
-impl<'a> Iterator for IterVec<'a> {
+impl<'a> DoubleEndedIterator for VecGlyphIterator<'a> {
+  fn next_back(&mut self) -> Option<Self::Item> {
+    let (offset, remainder) = self.offsets.split_last()?;
+    self.offsets = remainder;
+    let mut cursor = offset.cursor(0);
+    glyph_read(self.content, &mut cursor).ok()
+  }
+}
+
+impl<'a> ExactSizeIterator for VecGlyphIterator<'a> {
+  fn len(&self) -> usize {
+    self.offsets.len()
+  }
+}
+
+impl<'a> Iterator for VecGlyphIterator<'a> {
   type Item = ParsedGlyph<'a>;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -338,21 +297,6 @@ impl<'a> Iterator for IterVec<'a> {
   fn size_hint(&self) -> (usize, Option<usize>) {
     let len = self.len();
     (len, Some(len))
-  }
-}
-
-impl<'a> ExactSizeIterator for IterVec<'a> {
-  fn len(&self) -> usize {
-    self.offsets.len()
-  }
-}
-
-impl<'a> DoubleEndedIterator for IterVec<'a> {
-  fn next_back(&mut self) -> Option<Self::Item> {
-    let (offset, remainder) = self.offsets.split_last()?;
-    self.offsets = remainder;
-    let mut cursor = offset.cursor(0);
-    glyph_read(self.content, &mut cursor).ok()
   }
 }
 
@@ -442,9 +386,7 @@ impl BasicVecGlyphHeader {
   pub(crate) fn tensor_rank(&self) -> usize {
     self.tensor_rank as usize
   }
-}
 
-impl BasicVecGlyphHeader {
   pub fn new<T: HasZeroCopyID>(tensor_rank: usize) -> Result<Self, GlyphErr> {
     let tensor_rank = u8::try_from(tensor_rank)
       .map_err(|_t| GlyphErr::TensorRankOverflow(tensor_rank))?;
@@ -549,38 +491,6 @@ impl<G: Glyph> BasicVecGlyph<G> {
     let bytes = self.as_bytes();
     let slice = T::bbrfs_i(bytes, &mut 0);
     Ok(slice)
-  }
-}
-
-impl<G> FromGlyph<G> for BasicVecGlyph<G>
-where
-  G: Glyph,
-{
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::VecBasic) {
-      return Err(err.into_fge(glyph));
-    }
-    let cursor = &mut 0;
-    let content = glyph.content();
-    let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
-      Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
-    };
-    let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
-    {
-      Ok(tensor_lengths) => tensor_lengths,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
-    };
-    let tensor_lengths = NonNull::from(tensor_lengths);
-    *cursor = round_to_word(*cursor);
-    let data = NonNull::from(u8::bbrfs_i(content, cursor));
-    let header = NonNull::from(header);
-    Ok(Self {
-      glyph,
-      header,
-      tensor_lengths,
-      data,
-    })
   }
 }
 
@@ -690,26 +600,6 @@ impl<G: Glyph> Debug for BasicVecGlyph<G> {
       },
     }
     df.finish()
-  }
-}
-
-impl<G: Glyph> PartialEq for BasicVecGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for BasicVecGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for BasicVecGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for BasicVecGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
   }
 }
 
@@ -829,6 +719,111 @@ impl<G: Glyph> EncodedGlyph<G> for BasicVecGlyph<G> {
           .then(self.as_bytes().cmp(other.as_bytes())),
       },
     }
+  }
+}
+
+impl<G: Glyph> Eq for BasicVecGlyph<G> {}
+
+impl<G> FromGlyph<G> for BasicVecGlyph<G>
+where
+  G: Glyph,
+{
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = glyph.confirm_type(GlyphType::VecBasic) {
+      return Err(err.into_fge(glyph));
+    }
+    let cursor = &mut 0;
+    let content = glyph.content();
+    let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+    };
+    let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
+    {
+      Ok(tensor_lengths) => tensor_lengths,
+      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+    };
+    let tensor_lengths = NonNull::from(tensor_lengths);
+    *cursor = round_to_word(*cursor);
+    let data = NonNull::from(u8::bbrfs_i(content, cursor));
+    let header = NonNull::from(header);
+    Ok(Self {
+      glyph,
+      header,
+      tensor_lengths,
+      data,
+    })
+  }
+}
+
+impl<G: Glyph> Ord for BasicVecGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for BasicVecGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for BasicVecGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+/// Vectors of primitives and very common types with fixed-length
+/// representations may have a more specific implementation.  This `impl`
+/// is the default used for all other types (e.g., `str`).
+impl<T> ToGlyph for [T]
+where
+  T: ToGlyph,
+{
+  default fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let mut vgs = VecGlyphSerializer::new(self.len(), target, cursor)?;
+    for field in self.iter() {
+      vgs.add_field(field)?;
+    }
+    vgs.finish()
+  }
+
+  default fn glyph_len(&self) -> usize {
+    let mut vglc = VecGlyphLenCalc::new();
+    for field in self.iter() {
+      vglc.add_item(field.glyph_len());
+    }
+    vglc.finish()
+  }
+}
+
+/// Encodes a `Vec<T>` into a glyph, provided `T` implements `ToGlyph`.
+///
+/// This is the default implementation when there's not a more specialized
+/// version, e.g., that uses a specific type of vector glyph to avoid the
+/// overhead of each item being encoded as a glyph, that avoids the per-item
+/// overhead of storing individual items as glyphs.  This would be extremely
+/// inefficient, for example, for a vector of `u8`
+#[cfg(feature = "alloc")]
+impl<'a, T> ToGlyph for Vec<T>
+where
+  T: ToGlyph,
+{
+  default fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    (&self[..]).glyph_encode(target, cursor)
+  }
+
+  default fn glyph_len(&self) -> usize {
+    (self[..]).glyph_len()
   }
 }
 

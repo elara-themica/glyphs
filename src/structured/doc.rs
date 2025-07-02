@@ -1,12 +1,11 @@
 //! Documents and related types for semi-structured data.
-
 use crate::{
   crypto::GlyphHash,
   dynamic::DynGlyph,
   glyph_close, glyph_read,
   zerocopy::{ZeroCopy, U16},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphPtr, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -31,8 +30,6 @@ struct DocGlyphHeader {
   reserved_1:        [u8; 4],
 }
 
-unsafe impl ZeroCopy for DocGlyphHeader {}
-
 impl DocGlyphHeader {
   /// Creates a new [`DocGlyphHeader`].
   pub fn new(num_old_versions: usize) -> Result<DocGlyphHeader, GlyphErr> {
@@ -48,14 +45,14 @@ impl DocGlyphHeader {
   }
 }
 
+unsafe impl ZeroCopy for DocGlyphHeader {}
+
 /// A Specific Version of a Document in a Collection.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DocVer {
   document: GlyphHash,
   from_tx:  GlyphHash,
 }
-
-unsafe impl ZeroCopy for DocVer {}
 
 impl DocVer {
   /// Creates a new `DocVer` instance.
@@ -68,6 +65,8 @@ impl DocVer {
     &self.document
   }
 }
+
+unsafe impl ZeroCopy for DocVer {}
 
 /// A simple document type suitable for encoding into (and decoding from) a
 /// [`DocGlyph`].
@@ -85,36 +84,6 @@ pub struct Document<I, B> {
   id:            I,
   prev_versions: SmallVec<DocVer, 2>,
   body:          B,
-}
-
-#[cfg(feature = "alloc")]
-impl<I, B> Document<I, B>
-where
-  I: ToGlyph,
-  B: ToGlyph,
-{
-  /// Create a new document (i.e., no modification history)
-  pub fn new(id: I, body: B) -> Document<I, B> {
-    Document {
-      id,
-      prev_versions: Default::default(),
-      body,
-    }
-  }
-
-  /// Create a new document to replace older versions.
-  pub fn replace(id: I, body: B, replaces: &[DocVer]) -> Document<I, B> {
-    let mut prev_versions =
-      SmallVec::<DocVer, 2>::with_capacity(replaces.len());
-    for ver in replaces {
-      prev_versions.push(*ver);
-    }
-    Document {
-      id,
-      body,
-      prev_versions,
-    }
-  }
 }
 
 impl<I, B> Document<I, B> {
@@ -174,9 +143,7 @@ impl<I, B> Document<I, B> {
       body,
     })
   }
-}
 
-impl<I, B> Document<I, B> {
   /// Returns a reference to the document's ID.
   pub fn id(&self) -> &I {
     &self.id
@@ -210,6 +177,36 @@ impl<I, B> Document<I, B> {
   /// Replaces the document body.
   pub fn set_body(&mut self, body: B) {
     self.body = body;
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl<I, B> Document<I, B>
+where
+  I: ToGlyph,
+  B: ToGlyph,
+{
+  /// Create a new document (i.e., no modification history)
+  pub fn new(id: I, body: B) -> Document<I, B> {
+    Document {
+      id,
+      prev_versions: Default::default(),
+      body,
+    }
+  }
+
+  /// Create a new document to replace older versions.
+  pub fn replace(id: I, body: B, replaces: &[DocVer]) -> Document<I, B> {
+    let mut prev_versions =
+      SmallVec::<DocVer, 2>::with_capacity(replaces.len());
+    for ver in replaces {
+      prev_versions.push(*ver);
+    }
+    Document {
+      id,
+      body,
+      prev_versions,
+    }
   }
 }
 
@@ -267,9 +264,8 @@ where
 pub struct DocGlyph<G: Glyph> {
   glyph:   G,
   parents: NonNull<[DocVer]>,
-  // SAFETY: These aren't actually 'static; they're internal self-references.
-  id:      GlyphPtr,
-  body:    GlyphPtr,
+  id:      *const [u8],
+  body:    *const [u8],
 }
 
 impl<G: Glyph> DocGlyph<G> {
@@ -280,15 +276,15 @@ impl<G: Glyph> DocGlyph<G> {
   }
 
   /// Returns the document's ID
-  pub fn id_glyph(&self) -> ParsedGlyph {
+  pub fn id_glyph(&self) -> ParsedGlyph<'_> {
     // SAFETY: Binds to lifetime of self.
-    unsafe { self.id.deref() }
+    unsafe { ParsedGlyph::from_buffer(&*self.id) }
   }
 
   /// Returns the document's body
-  pub fn body_glyph(&self) -> ParsedGlyph {
+  pub fn body_glyph(&self) -> ParsedGlyph<'_> {
     // SAFETY: Binds to lifetime of self.
-    unsafe { self.body.deref() }
+    unsafe { ParsedGlyph::from_buffer(&*self.body) }
   }
 }
 
@@ -296,54 +292,13 @@ impl<'a> DocGlyph<ParsedGlyph<'a>> {
   /// Returns the document's ID, parsed from an underlying buffer.
   pub fn id_parse(&self) -> ParsedGlyph<'a> {
     // SAFETY: Bound to lifetime of underlying parsed glyph
-    unsafe { self.body.deref() }
+    unsafe { ParsedGlyph::from_buffer(&*self.id) }
   }
 
   /// Returns the document's body, parsed from an underlying buffer.
   pub fn body_parse(&self) -> ParsedGlyph<'a> {
     // SAFETY: Bound to lifetime of underlying parsed glyph
-    unsafe { self.body.deref() }
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::Document) {
-      return Err(FromGlyphErr::new(source, err.into()));
-    }
-    let content = source.content_padded();
-    let cursor = &mut 0;
-
-    let dgh = match DocGlyphHeader::bbrf(content, cursor) {
-      Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let nov = u16::from(dgh.num_old_versions) as usize;
-    let ov = match DocVer::bbrfs(content, cursor, nov) {
-      Ok(versions) => versions,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    // SAFETY: This internal self-reference must not escape without being bound
-    // to the lifetime of 'self, and
-    let id_glyph = match glyph_read(content, cursor) {
-      Ok(glyph) => glyph,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let id = GlyphPtr::from_parsed(id_glyph);
-    let body_glyph = match glyph_read(content, cursor) {
-      Ok(glyph) => glyph,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-    };
-    let body = GlyphPtr::from_parsed(body_glyph);
-
-    let parents = NonNull::from(ov);
-
-    Ok(DocGlyph {
-      glyph: source,
-      parents,
-      id,
-      body,
-    })
+    unsafe { ParsedGlyph::from_buffer(&*self.body) }
   }
 }
 
@@ -354,26 +309,6 @@ impl<G: Glyph> Debug for DocGlyph<G> {
     b.field("id", &self.id_glyph());
     b.field("body", &self.body_glyph());
     b.finish()
-  }
-}
-
-impl<G: Glyph> PartialEq for DocGlyph<G> {
-  fn eq(&self, other: &Self) -> bool {
-    self.cmp(other) == Ordering::Equal
-  }
-}
-
-impl<G: Glyph> Eq for DocGlyph<G> {}
-
-impl<G: Glyph> PartialOrd for DocGlyph<G> {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<G: Glyph> Ord for DocGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.glyph_ord(other, Default::default())
   }
 }
 
@@ -405,6 +340,65 @@ impl<G: Glyph> EncodedGlyph<G> for DocGlyph<G> {
           .then_with(|| self.previous_versions().cmp(other.previous_versions()))
       },
     }
+  }
+}
+
+impl<G: Glyph> Eq for DocGlyph<G> {}
+
+impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
+  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::Document) {
+      return Err(FromGlyphErr::new(source, err.into()));
+    }
+    let content = source.content_padded();
+    let cursor = &mut 0;
+
+    let dgh = match DocGlyphHeader::bbrf(content, cursor) {
+      Ok(header) => header,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let nov = u16::from(dgh.num_old_versions) as usize;
+    let ov = match DocVer::bbrfs(content, cursor, nov) {
+      Ok(versions) => versions,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let id_glyph = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let id = id_glyph.as_ref() as *const [u8];
+    let body_glyph = match glyph_read(content, cursor) {
+      Ok(glyph) => glyph,
+      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+    };
+    let body = body_glyph.as_ref() as *const [u8];
+
+    let parents = NonNull::from(ov);
+
+    Ok(DocGlyph {
+      glyph: source,
+      parents,
+      id,
+      body,
+    })
+  }
+}
+
+impl<G: Glyph> Ord for DocGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.glyph_ord(other, Default::default())
+  }
+}
+
+impl<G: Glyph> PartialEq for DocGlyph<G> {
+  fn eq(&self, other: &Self) -> bool {
+    self.cmp(other) == Ordering::Equal
+  }
+}
+
+impl<G: Glyph> PartialOrd for DocGlyph<G> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 
