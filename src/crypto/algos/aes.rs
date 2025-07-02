@@ -13,6 +13,7 @@ use core::{
   mem::size_of,
 };
 use rand::{CryptoRng, RngCore};
+use zeroize::Zeroizing;
 
 /// The size of an AES block (independent of key length).
 const AES_BLOCK_SIZE: usize = 16;
@@ -26,7 +27,7 @@ type Aes256Ctr = ctr::Ctr128LE<::aes::Aes256>;
 // key.
 #[derive(Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct AesKey([u8; 32]);
+pub struct AesKey(Zeroizing<[u8; 32]>);
 
 impl AesKey {
   /// Generate a new random AES key
@@ -34,7 +35,7 @@ impl AesKey {
   where
     R: RngCore + CryptoRng,
   {
-    let mut key = AesKey([0u8; 32]);
+    let mut key = AesKey(Zeroizing::new([0u8; 32]));
     rng.fill_bytes(&mut key.0[..]);
     key
   }
@@ -58,7 +59,7 @@ impl AesKey {
         }
       ))
     } else {
-      let mut key_bytes = [0u8; 32];
+      let mut key_bytes = Zeroizing::new([0u8; 32]);
       key_bytes.clone_from_slice(bytes);
       Ok(AesKey(key_bytes))
     }
@@ -71,27 +72,21 @@ impl AesKey {
 
 impl Debug for AesKey {
   fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "AesKey({:?})", ShortHexDump(&self.0[..], 0))?;
+    let key_hash = Sha3Hash::new(self.bytes());
+    write!(f, "AesKey(fingerprint={:?})", &key_hash)?;
     Ok(())
-  }
-}
-
-/// We zero the key on drop to prevent it from being leaked.
-impl Drop for AesKey {
-  fn drop(&mut self) {
-    self.0.fill(0)
   }
 }
 
 impl From<[u8; 32]> for AesKey {
   fn from(src: [u8; 32]) -> Self {
-    AesKey(src)
+    AesKey(Zeroizing::from(src))
   }
 }
 
 impl From<AesKey> for [u8; 32] {
   fn from(src: AesKey) -> Self {
-    src.0
+    *src.0
   }
 }
 
@@ -100,7 +95,7 @@ impl TryFrom<&[u8]> for AesKey {
 
   fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
     if value.len() == 32 {
-      let mut key_bytes = [0u8; 32];
+      let mut key_bytes = Zeroizing::new([0u8; 32]);
       key_bytes.clone_from_slice(value);
       Ok(AesKey(key_bytes))
     } else {
