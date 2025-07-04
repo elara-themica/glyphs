@@ -898,7 +898,7 @@ where
 
 /// Calculates the length of the buffer necessary to serialize a type as a
 /// glyph with `serde`.
-pub fn glyph_serde_length<T>(value: &T) -> Result<usize, SerdeGlyphErr>
+fn glyph_serde_length<T>(value: &T) -> Result<usize, SerdeGlyphErr>
 where
   T: Serialize,
 {

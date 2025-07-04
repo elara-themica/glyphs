@@ -1490,6 +1490,9 @@ pub enum GlyphErr {
   SignatureKeyLengthOverflow(usize),
   /// Errors related to cryptographic functions.
   CryptoErr(CryptoErr),
+  /// An attempt was made to write a glyph with a length less than the size of
+  /// a [`GlyphHeader`].
+  GlyphLenUnderflow(usize),
 }
 
 impl GlyphErr {
@@ -1553,6 +1556,141 @@ impl<G: Glyph> From<FromGlyphErr<G>> for GlyphErr {
   fn from(value: FromGlyphErr<G>) -> Self {
     // Just drops the original glyph.
     value.1
+  }
+}
+
+/// Semi-structured data designed to be read without deserialization.
+///
+/// # Comparison with a Byte Slice `[u8]`
+///
+/// While this type contains nothing but a byte slice, we do not use the byte
+/// slice type directly because we wish to make additional guarantees for
+/// optimal performance:
+///
+/// - Once created, a glyph is immutable.  As unsafe code may rely on this
+///   immutability, any attempts to get around this immutability will cause
+///   undefined behavior.
+/// - The length of the buffer must always be (1) at least 8 bytes and (2) a
+///   multiple of 8 bytes.
+/// - The buffer will always contain a valid glyph.  Specifically, the first
+///   8 bytes will contain a [`GlyphHeader`], and the length of the buffer will
+///   be sufficient to contain the glyph described in that header.
+#[repr(transparent)]
+pub struct GlyphStruct([u8]);
+
+impl GlyphStruct {
+  /// Returns the glyph's content bytes, not including padding.
+  ///
+  /// ```
+  /// use glyphs::*;
+  ///
+  /// let message = "Hello, World!";
+  /// let glyph = glyph_new(message).unwrap();
+  /// println!("Glyph encoded as: {:?}", &glyph);
+  /// let decoded = <&str>::from_glyph(glyph.borrow()).unwrap();
+  /// assert_eq!(decoded, message);
+  /// ```
+  #[inline(always)]
+  fn content(&self) -> &[u8] {
+    let content_padded = self.content_padded();
+    let padding = self.header().padding();
+    let end = content_padded.len().saturating_sub(padding);
+    // SAFETY: Bounds were checked once upon creation.
+    unsafe { content_padded.get_unchecked(..end) }
+  }
+
+  /// Returns the contents of the glyph, including any padding.
+  #[inline(always)]
+  pub fn content_padded(&self) -> &[u8] {
+    let glyph_bytes = self.as_ref();
+    // SAFETY: Bounds were checked once upon creation.
+    unsafe { glyph_bytes.get_unchecked(size_of::<GlyphHeader>()..) }
+  }
+
+  /// Returns the content of short glyphs.
+  ///
+  /// If this is not a short glyph, this function will return a little-endian
+  /// `u32` containing the glyph's content length in 8-byte words.
+  #[inline(always)]
+  fn content_short(&self) -> &[u8; 4] {
+    self.header().short_content()
+  }
+
+  /// The header for this glyph
+  #[inline(always)]
+  pub fn header(&self) -> &GlyphHeader {
+    // SAFETY: Bounds already checked once upon creation
+    unsafe { GlyphHeader::bbrf_u(self.as_ref(), &mut 0) }
+  }
+
+  /// Creates a new glyph in a heap-allocated buffer.
+  #[allow(missing_docs)]
+  pub fn new<T: ToGlyph>(src: T) -> Result<Box<Self>, GlyphErr> {
+    // Allocate the buffer into which we'll write the glyph.
+    let glyph_len = src.glyph_len().max(size_of::<GlyphHeader>());
+    debug_assert_eq!(glyph_len % 8, 0);
+    let mut buffer =
+      unsafe { Box::<[u8]>::try_new_uninit_slice(glyph_len)?.assume_init() };
+
+    // Encode the source into the buffer as a glyph.
+    let mut cursor = 0;
+    src.glyph_encode(buffer.as_mut(), &mut cursor)?;
+    debug_assert_eq!(glyph_len, cursor);
+    let _ = GlyphStruct::read(buffer.as_ref(), &mut 0)?;
+
+    // SAFETY: Transmutation is safe for repr(transparent) types.
+    let glyph = unsafe { transmute(buffer) };
+    Ok(glyph)
+  }
+
+  /// Creates a new glyph in a reference-counted buffer.
+  #[allow(missing_docs)]
+  pub fn new_arc<T: ToGlyph>(src: T) -> Result<Arc<Self>, GlyphErr> {
+    //
+    let glyph_len = src.glyph_len().max(size_of::<GlyphHeader>());
+    debug_assert_eq!(glyph_len % 8, 0);
+
+    unsafe {
+      let buffer = Arc::<[u8]>::new_uninit_slice(glyph_len).assume_init();
+      let buffer: Arc<UnsafeCell<[u8]>> = transmute(buffer);
+      let target = &mut *buffer.get();
+      let mut cursor = 0;
+      src.glyph_encode(target, &mut cursor)?;
+      debug_assert_eq!(glyph_len, cursor);
+      let _ = GlyphStruct::read(target, &mut 0)?;
+      Ok(transmute(buffer))
+    }
+  }
+
+  /// Reads a glyph from a byte buffer
+  pub fn read<'a>(
+    source: &'a [u8],
+    cursor: &mut usize,
+  ) -> Result<&'a Self, GlyphErr> {
+    let offset = *cursor;
+    let header = GlyphHeader::bbrf(source, cursor)?;
+    *cursor += header.content_len();
+
+    let glyph_bytes =
+      source.get(offset..*cursor).ok_or(BufferErr::OutOfBounds {
+        index:  *cursor,
+        length: source.len(),
+      })?;
+    Ok(unsafe { transmute(glyph_bytes) })
+  }
+
+  /// Confirms this is a valid and correct glyph (including bounds checking).
+  fn validate(&self) -> Result<(), GlyphErr> {
+    let buffer = self.as_ref();
+    let _ = glyph_read(buffer, &mut 0)?;
+    Ok(())
+  }
+}
+
+impl AsRef<[u8]> for GlyphStruct {
+  #[inline(always)]
+  fn as_ref(&self) -> &[u8] {
+    &self.0
   }
 }
 
@@ -1735,5 +1873,15 @@ mod test {
     dbg!(size_of::<HeapGlyphHeader>());
     assert_eq!(size_of::<HeapGlyphHeader>() % 8, 0);
     assert!(align_of::<HeapGlyphHeader>() <= 8);
+  }
+
+  #[test]
+  fn dst() {
+    let g = GlyphStruct::new("Hello, world!").unwrap();
+    dbg!(g.header());
+    dbg!(HexDump(g.content_padded()));
+
+    let g2 = glyph_new("Hello, world!").unwrap();
+    dbg!(&g2);
   }
 }

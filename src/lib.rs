@@ -121,7 +121,7 @@ mod serde;
 #[doc(cfg(feature = "serde"))]
 pub use serde::{
   de::glyph_serde_deserialize,
-  ser::{glyph_new_serde, glyph_serde_length, glyph_serde_serialize},
+  ser::{glyph_new_serde, glyph_serde_serialize},
 };
 
 #[deny(missing_docs)]
