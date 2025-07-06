@@ -1,11 +1,14 @@
 //! Code related to structured objects.  See [`ObjGlyph`].
 //!
-//! [`ObjGlyph`]s differ from [`MapGlyph`]s in that
+//! [`ObjGlyph`]s differ from [`MapGlyph`]s in that (1) they contain additional
+//! type information (e.g., type and variant names) and (2) field names are
+//! labeled with an optional (`str`) name rather than with arbitrary glyphs.
 //!
-//! 1. They contain additional type information, such as a type name or hash.
-//! 2. All keys are field names and encoded as byte strings containing UTF-8,
-//!    with a maximum length of 255 bytes.
-//! 3. All key/value pairs are stored in byte string order.
+// TODO: Transfer this to documentation and provide a link.
+// 1. They contain additional type information, such as a type name or hash.
+// 2. All keys are field names and encoded as byte strings containing UTF-8,
+//    with a maximum length of 255 bytes.
+// 3. All key/value pairs are stored in byte string order.
 use crate::{
   crypto::GlyphHash,
   dynamic::DynGlyph,
@@ -159,6 +162,7 @@ impl Debug for ObjGlyphHeader {
 
 unsafe impl ZeroCopy for ObjGlyphHeader {}
 
+// TODO: Transfer this binary format to the appropriate documentation and link.
 /*
 Format:
 - GlyphHeader, ObjGlyphHeader.
@@ -173,19 +177,23 @@ Format:
   be valid UTF-8 but currently that is not enforced.
 - Fields must be stored in (byte) order by field names (if present).
 */
+// The binary format is as follows:
+// - An [`ObjGlyphHeader`].
+// - Iff the [`ObjGlyphHeaderFlags::TYPE_HASH`] bit is set, a [`GlyphHash`]
+//   uniquely identifying the object's type.
+// - A table of `U32`s with length equal to [`ObjGlyphHeader::num_fields()`],
+//   describing the offset of the contents of each field in the data section,
+//   in 8-byte words.
+// - Iff the [`ObjGlyphHeaderFlags::TYPE_NAME`] bit is set, a short UTF-8
+//   string (a u8 with its length and then the UTF-8 bytes).
+// - Zero padding to the nearest 8-byte word.
+//
 
-/// An Object Glyph.
+/// A semi-structured Object Glyph.
 ///
-/// The binary format is as follows:
-/// - An [`ObjGlyphHeader`].
-/// - Iff the [`ObjGlyphHeaderFlags::TYPE_HASH`] bit is set, a [`GlyphHash`]
-///   uniquely identifying the object's type.
-/// - A table of `U32`s with length equal to [`ObjGlyphHeader::num_fields()`],
-///   describing the offset of the contents of each field in the data section,
-///   in 8-byte words.
-/// - Iff the [`ObjGlyphHeaderFlags::TYPE_NAME`] bit is set, a short UTF-8
-///   string (a u8 with its length and then the UTF-8 bytes).
-/// - Zero padding to the nearest 8-byte word.
+/// - Object glyphs can have an object-level type name (`str`) or hash, as well
+///   as a variant name (`str`) or identifier (`u64`).
+/// - Each object glyph contains a list of fields with optional (`str`) names.
 ///
 #[derive(Clone)]
 pub struct ObjGlyph<B>

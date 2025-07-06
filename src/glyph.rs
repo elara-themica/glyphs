@@ -249,7 +249,7 @@ pub trait ToGlyph {
 /// The format is documented [here](http://www.glifs.org/docs/books/format/general.html).
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub struct GlyphHeader {
+pub(crate) struct GlyphHeader {
   version:  u8,
   padding:  u8,
   type_id:  [u8; 2],
@@ -429,7 +429,7 @@ unsafe impl ZeroCopy for GlyphHeader {}
 /// Describes an offset in a glyph at which some other data is present.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
-pub struct GlyphOffset(U32);
+pub(crate) struct GlyphOffset(U32);
 
 impl GlyphOffset {
   /// Creates a new instance from the specified start and position.
@@ -1633,7 +1633,7 @@ impl Glyph {
 
   /// The header for this glyph
   #[inline(always)]
-  pub fn header(&self) -> &GlyphHeader {
+  pub(crate) fn header(&self) -> &GlyphHeader {
     // SAFETY: Bounds already checked once upon creation
     unsafe { GlyphHeader::bbrf_u(self.as_ref(), &mut 0) }
   }
