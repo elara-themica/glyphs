@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{ZeroCopy, I128},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
@@ -197,7 +197,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DateTimeGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DateTimeGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DateTimeGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = glyph.header().confirm_type(GlyphType::DateTime) {
       return Err(err.into_fge(glyph));
     }
@@ -237,7 +237,7 @@ pub enum DateTimeErr {
 
 #[cfg(feature = "std")]
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     let ts = dtg.timestamp();
     match ts.cmp(&0) {
@@ -281,7 +281,7 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
 
 #[cfg(feature = "chrono")]
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for chrono::DateTime<chrono::Utc> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     match dtg.get_chrono_date_time() {
       Ok(time) => Ok(time),

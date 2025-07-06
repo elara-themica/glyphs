@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{bounds_check, ZeroCopyGlyph},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr,
 };
 use core::fmt::{Debug, Formatter};
 use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
@@ -82,14 +82,14 @@ impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> Eq for BasicGlyph<G, T> {}
 impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> FromGlyph<G>
   for BasicGlyph<G, T>
 {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = glyph.header().confirm_type(T::GLYPH_TYPE_ID) {
-      return Err(FromGlyphErr::new(glyph, err));
+      return Err(GlyphDecodeErr::new(glyph, err));
     }
 
     if size_of::<T>() > 4 {
       if let Err(err) = bounds_check(glyph.content_padded(), size_of::<T>()) {
-        return Err(FromGlyphErr::new(glyph, err.into()));
+        return Err(GlyphDecodeErr::new(glyph, err.into()));
       }
 
       Ok(Self(glyph, PhantomData::default()))

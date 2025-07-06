@@ -9,7 +9,7 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ToGlyph,
+  EncodedGlyph, FromGlyph, GlyphDecodeErr, GlyphErr, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -219,7 +219,7 @@ impl<G: Deref<Target = Glyph>> HashGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for HashGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     /* SAFETY: We're going to guarantee that contents contain at least a header,
                to avoid duplicate bounds checks.
     */
@@ -230,7 +230,7 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for HashGlyph<G> {
     let cursor = &mut 0;
     let _header = match CryptoHashHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
     let digest_bytes = &content[*cursor..] as *const [u8];
     Ok(Self(glyph, digest_bytes))
@@ -625,7 +625,7 @@ macro_rules! hash_impls {
     }
 
     impl<G: Deref<Target = $crate::Glyph>> $crate::FromGlyph<G> for $hash_name {
-      fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
+      fn from_glyph(glyph: G) -> Result<Self, $crate::GlyphDecodeErr<G>> {
         let hg = match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.deref())
         {
           Ok(hg) => hg,

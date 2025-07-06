@@ -226,7 +226,7 @@ where
   // This is a `T` and not a `&T` because we want to be able to have something
   // like a `VectorGlyph` take a `HashGlyph` in which case the `VectorGlyph`'s
   // lifetime won't be bound to some other object.
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>>;
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>>;
 }
 
 /// Types that can be encoded into glyphs.
@@ -1490,9 +1490,12 @@ pub enum GlyphErr {
 }
 
 impl GlyphErr {
-  /// Translates into a [`FromGlyphErr`] during decoding.
-  pub fn into_fge<G: Deref<Target = Glyph>>(self, glyph: G) -> FromGlyphErr<G> {
-    FromGlyphErr::new(glyph, self)
+  /// Translates into a [`GlyphDecodeErr`] during decoding.
+  pub fn into_fge<G: Deref<Target = Glyph>>(
+    self,
+    glyph: G,
+  ) -> GlyphDecodeErr<G> {
+    GlyphDecodeErr::new(glyph, self)
   }
 }
 
@@ -1546,8 +1549,8 @@ impl From<AllocError> for GlyphErr {
   }
 }
 
-impl<G: Deref<Target = Glyph>> From<FromGlyphErr<G>> for GlyphErr {
-  fn from(value: FromGlyphErr<G>) -> Self {
+impl<G: Deref<Target = Glyph>> From<GlyphDecodeErr<G>> for GlyphErr {
+  fn from(value: GlyphDecodeErr<G>) -> Self {
     // Just drops the original glyph.
     value.1
   }
@@ -1732,13 +1735,14 @@ impl ToGlyph for Glyph {
 
 /// Errors when decoding glyphs
 ///
-/// Includes the original glyph which could not be decoded.
+/// Includes the original glyph which could not be decoded and the [`GlyphErr`]
+/// cause.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct FromGlyphErr<G: Deref<Target = Glyph>>(G, GlyphErr);
-impl<G: Deref<Target = Glyph>> FromGlyphErr<G> {
+pub struct GlyphDecodeErr<G: Deref<Target = Glyph>>(G, GlyphErr);
+impl<G: Deref<Target = Glyph>> GlyphDecodeErr<G> {
   /// Creates a new `FromGlyphErr` instance with the given glyph and error.
   pub fn new(glyph: G, err: GlyphErr) -> Self {
-    FromGlyphErr(glyph, err)
+    GlyphDecodeErr(glyph, err)
   }
 
   /// Returns a reference to the inner glyph.
@@ -1757,7 +1761,7 @@ impl<G: Deref<Target = Glyph>> FromGlyphErr<G> {
   }
 }
 
-impl<G: Deref<Target = Glyph>> Debug for FromGlyphErr<G> {
+impl<G: Deref<Target = Glyph>> Debug for GlyphDecodeErr<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     Debug::fmt(&self.1, f)
   }

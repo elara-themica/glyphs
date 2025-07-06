@@ -1,8 +1,8 @@
 //! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
 
 use crate::{
-  dynamic::DynGlyph, glyph_close, EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
-  GlyphErr, GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
+  dynamic::DynGlyph, glyph_close, EncodedGlyph, FromGlyph, Glyph,
+  GlyphDecodeErr, GlyphErr, GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -317,7 +317,7 @@ impl<T> FromGlyph<T> for TupleGlyph<T>
 where
   T: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
+  fn from_glyph(source: T) -> Result<Self, GlyphDecodeErr<T>> {
     match source.header().confirm_type(GlyphType::Tuple) {
       Ok(_) => Ok(TupleGlyph(source)),
       Err(err) => Err(err.into_fge(source)),
@@ -414,7 +414,7 @@ where
   A: FromGlyph<&'a Glyph>,
   B: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
@@ -443,7 +443,7 @@ where
   B: FromGlyph<&'a Glyph>,
   C: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
@@ -478,7 +478,7 @@ where
   C: FromGlyph<&'a Glyph>,
   D: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
@@ -519,7 +519,7 @@ where
   D: FromGlyph<&'a Glyph>,
   E: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
@@ -566,7 +566,7 @@ where
   E: FromGlyph<&'a Glyph>,
   F: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };

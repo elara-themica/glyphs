@@ -53,7 +53,7 @@ pub(crate) mod de;
 #[warn(missing_docs)]
 pub(crate) mod ser;
 
-use crate::{zerocopy::BufferErr, FromGlyphErr, Glyph, GlyphErr, GlyphType};
+use crate::{zerocopy::BufferErr, Glyph, GlyphDecodeErr, GlyphErr, GlyphType};
 use alloc::string::{String, ToString};
 use core::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
@@ -186,8 +186,8 @@ impl From<BufferErr> for SerdeGlyphErr {
   }
 }
 
-impl<G: Deref<Target = Glyph>> From<FromGlyphErr<G>> for SerdeGlyphErr {
-  fn from(value: FromGlyphErr<G>) -> Self {
+impl<G: Deref<Target = Glyph>> From<GlyphDecodeErr<G>> for SerdeGlyphErr {
+  fn from(value: GlyphDecodeErr<G>) -> Self {
     let (_glyph, err) = value.into_parts();
     err.into()
   }

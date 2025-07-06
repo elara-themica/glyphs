@@ -19,7 +19,7 @@ use crate::{
     round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
     I16, I32, I64, U128, U16, U32, U64,
   },
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 #[cfg(feature = "alloc")]
@@ -217,7 +217,7 @@ impl<G> FromGlyph<G> for VecGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
       return Err(err.into_fge(source));
     }
@@ -225,12 +225,12 @@ where
     let mut cursor = 0;
     let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
       Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let offsets =
       match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
         Ok(offsets) => offsets,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
     let offsets = NonNull::from(offsets);
     Ok(Self {
@@ -724,7 +724,7 @@ impl<G> FromGlyph<G> for BasicVecGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = glyph.header().confirm_type(GlyphType::VecBasic) {
       return Err(err.into_fge(glyph));
     }
@@ -732,12 +732,12 @@ where
     let content = glyph.content();
     let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
     let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
     {
       Ok(tensor_lengths) => tensor_lengths,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
     let tensor_lengths = NonNull::from(tensor_lengths);
     *cursor = round_to_word(*cursor);

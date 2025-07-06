@@ -4,7 +4,7 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close,
   zerocopy::{ZeroCopy, U16},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
@@ -346,30 +346,30 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DocGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DocGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DocGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Document) {
-      return Err(FromGlyphErr::new(source, err.into()));
+      return Err(GlyphDecodeErr::new(source, err.into()));
     }
     let content = source.content_padded();
     let cursor = &mut 0;
 
     let dgh = match DocGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let nov = u16::from(dgh.num_old_versions) as usize;
     let ov = match DocVer::bbrfs(content, cursor, nov) {
       Ok(versions) => versions,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let id_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let id = id_glyph as *const Glyph;
     let body_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let body = body_glyph as *const Glyph;
 

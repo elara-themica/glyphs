@@ -6,7 +6,7 @@ use crate::{
   },
   util::debug::ShortHexDump,
   zerocopy::{round_to_word, ZeroCopy, U16},
-  EncodedGlyph, FromGlyphErr, GlyphSorting,
+  EncodedGlyph, GlyphDecodeErr, GlyphSorting,
 };
 use argon2::{Algorithm, Version};
 use core::{
@@ -450,7 +450,7 @@ impl<G: Deref<Target = Glyph>> PasswordGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for PasswordGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
     /*  SAFETY:  We guarantee the following:
 
        - The glyph contains a full `PasswordGlyphHeader`.
@@ -466,17 +466,17 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for PasswordGlyph<G> {
     let mut cursor = 0;
     let pw_header = match PasswordGlyphHeader::bbrd(content, &mut cursor) {
       Ok(pw_header) => pw_header,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
     let salt_len = pw_header.salt_len();
     let digest_len = pw_header.digest_len();
     let salt = match u8::bbrfs(content, &mut cursor, salt_len) {
       Ok(salt) => salt,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
     let digest = match u8::bbrfs(content, &mut cursor, digest_len) {
       Ok(digest) => digest,
-      Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
     };
 
     match pw_header.algorithm() {

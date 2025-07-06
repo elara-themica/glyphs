@@ -355,17 +355,17 @@ macro_rules! gen_prim_from_glyph {
 
   ($target_type:ident, try_conv_glyph, $glyph_type:ident, $conv_fn:expr) => {
     impl<G: Deref<Target = Glyph>> FromGlyph<G> for $target_type {
-      fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+      fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
         let mediating = match $glyph_type::from_glyph(glyph.deref()) {
           Ok(mediating) => mediating,
           Err(err) => {
             let (_glyph, err) = err.into_parts();
-            return Err(FromGlyphErr::new(glyph, err.into()));
+            return Err(GlyphDecodeErr::new(glyph, err.into()));
           },
         };
         let val = match ($conv_fn)(mediating) {
           Ok(val) => val,
-          Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+          Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
         };
         Ok(val)
       }
@@ -374,7 +374,7 @@ macro_rules! gen_prim_from_glyph {
 
   ($target_type:ident, conv_glyph, $glyph_type:ident, $conv_fn:expr) => {
     impl<G: Deref<Target = Glyph>> FromGlyph<G> for $target_type {
-      fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+      fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
         let mediating = $glyph_type::<G>::from_glyph(glyph)?;
         let val = ($conv_fn)(mediating);
         Ok(val)
@@ -384,7 +384,7 @@ macro_rules! gen_prim_from_glyph {
 
   ($target_type:ident, conv, $glyph_type:ident, $conv_fn:expr) => {
     impl<G: Deref<Target = Glyph>> FromGlyph<G> for $target_type {
-      fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+      fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
         let mediating = $glyph_type::from_glyph(glyph)?;
         let val = ($conv_fn)(mediating);
         Ok(val)
@@ -512,14 +512,14 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
     impl<'a> $crate::FromGlyph<&'a $crate::Glyph> for &'a [$zc_type] {
       fn from_glyph(
         glyph: &'a $crate::Glyph,
-      ) -> Result<Self, $crate::FromGlyphErr<&'a $crate::Glyph>> {
+      ) -> Result<Self, $crate::GlyphDecodeErr<&'a $crate::Glyph>> {
         let bvg =
           $crate::collections::BasicVecGlyph::<&'a $crate::Glyph>::from_glyph(
             glyph,
           )?;
         let slice = match bvg.get_parsed::<$zc_type>() {
           Ok(slice) => slice,
-          Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+          Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
         };
         Ok(slice)
       }
@@ -530,14 +530,14 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
     impl<'a> $crate::FromGlyph<&'a $crate::Glyph> for &'a [$zc_type] {
       fn from_glyph(
         glyph: &'a $crate::Glyph,
-      ) -> Result<Self, $crate::FromGlyphErr<&'a $crate::Glyph>> {
+      ) -> Result<Self, $crate::GlyphDecodeErr<&'a $crate::Glyph>> {
         let bvg =
           $crate::collections::BasicVecGlyph::<&'a $crate::Glyph>::from_glyph(
             glyph,
           )?;
         let slice = match bvg.get_parsed::<$zc_type>() {
           Ok(slice) => slice,
-          Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+          Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
         };
         Ok(slice)
       }
@@ -547,14 +547,14 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
     impl<'a> $crate::FromGlyph<&'a $crate::Glyph> for &'a [$native_type] {
       fn from_glyph(
         glyph: &'a $crate::Glyph,
-      ) -> Result<Self, $crate::FromGlyphErr<&'a $crate::Glyph>> {
+      ) -> Result<Self, $crate::GlyphDecodeErr<&'a $crate::Glyph>> {
         let bvg =
           $crate::collections::BasicVecGlyph::<&'a $crate::Glyph>::from_glyph(
             glyph,
           )?;
         let as_zc_slice = match bvg.get_parsed::<$zc_type>() {
           Ok(slice) => slice,
-          Err(err) => return Err(FromGlyphErr::new(glyph, err.into())),
+          Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
         };
         if as_zc_slice.as_ptr().is_aligned() {
           unsafe {
@@ -563,7 +563,7 @@ macro_rules! gen_prim_slice_from_glyph_parsed {
             ))
           }
         } else {
-          Err($crate::FromGlyphErr::new(
+          Err($crate::GlyphDecodeErr::new(
             glyph,
             $crate::GlyphErr::UnalignedSlice {
               needed: align_of::<$native_type>(),

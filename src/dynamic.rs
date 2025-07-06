@@ -7,7 +7,7 @@ use crate::{
   crypto::{HashGlyph, PasswordGlyph},
   misc::{DateTimeGlyph, UuidGlyph},
   structured::{DocGlyph, ObjGlyph},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphSorting,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphSorting,
   GlyphType,
 };
 use core::{
@@ -304,7 +304,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DynGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DynGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DynGlyph<G> {
-  fn from_glyph(src: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(src: G) -> Result<Self, GlyphDecodeErr<G>> {
     Ok(DynGlyph::new(src))
   }
 }

@@ -15,7 +15,7 @@ use crate::{
   glyph_close,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::collections::BTreeMap;
@@ -328,7 +328,7 @@ impl<'a> ObjGlyph<&'a Glyph> {
   /// This function retrieves the field name and value at the specified `index`.
   /// If the object has field names, the returned tuple will include the field
   /// name as `Some(&str)`; otherwise, it will be `None`. The field value is
-  /// returned as a [`ParsedGlyph`].
+  /// returned as a `&`[`Glyph`].
   ///
   /// # Arguments
   ///
@@ -375,7 +375,7 @@ impl<'a> ObjGlyph<&'a Glyph> {
   ///
   /// This function creates an iterator that traverses all the fields in the object
   /// and yields a tuple consisting of an optional field name and the corresponding
-  /// [`ParsedGlyph`] value.
+  /// [`Glyph`] value.
   ///
   /// # Returns
   ///
@@ -578,7 +578,7 @@ impl<B> FromGlyph<B> for ObjGlyph<B>
 where
   B: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
+  fn from_glyph(source: B) -> Result<Self, GlyphDecodeErr<B>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Object) {
       return Err(err.into_fge(source));
     }
@@ -587,12 +587,12 @@ where
 
     let header = match ObjGlyphHeader::bbrd(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let type_hash = if header.has_type_hash() {
       let hash = match GlyphHash::bbrf(content, cursor) {
         Ok(hash) => hash,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       Some(NonNull::from(hash))
     } else {
@@ -601,16 +601,16 @@ where
     let type_name = if header.has_type_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
         Ok(n) => n,
-        Err(e) => return Err(FromGlyphErr::new(source, e.into())),
+        Err(e) => return Err(GlyphDecodeErr::new(source, e.into())),
       };
       Some(NonNull::from(name))
     } else {
@@ -619,7 +619,7 @@ where
     let variant_id = if header.has_variant_id() {
       let id = match U64::bbrd(content, cursor) {
         Ok(value) => value,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       Some(id.get())
     } else {
@@ -628,16 +628,16 @@ where
     let variant_name = if header.has_variant_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
         Ok(n) => n,
-        Err(e) => return Err(FromGlyphErr::new(source, e.into())),
+        Err(e) => return Err(GlyphDecodeErr::new(source, e.into())),
       };
       Some(NonNull::from(name))
     } else {
@@ -648,7 +648,7 @@ where
       match GlyphOffset::bbrfs(content, cursor, header.num_fields.get().into())
       {
         Ok(offsets) => offsets,
-        Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
       };
     let field_offsets = NonNull::from(field_offsets);
 

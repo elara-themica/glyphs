@@ -21,7 +21,7 @@ mod unit;
 pub use unit::*;
 
 mod zc;
-use crate::FromGlyphErr;
+use crate::GlyphDecodeErr;
 pub use zc::*;
 
 impl<T> ToGlyph for Option<T>
@@ -52,14 +52,14 @@ where
   B: Deref<Target = Glyph>,
   T: FromGlyph<B>,
 {
-  fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
+  fn from_glyph(source: B) -> Result<Self, GlyphDecodeErr<B>> {
     let type_id = source.header().glyph_type();
     if type_id == GlyphType::Unit {
       let unit = match UnitGlyph::from_glyph(source.deref()) {
         Ok(unit) => unit,
         Err(err) => {
           let (_glyph, err) = err.into_parts();
-          return Err(FromGlyphErr::new(source, err));
+          return Err(GlyphDecodeErr::new(source, err));
         },
       };
       let unit_type_id = *unit.type_id();
@@ -68,7 +68,10 @@ where
       } else {
         Err(err!(
           debug,
-          FromGlyphErr::new(source, GlyphErr::UnexpectedUnitType(unit_type_id))
+          GlyphDecodeErr::new(
+            source,
+            GlyphErr::UnexpectedUnitType(unit_type_id)
+          )
         ))
       }
     } else {

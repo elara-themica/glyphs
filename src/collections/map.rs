@@ -5,7 +5,7 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close,
   zerocopy::{round_to_word, ZeroCopy, U32},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::collections::BTreeMap;
@@ -205,7 +205,7 @@ impl<G> FromGlyph<G> for MapGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
+  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Map) {
       return Err(err.into_fge(source));
     }
@@ -215,11 +215,11 @@ where
 
     let mgh = match MapGlyphHeader::bbrf(content, cursor) {
       Ok(mgh) => mgh,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
     let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
       Ok(offsets) => offsets,
-      Err(err) => return Err(FromGlyphErr::new(source, err.into())),
+      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
     };
 
     // Keep internal self references
