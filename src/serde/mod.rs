@@ -56,6 +56,7 @@ pub(crate) mod ser;
 use crate::{zerocopy::BufferErr, FromGlyphErr, Glyph, GlyphErr, GlyphType};
 use alloc::string::{String, ToString};
 use core::fmt::{Debug, Display, Formatter};
+use std::ops::Deref;
 
 /// The error type returned when (de-)serializing types through `serde`.
 ///
@@ -127,6 +128,7 @@ pub enum SerdeGlyphErr {
   /// An internal error--some sections of code should never be called.
   Unreachable,
   InvalidSourceGlyphTypeEnum(GlyphType),
+  AllocError,
 }
 
 impl Display for SerdeGlyphErr {
@@ -172,13 +174,19 @@ impl From<GlyphErr> for SerdeGlyphErr {
   }
 }
 
+impl From<alloc::alloc::AllocError> for SerdeGlyphErr {
+  fn from(_value: alloc::alloc::AllocError) -> Self {
+    SerdeGlyphErr::AllocError
+  }
+}
+
 impl From<BufferErr> for SerdeGlyphErr {
   fn from(value: BufferErr) -> Self {
     Self::BufferErr(value)
   }
 }
 
-impl<G: Glyph> From<FromGlyphErr<G>> for SerdeGlyphErr {
+impl<G: Deref<Target = Glyph>> From<FromGlyphErr<G>> for SerdeGlyphErr {
   fn from(value: FromGlyphErr<G>) -> Self {
     let (_glyph, err) = value.into_parts();
     err.into()
@@ -190,7 +198,6 @@ mod test {
 
   use super::*;
   use crate::{
-    glyph_new,
     serde::{de::glyph_serde_deserialize, ser::glyph_new_serde},
     structured::ObjGlyph,
     util::init_test_logger,
@@ -207,9 +214,9 @@ mod test {
     fn compare_primitives<T: ToGlyph + Serialize>(
       val: T,
     ) -> Result<(), SerdeGlyphErr> {
-      let native = glyph_new(&val)?;
+      let native = Glyph::new(&val)?;
       let serde = glyph_new_serde(&val)?;
-      assert_eq!(&native.as_ref(), &serde.as_ref());
+      assert_eq!(&native.deref().as_ref(), &serde.deref().as_ref());
       Ok(())
     }
 
@@ -237,13 +244,16 @@ mod test {
   #[test]
   fn serde_basic_tuple() -> Result<(), SerdeGlyphErr> {
     let src = (0xDEAD_BEEFu32, '🦋', "ABC");
-    let direct_glyph = glyph_new(&src)?;
+    let direct_glyph = Glyph::new(&src)?;
     let serde_glyph = glyph_new_serde(&src)?;
-    assert_eq!(&direct_glyph.as_ref(), &serde_glyph.as_ref());
+    assert_eq!(
+      &direct_glyph.deref().as_ref(),
+      &serde_glyph.deref().as_ref()
+    );
 
     // Test serde decoding
     let (a, b, c) =
-      glyph_serde_deserialize::<(u32, char, &str)>(serde_glyph.borrow())?;
+      glyph_serde_deserialize::<(u32, char, &str)>(serde_glyph.deref())?;
     assert_eq!((a, b, c), src);
 
     Ok(())
@@ -257,18 +267,18 @@ mod test {
     let s = vec!["itsy", "bitsy", "spider"];
 
     // Now actually encode something.
-    let native_glyph = glyph_new(&s).unwrap();
+    let native_glyph = Glyph::new(&s).unwrap();
     let serde_glyph = glyph_new_serde(&s).unwrap();
     dbg!(&native_glyph);
     dbg!(&serde_glyph);
-    assert_eq!(native_glyph.as_ref(), serde_glyph.as_ref());
+    assert_eq!(native_glyph.deref().as_ref(), serde_glyph.deref().as_ref());
 
     //== Decoding ==/
     // This section is complex because we should be able to correctly decode
     // both standard VecGlyphs as well as the specialized (e.g. VecU32Glyph)
     // glyphs.
     let decoded =
-      glyph_serde_deserialize::<Vec<&str>>(serde_glyph.borrow()).unwrap();
+      glyph_serde_deserialize::<Vec<&str>>(serde_glyph.deref()).unwrap();
     assert_eq!(&s, &decoded);
 
     // Decoding specialized vectors of primitives.
@@ -276,11 +286,11 @@ mod test {
     where
       T: PartialEq + Debug + ToGlyph + Serialize + DeserializeOwned,
     {
-      let native = glyph_new(&src).unwrap();
+      let native = Glyph::new(&src).unwrap();
       let serde = glyph_new_serde(&src).unwrap();
-      let decoded = glyph_serde_deserialize::<Vec<T>>(native.borrow()).unwrap();
+      let decoded = glyph_serde_deserialize::<Vec<T>>(native.deref()).unwrap();
       assert_eq!(&decoded, &src);
-      let decoded = glyph_serde_deserialize::<Vec<T>>(serde.borrow()).unwrap();
+      let decoded = glyph_serde_deserialize::<Vec<T>>(serde.deref()).unwrap();
       assert_eq!(&decoded, &src);
       Ok(())
     }
@@ -306,13 +316,13 @@ mod test {
     map.insert(2, 4);
     map.insert(3, 8);
 
-    let native = glyph_new(&map)?;
+    let native = Glyph::new(&map)?;
     let serde = glyph_new_serde(&map)?;
 
     dbg!(&native, &serde);
     assert_eq!(native.content(), serde.content());
 
-    let decoded: BTreeMap<i32, i32> = glyph_serde_deserialize(native.borrow())?;
+    let decoded: BTreeMap<i32, i32> = glyph_serde_deserialize(native.deref())?;
     assert_eq!(&map, &decoded);
 
     Ok(())
@@ -330,16 +340,16 @@ mod test {
     // serialize an arbitrary test structure.  So we'll just look at the
     // binary format for now.
     let unit_struct = glyph_new_serde(&Empty)?;
-    dbg!(unit_struct.borrow());
-    let obj_glyph = ObjGlyph::from_glyph(unit_struct.borrow())?;
+    dbg!(unit_struct.deref());
+    let obj_glyph = ObjGlyph::from_glyph(unit_struct.deref())?;
     dbg!(&obj_glyph);
 
     // Nothing to compare, but check that deserialization passes type checks.
-    let _decoded: Empty = glyph_serde_deserialize(unit_struct.borrow())?;
+    let _decoded: Empty = glyph_serde_deserialize(unit_struct.deref())?;
 
     // When deserializing an object with a different name, we should get
     // an error.
-    assert!(glyph_serde_deserialize::<AlsoEmpty>(unit_struct.borrow()).is_err());
+    assert!(glyph_serde_deserialize::<AlsoEmpty>(unit_struct.deref()).is_err());
     Ok(())
   }
 
@@ -352,10 +362,10 @@ mod test {
     let ntsg = glyph_new_serde(&nts)?;
     dbg!(&ntsg);
 
-    let native_decode = u32::from_glyph(ntsg.borrow())?;
+    let native_decode = u32::from_glyph(ntsg.deref())?;
     assert_eq!(native_decode, 42);
 
-    let serde_decode = glyph_serde_deserialize::<NewTypeStruct>(ntsg.borrow())?;
+    let serde_decode = glyph_serde_deserialize::<NewTypeStruct>(ntsg.deref())?;
     assert_eq!(nts, serde_decode);
 
     Ok(())
@@ -372,7 +382,7 @@ mod test {
     let a = TupleStruct(5, (), "foo");
     let encoded = glyph_new_serde(&a).unwrap();
     // std::println!("{encoded:#?}");
-    let b: TupleStruct = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: TupleStruct = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
     let decoded = ObjGlyph::from_glyph(encoded).unwrap();
     // std::println!("{decoded:#?}");
@@ -395,7 +405,7 @@ mod test {
     };
     let encoded = glyph_new_serde(&a).unwrap();
     std::println!("{encoded:#?}");
-    let b: Struct = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: Struct = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
     let decoded = ObjGlyph::from_glyph(encoded).unwrap();
     std::println!("{decoded:#?}");
@@ -414,19 +424,19 @@ mod test {
     let a = Enum::Unit;
     let encoded = glyph_new_serde(&a).unwrap();
     // std::println!("{encoded:#?}");
-    let b: Enum = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: Enum = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
 
     let a = Enum::NewType(42);
     let encoded = glyph_new_serde(&a).unwrap();
     // std::println!("{encoded:#?}");
-    let b: Enum = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: Enum = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
 
     let a = Enum::Tuple(1, 2, 3);
     let encoded = glyph_new_serde(&a).unwrap();
     // std::println!("{encoded:#?}");
-    let b: Enum = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: Enum = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
 
     let a = Enum::Struct {
@@ -435,7 +445,7 @@ mod test {
     };
     let encoded = glyph_new_serde(&a).unwrap();
     // std::println!("{encoded:#?}");
-    let b: Enum = glyph_serde_deserialize(encoded.borrow()).unwrap();
+    let b: Enum = glyph_serde_deserialize(encoded.deref()).unwrap();
     assert_eq!(a, b);
   }
 }

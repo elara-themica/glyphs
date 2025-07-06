@@ -1,7 +1,7 @@
 use crate::{
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16, U32},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphType, ParsedGlyph, ToGlyph,
+  GlyphType, ToGlyph,
 };
 use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
@@ -24,11 +24,11 @@ pub(crate) static COLLATOR: StringCollator =
 /// A glyph containing a valid UTF-8 string.
 pub struct StringGlyph<G>(G)
 where
-  G: Glyph;
+  G: Deref<Target = Glyph>;
 
 impl<G> StringGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   /// The language in which the string is written.
   pub fn language(&self) -> Language {
@@ -54,7 +54,7 @@ where
 
 impl<G> Debug for StringGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
     write!(f, "StringGlyph(\"{}\")", self.deref())
@@ -63,7 +63,7 @@ where
 
 impl<G> Deref for StringGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   type Target = str;
 
@@ -81,36 +81,37 @@ where
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for StringGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for StringGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0.deref()
   }
 }
 
-impl<G: Glyph> Eq for StringGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for StringGlyph<G> {}
 
 impl<G> FromGlyph<G> for StringGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::String) {
-      return Err(err.into_fge(source));
-    }
+    let decode_result = (|| {
+      source.header().confirm_type(GlyphType::String)?;
+      from_utf8(source.content())?;
+      Result::<_, GlyphErr>::Ok(())
+    })();
 
-    // Check for valid UTF-8 string.
-    if let Err(err) = from_utf8(source.content()) {
-      return Err(FromGlyphErr::new(source, err.into()));
+    match decode_result {
+      Ok(()) => Ok(StringGlyph(source)),
+      Err(err) => Err(FromGlyphErr::new(source, err)),
     }
-    Ok(StringGlyph(source))
   }
 }
 
-impl<G: Glyph> Ord for StringGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for StringGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self
       .language()
@@ -125,13 +126,13 @@ impl<G: Glyph> Ord for StringGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for StringGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for StringGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.0.content() == other.0.content()
   }
 }
 
-impl<G: Glyph> PartialOrd for StringGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for StringGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -402,65 +403,83 @@ impl StringMetadata {
 unsafe impl ZeroCopy for StringMetadata {}
 
 /// A glyph containing a Unicode character `char`.
-pub struct CharGlyph<G: Glyph>(G);
+pub struct CharGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> CharGlyph<G> {
-  /// The `char` contained by this glyph.
-  pub fn get(&self) -> char {
+impl<G: Deref<Target = Glyph>> CharGlyph<G> {
+  /// The code point encoded by this `CharGlyph`.
+  pub fn code_point(&self) -> u32 {
     let bytes = self.0.header().short_content();
-    // SAFETY: A valid value was confirmed when the CharGlyph was created.
-    unsafe { char::from_u32_unchecked(u32::from_le_bytes(*bytes)) }
+    u32::from_le_bytes(*bytes)
   }
 }
 
-impl<G: Glyph> Debug for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> CharGlyph<G> {
+  /// The `char` contained by this glyph.
+  // TODO: Docs
+  pub fn get(&self) -> Result<char, GlyphErr> {
+    let bytes = self.0.header().short_content();
+    let code_point = u32::from_le_bytes(*bytes);
+    match char::from_u32(code_point) {
+      None => Err(GlyphErr::UnicodeCharIllegalCodepoint(code_point)),
+      Some(c) => Ok(c),
+    }
+  }
+}
+
+impl<G: Deref<Target = Glyph>> Debug for CharGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "CharGlyph({:?})", self.get())
+    match self.get() {
+      Ok(c) => write!(f, "CharGlyph({:?})", &c),
+      Err(err) => write!(f, "CharGlyph({:?})", &err),
+    }
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for CharGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
-      return Err(err.into_fge(source));
-    }
-    // Check for valid unicode char.
-    unsafe {
-      if let Err(err) = <char>::from_glyph(source.borrow().detach()) {
-        return Err(FromGlyphErr::new(source, err.into()));
+    let decode_result = (|| {
+      source.header().confirm_type(GlyphType::UnicodeChar)?;
+      if !source.header().is_short() {
+        Err(GlyphErr::UnicodeCharInvalidGlyphLen(source.as_ref().len()))
+      } else {
+        Result::<(), GlyphErr>::Ok(())
       }
+    })();
+
+    match decode_result {
+      Ok(()) => Ok(CharGlyph(source)),
+      Err(err) => Err(FromGlyphErr::new(source, err)),
     }
-    Ok(CharGlyph(source))
   }
 }
 
-impl<G: Glyph> PartialEq for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for CharGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.get() == other.get()
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for CharGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0.deref()
   }
 }
 
-impl<G: Glyph> Eq for CharGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for CharGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for CharGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for CharGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for CharGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
-    self.get().cmp(&other.get())
+    self.code_point().cmp(&other.code_point())
   }
 }
 
@@ -496,7 +515,7 @@ impl StringCollator {
 
 // impl<G> FromGlyph<G> for char
 // where
-//   G: Glyph,
+//   G: Deref<Target = Glyph>,
 // {
 //   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
 //     if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
@@ -514,14 +533,14 @@ impl StringCollator {
 //   }
 // }
 
-impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+impl<'a> FromGlyph<&'a Glyph> for &'a str {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+    // TODO: Use closure to consolidate return of FromGlyphErr
+
     if let Err(err) = source.header().confirm_type(GlyphType::String) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err.into()));
     }
-    match source.content_parsed().get(2..) {
+    match source.content().get(2..) {
       None => Ok(""),
       Some(bytes) => match from_utf8(bytes) {
         Ok(valid_str) => Ok(valid_str),
@@ -534,10 +553,10 @@ impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a str {
 #[cfg(feature = "alloc")]
 impl<G> FromGlyph<G> for String
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    match <&str>::from_glyph(source.borrow()) {
+    match <&str>::from_glyph(source.deref()) {
       Ok(as_str) => Ok(String::from(as_str)),
       Err(err) => {
         let err = err.into_parts().1;
@@ -549,11 +568,11 @@ where
 
 impl<G> FromGlyph<G> for char
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err.into()));
     }
     let value: u32 =
       match U32::bbrd(&source.header().short_content()[..], &mut 0) {

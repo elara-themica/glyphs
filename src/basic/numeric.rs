@@ -1,13 +1,13 @@
 use crate::{
   zerocopy::{ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr,
-  GlyphType::{Float, SignedInt, UnsignedInt},
-  ParsedGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphType,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
 };
+use num_bigint::{BigInt, BigUint, Sign};
+use std::ops::Deref;
 
 /// Signed integers
 ///
@@ -16,11 +16,11 @@ use core::{
 ///
 ///
 /// ```
-/// use glyphs::{glyph_new, FromGlyph};
+/// use glyphs::{Glyph, FromGlyph};
 ///
 /// // 32-bit encoding and decoding
-/// let g = glyph_new(42i32).unwrap();
-/// assert_eq!(g.as_ref().len(), 8);
+/// let g = Glyph::new(42i32).unwrap();
+/// assert_eq!(g.glyph_len(), 8);
 /// let decoded = i32::from_glyph(g).unwrap();
 /// assert_eq!(decoded, 42i32);
 ///
@@ -28,70 +28,115 @@ use core::{
 ///
 /// ```
 #[derive(Copy, Clone)]
-pub struct IntGlyph<G: Glyph>(G, i128);
+pub struct IntGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> IntGlyph<G> {
-  /// Returns the value in the glyph.
-  pub fn get(&self) -> i128 {
-    self.1
+impl<G: Deref<Target = Glyph>> IntGlyph<G> {
+  /// Returns the value as an i32 or an overflow error.
+  pub fn get_i32(&self) -> Result<i32, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(i32::from_le_bytes(*self.0.header().short_content()))
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => i32::try_from(I64::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        16 => i32::try_from(I128::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        _ => {
+          let bi = BigInt::from_signed_bytes_le(buf);
+          i32::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an i64 or an overflow error.
+  pub fn get_i64(&self) -> Result<i64, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(i32::from_le_bytes(*self.0.header().short_content()) as i64)
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => Ok(I64::bbrf(buf, &mut 0)?.get()),
+        16 => i64::try_from(I128::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        _ => {
+          let bi = BigInt::from_signed_bytes_le(buf);
+          i64::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an i128 or an overflow error.
+  pub fn get_i128(&self) -> Result<i128, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(i32::from_le_bytes(*self.0.header().short_content()) as i128)
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => Ok(I64::bbrf(buf, &mut 0)?.get() as i128),
+        16 => Ok(I128::bbrf(buf, &mut 0)?.get()),
+        _ => {
+          let bi = BigInt::from_signed_bytes_le(buf);
+          i128::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an arbitrarily large integer
+  pub fn get_big_int(&self) -> BigInt {
+    if self.0.header().is_short() {
+      BigInt::from_signed_bytes_le(self.0.header().short_content())
+    } else {
+      let buf = self.0.content_padded();
+      BigInt::from_signed_bytes_le(buf)
+    }
   }
 }
 
-impl<G: Glyph> Debug for IntGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "IntGlyph({})", self.1)
-  }
-}
-
-impl<G: Glyph> EncodedGlyph<G> for IntGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for IntGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
-impl<G: Glyph> Eq for IntGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for IntGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for IntGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for IntGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "IntGlyph({:?})", self.get_big_int())
+  }
+}
+
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for IntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(SignedInt) {
-      return Err(err.into_fge(glyph));
+    match glyph.header().confirm_type(GlyphType::SignedInt) {
+      Ok(()) => Ok(IntGlyph(glyph)),
+      Err(err) => Err(FromGlyphErr::new(glyph, err)),
     }
-    let val = if glyph.header().is_short() {
-      i32::from_le_bytes(*glyph.header().short_content()) as i128
-    } else {
-      let buf = glyph.content_padded();
-      // SAFETY: Bounds checks are redundant with switching on length
-      unsafe {
-        if buf.len() >= size_of::<I128>() {
-          I128::bbrf_u(buf, &mut 0).get()
-        } else if buf.len() >= size_of::<I64>() {
-          I64::bbrf_u(buf, &mut 0).get() as i128
-        } else {
-          0
-        }
-      }
-    };
-    Ok(Self(glyph, val))
   }
 }
 
-impl<G: Glyph> Ord for IntGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for IntGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
-    self.1.cmp(&other.1)
+    // TODO-OPT: Decoding arbitrarily sized `BigInt`s for ordering requires allocation.
+    self.get_big_int().cmp(&other.get_big_int())
   }
 }
 
-impl<G: Glyph> PartialEq for IntGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for IntGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
-    self.1 == other.1
+    self.0.content_padded().eq(other.0.content_padded())
   }
 }
 
-impl<G: Glyph> PartialOrd for IntGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for IntGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -102,72 +147,127 @@ impl<G: Glyph> PartialOrd for IntGlyph<G> {
 /// Currently, values up to a `u128` are supported, which is what will be
 /// returned by [`Deref`].  However, note that there are [`TryFrom`]
 /// implementations for the smaller unsigned integer types.
-pub struct UIntGlyph<G: Glyph>(G, u128);
+pub struct UIntGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> UIntGlyph<G> {
-  /// Gets the value in the glyph.
-  pub fn get(&self) -> u128 {
-    self.1
+impl<G: Deref<Target = Glyph>> UIntGlyph<G> {
+  /// Returns the value as an i32 or an overflow error.
+  pub fn get_u32(&self) -> Result<u32, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(u32::from_le_bytes(*self.0.header().short_content()))
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => u32::try_from(U64::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        16 => u32::try_from(U128::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        _ => {
+          let bi = BigUint::from_bytes_le(buf);
+          u32::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an i64 or an overflow error.
+  pub fn get_u64(&self) -> Result<u64, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(u32::from_le_bytes(*self.0.header().short_content()) as u64)
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => Ok(U64::bbrf(buf, &mut 0)?.get()),
+        16 => u64::try_from(U128::bbrf(buf, &mut 0)?.get())
+          .map_err(|_err| GlyphErr::IntConversionOverflow),
+        _ => {
+          let bi = BigUint::from_bytes_le(buf);
+          u64::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an i128 or an overflow error.
+  pub fn get_u128(&self) -> Result<u128, GlyphErr> {
+    if self.0.header().is_short() {
+      Ok(u32::from_le_bytes(*self.0.header().short_content()) as u128)
+    } else {
+      let buf = self.0.content_padded();
+      match buf.len() {
+        8 => Ok(U64::bbrf(buf, &mut 0)?.get() as u128),
+        16 => Ok(U128::bbrf(buf, &mut 0)?.get()),
+        _ => {
+          let bi = BigUint::from_bytes_le(buf);
+          u128::try_from(bi).map_err(|_err| GlyphErr::IntConversionOverflow)
+        },
+      }
+    }
+  }
+
+  /// Returns the value as an arbitrarily large integer
+  pub fn get_big_uint(&self) -> BigUint {
+    if self.0.header().is_short() {
+      BigUint::from_bytes_le(self.0.header().short_content())
+    } else {
+      let buf = self.0.content_padded();
+      BigUint::from_bytes_le(buf)
+    }
+  }
+
+  /// Returns the value as an arbitrarily large integer
+  pub fn get_big_int(&self) -> BigInt {
+    if self.0.header().is_short() {
+      BigInt::from_bytes_le(Sign::Plus, self.0.header().short_content())
+    } else {
+      let buf = self.0.content_padded();
+      BigInt::from_bytes_le(Sign::Plus, buf)
+    }
   }
 }
 
-impl<G: Glyph> Debug for UIntGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for UIntGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "UIntGlyph({})", self.1)
+    write!(f, "UIntGlyph({})", self.get_big_uint())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for UIntGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for UIntGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
-impl<G: Glyph> Eq for UIntGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for UIntGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for UIntGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for UIntGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(UnsignedInt) {
-      return Err(err.into_fge(glyph));
+    match glyph.header().confirm_type(GlyphType::UnsignedInt) {
+      Ok(()) => Ok(UIntGlyph(glyph)),
+      Err(err) => Err(FromGlyphErr::new(glyph, err)),
     }
-    let val = if glyph.header().is_short() {
-      u32::from_le_bytes(*glyph.header().short_content()) as u128
-    } else {
-      let buf = glyph.content_padded();
-      // SAFETY: Bounds checks are redundant with switching on length
-      unsafe {
-        if buf.len() >= size_of::<U128>() {
-          U128::bbrf_u(buf, &mut 0).get()
-        } else if buf.len() >= size_of::<U64>() {
-          U64::bbrf_u(buf, &mut 0).get() as u128
-        } else {
-          0
-        }
-      }
-    };
-    Ok(Self(glyph, val))
   }
 }
 
-impl<G: Glyph> Ord for UIntGlyph<G> {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.1.cmp(&other.1)
-  }
-}
-
-impl<G: Glyph> PartialEq for UIntGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for UIntGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
-    self.1 == other.1
+    self.0.content_padded().eq(other.0.content_padded())
   }
 }
 
-impl<G: Glyph> PartialOrd for UIntGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for UIntGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
+  }
+}
+
+impl<G: Deref<Target = Glyph>> Ord for UIntGlyph<G> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    // TODO-OPT: Decoding `BitUint` for comparison requires allocation
+    self.get_big_uint().cmp(&other.get_big_uint())
   }
 }
 
@@ -176,172 +276,184 @@ impl<G: Glyph> PartialOrd for UIntGlyph<G> {
 /// Currently, only `f32` and `f64` are supported, the latter of which is
 /// returned by [`Deref`].  However, note that there is also a direct [`From`]
 /// implementation from this type into a `f32`.
-pub struct FloatGlyph<G: Glyph>(G, f64);
+pub struct FloatGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> FloatGlyph<G> {
-  /// Returns the value in the glyph.
-  pub fn get(&self) -> f64 {
-    self.1
-  }
-}
-
-impl<G: Glyph> Debug for FloatGlyph<G> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    write!(f, "FloatGlyph({})", self.1)
-  }
-}
-
-impl<G: Glyph> FromGlyph<G> for FloatGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(Float) {
-      return Err(err.into_fge(glyph));
-    }
-    let val = if glyph.header().is_short() {
-      f32::from_le_bytes(*glyph.header().short_content()) as f64
+impl<G: Deref<Target = Glyph>> FloatGlyph<G> {
+  /// Returns the value in the glyph as a `f32`
+  pub fn get_f32(&self) -> f32 {
+    if self.0.header().is_short() {
+      f32::from_le_bytes(*self.0.header().short_content())
     } else {
-      let buf = glyph.content_padded();
-      // SAFETY: Bounds checks are redundant with switching on length
+      let buf = self.0.content_padded();
       unsafe {
-        if buf.len() >= size_of::<F64>() {
-          F64::bbrf_u(buf, &mut 0).get()
-        } else {
-          0.0
+        match buf.len() {
+          8 => F64::bbrf_u(buf, &mut 0).get() as f32,
+          _ => todo!("Handle arbitrary precision floats"),
         }
       }
-    };
-    Ok(Self(glyph, val))
+    }
+  }
+
+  /// Returns the value in the glyph as a `f32`
+  pub fn get_f64(&self) -> f64 {
+    if self.0.header().is_short() {
+      f32::from_le_bytes(*self.0.header().short_content()) as f64
+    } else {
+      let buf = self.0.content_padded();
+      unsafe {
+        match buf.len() {
+          8 => F64::bbrf_u(buf, &mut 0).get(),
+          _ => todo!("Handle arbitrary precision floats"),
+        }
+      }
+    }
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for FloatGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for FloatGlyph<G> {
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    write!(f, "FloatGlyph({})", self.get_f64())
+  }
+}
+
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for FloatGlyph<G> {
+  fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
+    match glyph.header().confirm_type(GlyphType::Float) {
+      Ok(()) => Ok(FloatGlyph(glyph)),
+      Err(err) => Err(FromGlyphErr::new(glyph, err)),
+    }
+  }
+}
+
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for FloatGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0.deref()
   }
 }
 
-impl<G: Glyph> Eq for FloatGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for FloatGlyph<G> {}
 
-impl<G: Glyph> From<FloatGlyph<G>> for f32 {
+impl<G: Deref<Target = Glyph>> From<FloatGlyph<G>> for f32 {
   fn from(value: FloatGlyph<G>) -> Self {
-    value.1 as f32
+    value.get_f32()
   }
 }
 
-impl<G: Glyph> Ord for FloatGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for FloatGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
-    f64::total_cmp(&self.1, &other.1)
+    f64::total_cmp(&self.get_f64(), &other.get_f64())
   }
 }
 
-impl<G: Glyph> PartialEq for FloatGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for FloatGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for FloatGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for FloatGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i8 {
+impl<G: Deref<Target = Glyph>> TryFrom<IntGlyph<G>> for i8 {
   type Error = GlyphErr;
 
   fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = i8::try_from(value.get_i32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i16 {
+impl<G: Deref<Target = Glyph>> TryFrom<IntGlyph<G>> for i16 {
   type Error = GlyphErr;
 
   fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = i16::try_from(value.get_i32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i32 {
+impl<G: Deref<Target = Glyph>> TryFrom<IntGlyph<G>> for i32 {
   type Error = GlyphErr;
 
   fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = i32::try_from(value.get_i32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i64 {
+impl<G: Deref<Target = Glyph>> TryFrom<IntGlyph<G>> for i64 {
   type Error = GlyphErr;
 
   fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      i64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = i64::try_from(value.get_i64()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<IntGlyph<G>> for i128 {
+impl<G: Deref<Target = Glyph>> TryFrom<IntGlyph<G>> for i128 {
   type Error = GlyphErr;
 
   fn try_from(value: IntGlyph<G>) -> Result<Self, Self::Error> {
-    Ok(value.1 as i128)
+    value.get_i128()
   }
 }
 
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u8 {
+impl<G: Deref<Target = Glyph>> TryFrom<UIntGlyph<G>> for u8 {
   type Error = GlyphErr;
 
   fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u8::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = u8::try_from(value.get_u32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u16 {
+impl<G: Deref<Target = Glyph>> TryFrom<UIntGlyph<G>> for u16 {
   type Error = GlyphErr;
 
   fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u16::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = u16::try_from(value.get_u32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u32 {
+impl<G: Deref<Target = Glyph>> TryFrom<UIntGlyph<G>> for u32 {
   type Error = GlyphErr;
 
   fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u32::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = u32::try_from(value.get_u32()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u64 {
+impl<G: Deref<Target = Glyph>> TryFrom<UIntGlyph<G>> for u64 {
   type Error = GlyphErr;
 
   fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    let value =
-      u64::try_from(value.1).map_err(|_err| GlyphErr::IntConversionOverflow)?;
+    let value = u64::try_from(value.get_u64()?)
+      .map_err(|_err| GlyphErr::IntConversionOverflow)?;
     Ok(value)
   }
 }
 
-impl<G: Glyph> TryFrom<UIntGlyph<G>> for u128 {
+impl<G: Deref<Target = Glyph>> TryFrom<UIntGlyph<G>> for u128 {
   type Error = GlyphErr;
 
   fn try_from(value: UIntGlyph<G>) -> Result<Self, Self::Error> {
-    Ok(value.1)
+    Ok(value.get_u128()?)
   }
 }
 
@@ -409,61 +521,29 @@ gen_prim_slice_to_glyph!(I128);
 gen_prim_slice_to_glyph!(F32);
 gen_prim_slice_to_glyph!(F64);
 
-gen_prim_from_glyph!(u8, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
-  ParsedGlyph,
->| {
-  u8::try_from(gl.get())
-});
-gen_prim_from_glyph!(u16, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
-  ParsedGlyph,
->| {
-  u16::try_from(gl.get())
-});
 gen_prim_from_glyph!(u32, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
-  ParsedGlyph,
->| {
-  u32::try_from(gl.get())
-});
+  &Glyph,
+>| { gl.get_u32() });
 gen_prim_from_glyph!(u64, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
-  ParsedGlyph,
->| {
-  u64::try_from(gl.get())
-});
+  &Glyph,
+>| { gl.get_u64() });
 gen_prim_from_glyph!(u128, try_conv_glyph, UIntGlyph, |gl: UIntGlyph<
-  ParsedGlyph,
->| {
-  Result::<u128, GlyphErr>::Ok(gl.get())
+  &Glyph,
+>| { gl.get_u128() });
+gen_prim_from_glyph!(i32, try_conv_glyph, IntGlyph, |gl: IntGlyph<&Glyph>| {
+  gl.get_i32()
 });
-gen_prim_from_glyph!(i8, try_conv_glyph, IntGlyph, |gl: IntGlyph<
-  ParsedGlyph,
->| {
-  i8::try_from(gl.get())
+gen_prim_from_glyph!(i64, try_conv_glyph, IntGlyph, |gl: IntGlyph<&Glyph>| {
+  gl.get_i64()
 });
-gen_prim_from_glyph!(i16, try_conv_glyph, IntGlyph, |gl: IntGlyph<
-  ParsedGlyph,
->| {
-  i16::try_from(gl.get())
-});
-gen_prim_from_glyph!(i32, try_conv_glyph, IntGlyph, |gl: IntGlyph<
-  ParsedGlyph,
->| {
-  i32::try_from(gl.get())
-});
-gen_prim_from_glyph!(i64, try_conv_glyph, IntGlyph, |gl: IntGlyph<
-  ParsedGlyph,
->| {
-  i64::try_from(gl.get())
-});
-gen_prim_from_glyph!(i128, try_conv_glyph, IntGlyph, |gl: IntGlyph<
-  ParsedGlyph,
->| {
-  Result::<i128, GlyphErr>::Ok(gl.get())
+gen_prim_from_glyph!(i128, try_conv_glyph, IntGlyph, |gl: IntGlyph<&Glyph>| {
+  gl.get_i128()
 });
 gen_prim_from_glyph!(f32, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| {
-  gl.get() as f32
+  gl.get_f32()
 });
 gen_prim_from_glyph!(f64, conv_glyph, FloatGlyph, |gl: FloatGlyph<G>| {
-  gl.get()
+  gl.get_f64()
 });
 gen_prim_from_glyph!(U32, conv, u32, |val| { U32::from(val) });
 gen_prim_from_glyph!(U64, conv, u64, |val| { U64::from(val) });

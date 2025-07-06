@@ -9,7 +9,7 @@ use crate::{
     ZeroCopy, ZeroCopyTypeID, F32, F64, I128, I16, I32, I64, U128, U16, U32,
     U64,
   },
-  FromGlyph, Glyph, GlyphType, ParsedGlyph,
+  FromGlyph, Glyph, GlyphType,
 };
 use serde::{
   de::{
@@ -18,7 +18,7 @@ use serde::{
   Deserialize, Deserializer,
 };
 
-struct GlyphDeserializer<'de>(ParsedGlyph<'de>);
+struct GlyphDeserializer<'de>(&'de Glyph);
 
 impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   type Error = SerdeGlyphErr;
@@ -74,15 +74,15 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
       GlyphType::UnicodeChar => self.deserialize_char(visitor),
       GlyphType::UnsignedInt => {
         let int = UIntGlyph::from_glyph(self.0)?;
-        visitor.visit_u128(int.get())
+        visitor.visit_u128(int.get_u128()?)
       },
       GlyphType::SignedInt => {
         let int = IntGlyph::from_glyph(self.0)?;
-        visitor.visit_i128(int.get())
+        visitor.visit_i128(int.get_i128()?)
       },
       GlyphType::Float => {
         let float = FloatGlyph::from_glyph(self.0)?;
-        visitor.visit_f64(float.get())
+        visitor.visit_f64(float.get_f64())
       },
       GlyphType::Vec => self.deserialize_seq(visitor),
       GlyphType::VecBasic => self.deserialize_seq(visitor),
@@ -105,16 +105,16 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   where
     V: Visitor<'de>,
   {
-    let val = i8::from_glyph(self.0)?;
-    visitor.visit_i8(val)
+    let val = i32::from_glyph(self.0)?;
+    visitor.visit_i32(val)
   }
 
   fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
   where
     V: Visitor<'de>,
   {
-    let val = i16::from_glyph(self.0)?;
-    visitor.visit_i16(val)
+    let val = i32::from_glyph(self.0)?;
+    visitor.visit_i32(val)
   }
 
   fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -145,16 +145,16 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   where
     V: Visitor<'de>,
   {
-    let val = u8::from_glyph(self.0)?;
-    visitor.visit_u8(val)
+    let val = u32::from_glyph(self.0)?;
+    visitor.visit_u32(val)
   }
 
   fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
   where
     V: Visitor<'de>,
   {
-    let val = u16::from_glyph(self.0)?;
-    visitor.visit_u16(val)
+    let val = u32::from_glyph(self.0)?;
+    visitor.visit_u32(val)
   }
 
   fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -501,9 +501,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   }
 }
 
-struct IterSeqDeserializer<'a, 'de>(
-  &'a mut dyn Iterator<Item = ParsedGlyph<'de>>,
-);
+struct IterSeqDeserializer<'a, 'de>(&'a mut dyn Iterator<Item = &'de Glyph>);
 
 impl<'a, 'de> SeqAccess<'de> for IterSeqDeserializer<'a, 'de> {
   type Error = SerdeGlyphErr;
@@ -527,7 +525,7 @@ impl<'a, 'de> SeqAccess<'de> for IterSeqDeserializer<'a, 'de> {
 }
 
 enum VecDeserializer<'a, 'de> {
-  VecGlyph(&'a mut dyn Iterator<Item = ParsedGlyph<'de>>),
+  VecGlyph(&'a mut dyn Iterator<Item = &'de Glyph>),
   BoolIt(&'a mut dyn Iterator<Item = bool>),
   VecU8(&'de [u8]),
   VecU16(&'de [U16]),
@@ -683,8 +681,8 @@ impl<'a, 'de> SeqAccess<'de> for VecDeserializer<'a, 'de> {
 }
 
 struct MapGlyphAccess<'a, 'de> {
-  iter:       &'a mut dyn Iterator<Item = (ParsedGlyph<'de>, ParsedGlyph<'de>)>,
-  next_value: Option<ParsedGlyph<'de>>,
+  iter:       &'a mut dyn Iterator<Item = (&'de Glyph, &'de Glyph)>,
+  next_value: Option<&'de Glyph>,
 }
 
 impl<'a, 'de> MapAccess<'de> for MapGlyphAccess<'a, 'de> {
@@ -720,8 +718,8 @@ impl<'a, 'de> MapAccess<'de> for MapGlyphAccess<'a, 'de> {
 }
 
 struct StructAccess<'a, 'de> {
-  it:    &'a mut dyn Iterator<Item = (Option<&'de str>, ParsedGlyph<'de>)>,
-  value: Option<ParsedGlyph<'de>>,
+  it:    &'a mut dyn Iterator<Item = (Option<&'de str>, &'de Glyph)>,
+  value: Option<&'de Glyph>,
 }
 
 impl<'a, 'de> MapAccess<'de> for StructAccess<'a, 'de> {
@@ -765,7 +763,7 @@ impl<'a, 'de> MapAccess<'de> for StructAccess<'a, 'de> {
   }
 }
 
-struct ObjEnumAccess<'de>(ObjGlyph<ParsedGlyph<'de>>);
+struct ObjEnumAccess<'de>(ObjGlyph<&'de Glyph>);
 
 impl<'de> EnumAccess<'de> for ObjEnumAccess<'de> {
   type Error = SerdeGlyphErr;
@@ -1181,7 +1179,7 @@ impl<'de> Deserializer<'de> for PassthroughDeserializer<'de> {
 ///   variant name, and (2) newtype variants are deserialized from tuple
 ///   variants with a single field.
 pub fn glyph_serde_deserialize<'a, T>(
-  glyph: ParsedGlyph<'a>,
+  glyph: &'a Glyph,
 ) -> Result<T, SerdeGlyphErr>
 where
   T: Deserialize<'a>,

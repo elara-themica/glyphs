@@ -8,14 +8,15 @@ use crate::{
   misc::{DateTimeGlyph, UuidGlyph},
   structured::{DocGlyph, ObjGlyph},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphSorting,
-  GlyphType, ParsedGlyph,
+  GlyphType,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
 };
+use std::ops::Deref;
 
-pub enum DynGlyph<G: Glyph> {
+pub enum DynGlyph<G: Deref<Target = Glyph>> {
   //=== Primitives
   Unit(UnitGlyph<G>),
   Bool(BoolGlyph<G>),
@@ -59,8 +60,8 @@ pub enum DynGlyph<G: Glyph> {
   DecodeErr(GlyphErr, G),
 }
 
-impl<G: Glyph> DynGlyph<G> {
-  pub fn from_glyph_u(src: G) -> Self {
+impl<G: Deref<Target = Glyph>> DynGlyph<G> {
+  pub fn new(src: G) -> Self {
     let result = match src.glyph_type() {
       GlyphType::Unit => UnitGlyph::from_glyph(src).map(|g| DynGlyph::Unit(g)),
       GlyphType::Bool => BoolGlyph::from_glyph(src).map(|g| DynGlyph::Bool(g)),
@@ -145,7 +146,7 @@ impl<G: Glyph> DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for DynGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     match self {
       DynGlyph::Unit(g) => Debug::fmt(g, f)?,
@@ -167,11 +168,11 @@ impl<G: Glyph> Debug for DynGlyph<G> {
       DynGlyph::CryptoHash(g) => Debug::fmt(g, f)?,
       DynGlyph::EncryptedPassword(g) => Debug::fmt(g, f)?,
       DynGlyph::UnknownType(g) => {
-        write!(f, "UnknownGlyphType({:?})", g)?;
+        write!(f, "UnknownGlyphType({:?})", &g.header().glyph_type())?;
       },
       DynGlyph::DecodeErr(err, g) => {
         let mut df = f.debug_struct("DecodeErr");
-        df.field("glyph", g);
+        df.field("glyph", &g.deref());
         df.field("error", err);
         df.finish()?;
       },
@@ -180,7 +181,7 @@ impl<G: Glyph> Debug for DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DynGlyph<G> {
   fn into_inner(self) -> G {
     match self {
       DynGlyph::Unit(g) => g.into_inner(),
@@ -206,7 +207,7 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
     }
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
+  fn glyph(&self) -> &Glyph {
     match self {
       DynGlyph::Unit(eg) => eg.glyph(),
       DynGlyph::Bool(eg) => eg.glyph(),
@@ -226,8 +227,8 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
       DynGlyph::UUID(eg) => eg.glyph(),
       DynGlyph::CryptoHash(eg) => eg.glyph(),
       DynGlyph::EncryptedPassword(eg) => eg.glyph(),
-      DynGlyph::UnknownType(g) => g.borrow(),
-      DynGlyph::DecodeErr(_, g) => g.borrow(),
+      DynGlyph::UnknownType(g) => g.deref(),
+      DynGlyph::DecodeErr(_, g) => g.deref(),
     }
   }
 
@@ -259,37 +260,25 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
 
       //=== Inter Type Comparisons
       (DynGlyph::UInt(a), DynGlyph::Int(b)) => {
-        if b.get() < 0 {
-          Ordering::Greater
-        } else {
-          let b = b.get() as u128;
-          a.get().cmp(&b)
-        }
+        // TODO: Comparisons using big integers require allocation
+        a.get_big_int().cmp(&b.get_big_int())
       },
       (DynGlyph::Int(a), DynGlyph::UInt(b)) => {
-        if a.get() < 0 {
-          Ordering::Less
-        } else {
-          let a = a.get() as u128;
-          a.cmp(&b.get())
-        }
+        // TODO: Comparisons using big integers require allocation
+        a.get_big_int().cmp(&b.get_big_int())
       },
       //=== Comparisons with floats; convert both to float ===//
-      (DynGlyph::Float(a), DynGlyph::Int(b)) => {
-        let b = b.get() as f64;
-        a.get().total_cmp(&b)
+      (DynGlyph::Float(_a), DynGlyph::Int(_b)) => {
+        todo!("Integer / Float cross-type comparison")
       },
-      (DynGlyph::Int(a), DynGlyph::Float(b)) => {
-        let a = a.get() as f64;
-        a.total_cmp(&b.get())
+      (DynGlyph::Int(_a), DynGlyph::Float(_b)) => {
+        todo!("Integer / Float cross-type comparison")
       },
-      (DynGlyph::Float(a), DynGlyph::UInt(b)) => {
-        let b = b.get() as f64;
-        a.get().total_cmp(&b)
+      (DynGlyph::Float(_a), DynGlyph::UInt(_b)) => {
+        todo!("Integer / Float cross-type comparison")
       },
-      (DynGlyph::UInt(a), DynGlyph::Float(b)) => {
-        let a = a.get() as f64;
-        a.total_cmp(&b.get())
+      (DynGlyph::UInt(_a), DynGlyph::Float(_b)) => {
+        todo!("Integer / Float cross-type comparison")
       },
 
       //=== Error Comparisons: Errors always sort last. ===/
@@ -312,27 +301,27 @@ impl<G: Glyph> EncodedGlyph<G> for DynGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for DynGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for DynGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for DynGlyph<G> {
   fn from_glyph(src: G) -> Result<Self, FromGlyphErr<G>> {
-    Ok(DynGlyph::from_glyph_u(src))
+    Ok(DynGlyph::new(src))
   }
 }
 
-impl<G: Glyph> Ord for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for DynGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for DynGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for DynGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for DynGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -343,7 +332,7 @@ mod tests {
   use super::*;
   use crate::{
     crypto::{CryptographicHash, GlyphHash, Password},
-    glyph_new, glyph_new_serde,
+    glyph_new_serde,
   };
   use alloc::string::String;
   use rand::thread_rng;
@@ -352,39 +341,39 @@ mod tests {
 
   #[test]
   fn dyn_glyph_debug() {
-    let unit_glyph = glyph_new(&()).unwrap();
+    let unit_glyph = Glyph::new(&()).unwrap();
     let unit_dyn = DynGlyph::from_glyph(unit_glyph).unwrap();
     dbg!(&unit_dyn);
 
-    let bool_glyph = glyph_new(&true).unwrap();
+    let bool_glyph = Glyph::new(&true).unwrap();
     let bool_dyn = DynGlyph::from_glyph(bool_glyph).unwrap();
     dbg!(&bool_dyn);
 
-    let int_glyph = glyph_new(&-123).unwrap();
+    let int_glyph = Glyph::new(&-123).unwrap();
     let int_dyn = DynGlyph::from_glyph(int_glyph).unwrap();
     dbg!(&int_dyn);
 
-    let uint_glyph = glyph_new(&123u128).unwrap();
+    let uint_glyph = Glyph::new(&123u128).unwrap();
     let uint_dyn = DynGlyph::from_glyph(uint_glyph).unwrap();
     dbg!(&uint_dyn);
 
-    let float_glyph = glyph_new(&123.456f64).unwrap();
+    let float_glyph = Glyph::new(&123.456f64).unwrap();
     let float_dyn = DynGlyph::from_glyph(float_glyph).unwrap();
     dbg!(&float_dyn);
 
-    let tuple_glyph = glyph_new(&(123, 456)).unwrap();
+    let tuple_glyph = Glyph::new(&(123, 456)).unwrap();
     let tuple_dyn = DynGlyph::from_glyph(tuple_glyph).unwrap();
     dbg!(&tuple_dyn);
 
-    let vec_glyph = glyph_new(&vec!["foo", "bar", "baz"]).unwrap();
+    let vec_glyph = Glyph::new(&vec!["foo", "bar", "baz"]).unwrap();
     let vec_dyn = DynGlyph::from_glyph(vec_glyph).unwrap();
     dbg!(&vec_dyn);
 
-    let basic_vec_glyph = glyph_new(&vec![123, 456, 7890]).unwrap();
+    let basic_vec_glyph = Glyph::new(&vec![123, 456, 7890]).unwrap();
     let basic_vec_dyn = DynGlyph::from_glyph(basic_vec_glyph).unwrap();
     dbg!(&basic_vec_dyn);
 
-    let map_glyph = glyph_new(&std::collections::BTreeMap::from([
+    let map_glyph = Glyph::new(&std::collections::BTreeMap::from([
       ("key1", "value1"),
       ("key2", "value2"),
       ("key3", "value3"),
@@ -406,24 +395,24 @@ mod tests {
     let obj_dyn = DynGlyph::from_glyph(obj_glyph).unwrap();
     dbg!(&obj_dyn);
 
-    let str_glyph = glyph_new(&"Hello World!").unwrap();
+    let str_glyph = Glyph::new(&"Hello World!").unwrap();
     let str_dyn = DynGlyph::from_glyph(str_glyph).unwrap();
     dbg!(&str_dyn);
 
-    let char_glyph = glyph_new(&'a').unwrap();
+    let char_glyph = Glyph::new(&'a').unwrap();
     let char_dyn = DynGlyph::from_glyph(char_glyph).unwrap();
     dbg!(&char_dyn);
 
-    let uuid_glyph = glyph_new(&uuid::Uuid::new_v4()).unwrap();
+    let uuid_glyph = Glyph::new(&uuid::Uuid::new_v4()).unwrap();
     let uuid_dyn = DynGlyph::from_glyph(uuid_glyph).unwrap();
     dbg!(&uuid_dyn);
 
-    let hash_glyph = glyph_new(&GlyphHash::new(b"glifs")).unwrap();
+    let hash_glyph = Glyph::new(&GlyphHash::new(b"glifs")).unwrap();
     let hash_dyn = DynGlyph::from_glyph(hash_glyph).unwrap();
     dbg!(&hash_dyn);
 
     let pw = Password::new_argon2id(b"hunter2", thread_rng()).unwrap();
-    let pw_glyph = glyph_new(&pw).unwrap();
+    let pw_glyph = Glyph::new(&pw).unwrap();
     let pw_dyn = DynGlyph::from_glyph(pw_glyph).unwrap();
     dbg!(&pw_dyn);
   }

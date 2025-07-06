@@ -14,6 +14,7 @@ use ed25519_dalek::{
   Signature, Signer, SigningKey, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH,
   SIGNATURE_LENGTH,
 };
+use std::ops::Deref;
 
 #[derive(Copy, Clone, Eq, Debug, Ord, PartialEq, PartialOrd)]
 #[repr(packed)]
@@ -100,7 +101,7 @@ impl TxLogHeader {
 
 pub struct TxLogGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   glyph:           B,
   previous_txs:    NonNull<[GlyphHash]>,
@@ -116,7 +117,7 @@ where
 
 impl<B> TxLogGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   pub fn previous_txs(&self) -> &[GlyphHash] {
     // SAFETY: Internal zero-copy self-reference, bound to &_ lifetime.
@@ -165,10 +166,10 @@ where
 
 impl<B> FromGlyph<B> for TxLogGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   fn from_glyph(glyph: B) -> Result<Self, FromGlyphErr<B>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::GlifsTxLog) {
+    if let Err(err) = glyph.header().confirm_type(GlyphType::GlifsTxLog) {
       return Err(err.into_fge(glyph));
     }
     let source = glyph.content_padded();
@@ -258,7 +259,7 @@ where
 
 impl<B> Debug for TxLogGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("TxLogGlyph");
@@ -405,7 +406,7 @@ impl<'a> ToGlyph for TxLogEncoder<'a> {
 #[allow(unused)]
 mod test {
   use super::*;
-  use crate::{glyph_new, util::init_test_logger};
+  use crate::util::init_test_logger;
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;

@@ -5,8 +5,10 @@ use crate::{
   },
   serde::SerdeGlyphErr,
   structured::{ObjGlyphLenCalc, ObjGlyphSerializer},
-  BoxGlyph, BoxGlyphBuf, GlyphErr, ToGlyph,
+  Glyph, GlyphErr, GlyphHeader, ToGlyph,
 };
+use alloc::boxed::Box;
+use core::mem::transmute;
 use serde::{
   ser::{
     SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
@@ -835,19 +837,30 @@ where
 ///
 /// For details regarding the encoding, see the documentation for
 /// [`glyph_serde_serialize()`].
-pub fn glyph_new_serde<T>(value: &T) -> Result<BoxGlyph, SerdeGlyphErr>
+pub fn glyph_new_serde<T>(
+  value: &T,
+) -> Result<alloc::boxed::Box<Glyph>, SerdeGlyphErr>
 where
   T: Serialize,
 {
-  let glyph_len = value.serialize(GlyphLenCalc)?;
-  let mut buffer = BoxGlyphBuf::new(glyph_len)?;
+  // Allocate the buffer into which we'll write the glyph.
+  let glyph_len = value.serialize(GlyphLenCalc)?.max(size_of::<GlyphHeader>());
+  debug_assert_eq!(glyph_len % 8, 0);
+  let mut buffer =
+    unsafe { Box::<[u8]>::try_new_uninit_slice(glyph_len)?.assume_init() };
+
+  // Encode the source into the buffer as a glyph.
   let mut cursor = 0;
   let gs = GlyphSerializer {
     target: buffer.as_mut(),
     cursor: &mut cursor,
   };
   value.serialize(gs)?;
-  let glyph = buffer.finalize()?;
+  debug_assert_eq!(glyph_len, cursor);
+  let _ = Glyph::read(buffer.as_ref(), &mut 0)?;
+
+  // SAFETY: Transmutation is safe for repr(transparent) types.
+  let glyph = unsafe { transmute(buffer) };
   Ok(glyph)
 }
 

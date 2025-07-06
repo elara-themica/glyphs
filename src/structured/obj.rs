@@ -9,11 +9,11 @@
 use crate::{
   crypto::GlyphHash,
   dynamic::DynGlyph,
-  glyph_close, glyph_read,
+  glyph_close,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -22,7 +22,7 @@ use core::{
   ptr::NonNull,
   str::from_utf8,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// A header for object glyphs.
 #[derive(Copy, Clone)]
@@ -190,7 +190,7 @@ Format:
 #[derive(Clone)]
 pub struct ObjGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   glyph:         B,
   header:        ObjGlyphHeader,
@@ -203,7 +203,7 @@ where
 
 impl<B> ObjGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   /// Returns a [`GlyphHash`] if the object's type is identified by a hash.
   pub fn type_hash(&self) -> Option<&GlyphHash> {
@@ -241,10 +241,7 @@ where
   }
 
   /// Returns the field name and value of the `index`-th field.
-  pub fn nth(
-    &self,
-    index: usize,
-  ) -> Result<(Option<&str>, ParsedGlyph<'_>), GlyphErr> {
+  pub fn nth(&self, index: usize) -> Result<(Option<&str>, &Glyph), GlyphErr> {
     let content = self.glyph.content_padded();
 
     let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
@@ -263,7 +260,7 @@ where
       None
     };
 
-    let field_value = glyph_read(content, &mut cursor)?;
+    let field_value = Glyph::read(content, &mut cursor)?;
     Ok((field_name, field_value))
   }
 
@@ -271,7 +268,7 @@ where
   ///
   /// This function performs a binary search by field name, and so can find
   /// a named field if present in `O=log(n)` time.
-  pub fn by_name(&self, name: &str) -> Option<ParsedGlyph<'_>> {
+  pub fn by_name(&self, name: &str) -> Option<&Glyph> {
     if !self.has_field_names() {
       None
     } else {
@@ -303,9 +300,8 @@ where
   /// Returns an iterator through fields and field names (if present).
   fn fields_iter(
     &self,
-  ) -> impl Iterator<Item = (Option<&str>, ParsedGlyph<'_>)>
-       + Clone
-       + DoubleEndedIterator {
+  ) -> impl Iterator<Item = (Option<&str>, &Glyph)> + Clone + DoubleEndedIterator
+  {
     IterFields {
       content:      self.glyph.content_padded(),
       offsets:      self.offsets(),
@@ -314,7 +310,7 @@ where
   }
 }
 
-impl<'a> ObjGlyph<ParsedGlyph<'a>> {
+impl<'a> ObjGlyph<&'a Glyph> {
   fn offsets_parsed(&self) -> &'a [GlyphOffset] {
     unsafe { self.field_offsets.as_ref() }
   }
@@ -332,7 +328,7 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
   ///
   /// # Returns
   ///
-  /// * `Ok((Option<&'a str>, ParsedGlyph<'a>))` - A tuple containing the
+  /// * `Ok((Option<&'a str>, &'a Glyph))` - A tuple containing the
   ///   optional field name and the field value if the field exists at the
   ///   specified index.
   ///
@@ -344,8 +340,8 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
   pub fn nth_parse(
     &self,
     index: usize,
-  ) -> Result<(Option<&'a str>, ParsedGlyph<'a>), GlyphErr> {
-    let content = self.glyph.content_padded_parsed();
+  ) -> Result<(Option<&'a str>, &'a Glyph), GlyphErr> {
+    let content = self.glyph.content_padded();
 
     let offset = self.offsets().get(index).ok_or(GlyphErr::OutOfBounds {
       index,
@@ -363,7 +359,7 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
       None
     };
 
-    let field_value = glyph_read(content, &mut cursor)?;
+    let field_value = Glyph::read(content, &mut cursor)?;
     Ok((field_name, field_value))
   }
 
@@ -375,18 +371,17 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
   ///
   /// # Returns
   ///
-  /// * `impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>` - An iterator
+  /// * `impl Iterator<Item = (Option<&'a str>, &'a Glyph)>` - An iterator
   ///   where each item is a tuple containing:
   ///     - `Option<&'a str>`: The field name if it exists, or `None` if the
   ///       object does not have named fields.
-  ///     - `ParsedGlyph<'a>`: The parsed value of the field.
+  ///     - `&'a Glyph`: The parsed value of the field.
   pub fn fields_iter_parse(
     &self,
-  ) -> impl Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)>
-       + Clone
-       + DoubleEndedIterator {
+  ) -> impl Iterator<Item = (Option<&'a str>, &'a Glyph)> + Clone + DoubleEndedIterator
+  {
     IterFields {
-      content:      self.glyph.content_padded_parsed(),
+      content:      self.glyph.content_padded(),
       offsets:      self.offsets_parsed(),
       named_fields: self.header.has_field_names(),
     }
@@ -424,12 +419,12 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
   ///
   /// * `Option<ParsedGlyph>` - If a field with the provided name exists, returns
   ///   its value wrapped in `Some`. Otherwise, returns `None`.
-  pub fn by_name_parsed(&self, name: &str) -> Option<ParsedGlyph<'_>> {
+  pub fn by_name_parsed(&self, name: &str) -> Option<&Glyph> {
     if !self.has_field_names() {
       None
     } else {
       if self.header.has_fields_ordered() {
-        let content = self.glyph.content_padded_parsed();
+        let content = self.glyph.content_padded();
         if let Ok(position) = self.offsets().binary_search_by(|offset| {
           let field_name =
             str::glyph_tiny_str_from_offset(content, *offset).unwrap_or("");
@@ -455,22 +450,22 @@ impl<'a> ObjGlyph<ParsedGlyph<'a>> {
 }
 
 // TODO: This is dangerous given the unsafe... do we need it?
-impl<B> Copy for ObjGlyph<B> where B: Copy + Glyph {}
+impl<B> Copy for ObjGlyph<B> where B: Copy + Deref<Target = Glyph> {}
 
-impl<T: Glyph> Debug for ObjGlyph<T> {
+impl<T: Deref<Target = Glyph>> Debug for ObjGlyph<T> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     struct TupleFields<'a, T>(T)
     where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
+      T: Iterator<Item = (Option<&'a str>, &'a Glyph)> + Clone;
 
     impl<'a, T> Debug for TupleFields<'a, T>
     where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
+      T: Iterator<Item = (Option<&'a str>, &'a Glyph)> + Clone,
     {
       fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let mut df = f.debug_list();
         for (_field_name, field) in self.0.clone() {
-          let field = DynGlyph::from_glyph_u(field);
+          let field = DynGlyph::new(field);
           df.entry(&field);
         }
         df.finish()
@@ -479,17 +474,17 @@ impl<T: Glyph> Debug for ObjGlyph<T> {
 
     struct NamedFields<'a, T>(T)
     where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone;
+      T: Iterator<Item = (Option<&'a str>, &'a Glyph)> + Clone;
 
     impl<'a, T> Debug for NamedFields<'a, T>
     where
-      T: Iterator<Item = (Option<&'a str>, ParsedGlyph<'a>)> + Clone,
+      T: Iterator<Item = (Option<&'a str>, &'a Glyph)> + Clone,
     {
       fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         let mut df = f.debug_map();
         for (field_name, field) in self.0.clone() {
           let field_name = field_name.unwrap_or("MISSING");
-          let field = DynGlyph::from_glyph_u(field);
+          let field = DynGlyph::new(field);
           df.entry(&field_name, &field);
         }
         df.finish()
@@ -529,13 +524,13 @@ impl<T: Glyph> Debug for ObjGlyph<T> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for ObjGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph.deref()
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
@@ -551,8 +546,8 @@ impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
           match (self_iter.next(), other_iter.next()) {
             (Some((a_fn, a_val)), Some((b_fn, b_val))) => {
               let ordering = a_fn.cmp(&b_fn).then_with(|| {
-                let a_val = DynGlyph::from_glyph_u(a_val);
-                let b_val = DynGlyph::from_glyph_u(b_val);
+                let a_val = DynGlyph::new(a_val);
+                let b_val = DynGlyph::new(b_val);
                 a_val.glyph_ord(&b_val, sorting)
               });
               if ordering != Ordering::Equal {
@@ -569,14 +564,14 @@ impl<G: Glyph> EncodedGlyph<G> for ObjGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for ObjGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for ObjGlyph<G> {}
 
 impl<B> FromGlyph<B> for ObjGlyph<B>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
 {
   fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
-    if let Err(err) = source.confirm_type(GlyphType::Object) {
+    if let Err(err) = source.header().confirm_type(GlyphType::Object) {
       return Err(err.into_fge(source));
     }
     let content = source.content_padded();
@@ -661,19 +656,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for ObjGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for ObjGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for ObjGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for ObjGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for ObjGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for ObjGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -708,7 +703,7 @@ impl<'a> DoubleEndedIterator for IterFields<'a> {
       None
     };
 
-    let field_value = glyph_read(self.content, cursor).ok()?;
+    let field_value = Glyph::read(self.content, cursor).ok()?;
     Some((field_name, field_value))
   }
 }
@@ -720,7 +715,7 @@ impl<'a> ExactSizeIterator for IterFields<'a> {
 }
 
 impl<'a> Iterator for IterFields<'a> {
-  type Item = (Option<&'a str>, ParsedGlyph<'a>);
+  type Item = (Option<&'a str>, &'a Glyph);
 
   fn next(&mut self) -> Option<Self::Item> {
     let (offset, remainder) = self.offsets.split_first()?;
@@ -737,7 +732,7 @@ impl<'a> Iterator for IterFields<'a> {
       None
     };
 
-    let field_value = glyph_read(self.content, cursor).ok()?;
+    let field_value = Glyph::read(self.content, cursor).ok()?;
     Some((field_name, field_value))
   }
 }
@@ -977,7 +972,6 @@ where
 mod test {
 
   use super::*;
-  use crate::glyph_new;
   use std::{
     collections::BTreeMap,
     println,
@@ -996,7 +990,7 @@ mod test {
       variant_name: None,
       data:         fields,
     };
-    let encoded = glyph_new(&ogmw).unwrap();
+    let encoded = Glyph::new(&ogmw).unwrap();
     // dbg!(&encoded);
     let decoded = ObjGlyph::from_glyph(encoded).unwrap();
     // dbg!(&decoded);

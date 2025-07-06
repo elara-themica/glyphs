@@ -14,13 +14,13 @@
 use crate::{
   crypto::{Blake3Hash, Md5Hash, Sha1Hash, Sha256Hash, Sha3Hash},
   dynamic::DynGlyph,
-  glyph_close, glyph_read,
+  glyph_close,
   zerocopy::{
     round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
     I16, I32, I64, U128, U16, U32, U64,
   },
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -30,6 +30,7 @@ use core::{
   mem::size_of,
   ptr::NonNull,
 };
+use std::ops::Deref;
 use uuid::Uuid;
 
 /// The specific type header for (non-primitive) vector glyphs.
@@ -67,7 +68,7 @@ unsafe impl ZeroCopy for VecGlyphHeader {}
 /// A glyph that contains a vector of other glyphs.
 pub struct VecGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   /// The source glyph that is a vector glyph
   glyph: G,
@@ -78,7 +79,7 @@ where
 
 impl<G> VecGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   /// Returns the number of items (glyphs) in the vector.
   pub fn len(&self) -> usize {
@@ -91,10 +92,10 @@ where
   }
 
   /// Returns the `index`-th glyph in the vector.
-  pub fn get(&self, index: usize) -> Option<ParsedGlyph<'_>> {
+  pub fn get(&self, index: usize) -> Option<&Glyph> {
     let offset = self.offsets().get(index)?;
     let mut cursor = offset.cursor(0);
-    match glyph_read(self.glyph.content_padded(), &mut cursor) {
+    match Glyph::read(self.glyph.content_padded(), &mut cursor) {
       Ok(glyph) => Some(glyph),
       Err(_) => None,
     }
@@ -102,13 +103,10 @@ where
 
   /// Returns the `index`-th glyph in the vector, returning an error if the
   /// glyph does not decode correctly.
-  pub fn get_checked(
-    &self,
-    index: usize,
-  ) -> Result<Option<ParsedGlyph<'_>>, GlyphErr> {
+  pub fn get_checked(&self, index: usize) -> Result<Option<&Glyph>, GlyphErr> {
     if let Some(offset) = self.offsets().get(index) {
       let mut cursor = offset.cursor(0);
-      let glyph = glyph_read(self.glyph.content_padded(), &mut cursor)?;
+      let glyph = Glyph::read(self.glyph.content_padded(), &mut cursor)?;
       Ok(Some(glyph))
     } else {
       Ok(None)
@@ -118,10 +116,8 @@ where
   /// An iterator over contained glyphs.
   pub fn iter(
     &self,
-  ) -> impl Iterator<Item = ParsedGlyph<'_>>
-       + Clone
-       + DoubleEndedIterator
-       + ExactSizeIterator {
+  ) -> impl Iterator<Item = &Glyph> + Clone + DoubleEndedIterator + ExactSizeIterator
+  {
     VecGlyphIterator {
       offsets: self.offsets(),
       content: self.glyph.content_padded(),
@@ -134,12 +130,12 @@ where
   }
 }
 
-impl<'a> VecGlyph<ParsedGlyph<'a>> {
+impl<'a> VecGlyph<&'a Glyph> {
   /// Returns the `index`-th glyph in the vector.
-  pub fn get_parsed(&self, index: usize) -> Option<ParsedGlyph<'a>> {
+  pub fn get_parsed(&self, index: usize) -> Option<&'a Glyph> {
     let offset = self.offsets().get(index)?;
     let mut cursor = offset.cursor(0);
-    match glyph_read(self.glyph.content_padded_parsed(), &mut cursor) {
+    match Glyph::read(self.glyph.content_padded(), &mut cursor) {
       Ok(glyph) => Some(glyph),
       Err(_) => None,
     }
@@ -150,10 +146,10 @@ impl<'a> VecGlyph<ParsedGlyph<'a>> {
   pub fn get_checked_parsed(
     &self,
     index: usize,
-  ) -> Result<Option<ParsedGlyph<'a>>, GlyphErr> {
+  ) -> Result<Option<&'a Glyph>, GlyphErr> {
     if let Some(offset) = self.offsets().get(index) {
       let mut cursor = offset.cursor(0);
-      let glyph = glyph_read(self.glyph.content_padded_parsed(), &mut cursor)?;
+      let glyph = Glyph::read(self.glyph.content_padded(), &mut cursor)?;
       Ok(Some(glyph))
     } else {
       Ok(None)
@@ -161,11 +157,11 @@ impl<'a> VecGlyph<ParsedGlyph<'a>> {
   }
 
   /// An iterator over contained glyphs.
-  pub fn iter_parsed(&self) -> impl Iterator<Item = ParsedGlyph<'a>> + Clone {
+  pub fn iter_parsed(&self) -> impl Iterator<Item = &'a Glyph> + Clone {
     unsafe {
       VecGlyphIterator {
         offsets: self.offsets.as_ref(),
-        content: self.glyph.content_padded_parsed(),
+        content: self.glyph.content_padded(),
       }
     }
   }
@@ -173,31 +169,31 @@ impl<'a> VecGlyph<ParsedGlyph<'a>> {
 
 impl<G> Debug for VecGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     write!(f, "VecGlyph")?;
     let mut df = f.debug_list();
     for glyph in self.iter() {
-      let dg = DynGlyph::from_glyph_u(glyph);
+      let dg = DynGlyph::new(glyph);
       df.entry(&dg);
     }
     df.finish()
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for VecGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for VecGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph.deref()
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
-    let mut self_iter = self.iter().map(|g| DynGlyph::from_glyph_u(g));
-    let mut other_iter = other.iter().map(|g| DynGlyph::from_glyph_u(g));
+    let mut self_iter = self.iter().map(|g| DynGlyph::new(g));
+    let mut other_iter = other.iter().map(|g| DynGlyph::new(g));
 
     loop {
       match (self_iter.next(), other_iter.next()) {
@@ -215,11 +211,11 @@ impl<G: Glyph> EncodedGlyph<G> for VecGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for VecGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for VecGlyph<G> {}
 
 impl<G> FromGlyph<G> for VecGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
@@ -244,19 +240,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for VecGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for VecGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for VecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for VecGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for VecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for VecGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -274,7 +270,7 @@ impl<'a> DoubleEndedIterator for VecGlyphIterator<'a> {
     let (offset, remainder) = self.offsets.split_last()?;
     self.offsets = remainder;
     let mut cursor = offset.cursor(0);
-    glyph_read(self.content, &mut cursor).ok()
+    Glyph::read(self.content, &mut cursor).ok()
   }
 }
 
@@ -285,13 +281,13 @@ impl<'a> ExactSizeIterator for VecGlyphIterator<'a> {
 }
 
 impl<'a> Iterator for VecGlyphIterator<'a> {
-  type Item = ParsedGlyph<'a>;
+  type Item = &'a Glyph;
 
   fn next(&mut self) -> Option<Self::Item> {
     let (offset, remainder) = self.offsets.split_first()?;
     self.offsets = remainder;
     let mut cursor = offset.cursor(0);
-    glyph_read(self.content, &mut cursor).ok()
+    Glyph::read(self.content, &mut cursor).ok()
   }
 
   fn size_hint(&self) -> (usize, Option<usize>) {
@@ -433,14 +429,14 @@ unsafe impl ZeroCopy for BasicVecGlyphHeader {}
 /// Types with a size of <= 4 bytes will be written as short glyphs and read
 /// from the glyph header.
 ///
-pub struct BasicVecGlyph<G: Glyph> {
+pub struct BasicVecGlyph<G: Deref<Target = Glyph>> {
   glyph:          G,
   header:         NonNull<BasicVecGlyphHeader>,
   tensor_lengths: NonNull<[U32]>,
   data:           NonNull<[u8]>,
 }
 
-impl<G: Glyph> BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> BasicVecGlyph<G> {
   /// Returns the glyph's type-specific header.
   fn header(&self) -> BasicVecGlyphHeader {
     unsafe { self.header.as_ref().clone() }
@@ -494,7 +490,7 @@ impl<G: Glyph> BasicVecGlyph<G> {
   }
 }
 
-impl<'a> BasicVecGlyph<ParsedGlyph<'a>> {
+impl<'a> BasicVecGlyph<&'a Glyph> {
   /// Get a reference to the contained array, but with a lifetime bound by
   /// the underlying byte buffer.
   pub fn as_bytes_parsed(&self) -> &'a [u8] {
@@ -515,7 +511,7 @@ impl<'a> BasicVecGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<G: Glyph> Debug for BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for BasicVecGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("BasicVecGlyph");
     df.field("dimension_lengths", &self.dimension_lengths());
@@ -603,13 +599,13 @@ impl<G: Glyph> Debug for BasicVecGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BasicVecGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph.deref()
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
@@ -722,14 +718,14 @@ impl<G: Glyph> EncodedGlyph<G> for BasicVecGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for BasicVecGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for BasicVecGlyph<G> {}
 
 impl<G> FromGlyph<G> for BasicVecGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::VecBasic) {
+    if let Err(err) = glyph.header().confirm_type(GlyphType::VecBasic) {
       return Err(err.into_fge(glyph));
     }
     let cursor = &mut 0;
@@ -756,19 +752,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for BasicVecGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for BasicVecGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for BasicVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for BasicVecGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -830,10 +826,7 @@ where
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{
-    collections::vec::BasicVecGlyphHeader, glyph::glyph_new,
-    util::BENCH_BUF_SIZE,
-  };
+  use crate::{collections::vec::BasicVecGlyphHeader, util::BENCH_BUF_SIZE};
   use ::test::Bencher;
   use alloc::vec::Vec;
   use std::{dbg, println, vec};
@@ -851,7 +844,7 @@ mod test {
       "modern",
       "Major-General",
     ];
-    let glyph = glyph_new(&to_encode)?;
+    let glyph = Glyph::new(&to_encode)?;
     println!("{:?}", &glyph);
 
     let vg = VecGlyph::from_glyph(glyph)?;
@@ -866,9 +859,9 @@ mod test {
     for i in 0..8 {
       num_vec.push(i as u8);
     }
-    let vg = glyph_new(&num_vec)?;
+    let vg = Glyph::new(&num_vec)?;
     assert_eq!(
-      vg.glyph_len(),
+      vg.as_ref().as_ref().len(),
       size_of::<GlyphHeader>()
         + round_to_word(size_of::<BasicVecGlyphHeader>() + num_vec.len())
     );
@@ -881,9 +874,9 @@ mod test {
   /// glyph; 3 items in 64 bytes.
   #[bench]
   fn enc_glyph_vec(b: &mut Bencher) {
-    let ga = glyph_new(&1).unwrap();
-    let gb = glyph_new(&2).unwrap();
-    let gc = glyph_new(&0xbadc_0ffe_e0dd_f00d_u64.to_be()).unwrap();
+    let ga = Glyph::new(&1).unwrap();
+    let gb = Glyph::new(&2).unwrap();
+    let gc = Glyph::new(&0xbadc_0ffe_e0dd_f00d_u64.to_be()).unwrap();
     let src = vec![ga, gb, gc];
 
     let mut target: alloc::boxed::Box<[u8]> =
@@ -905,9 +898,9 @@ mod test {
   /// glyph; 3 items in 64 bytes.
   #[bench]
   fn dec_glyph_vec(b: &mut Bencher) {
-    let ga = glyph_new(&1).unwrap();
-    let gb = glyph_new(&2).unwrap();
-    let gc = glyph_new(&3_u64.to_be()).unwrap();
+    let ga = Glyph::new(&1).unwrap();
+    let gb = Glyph::new(&2).unwrap();
+    let gc = Glyph::new(&3_u64.to_be()).unwrap();
     let src = vec![ga, gb, gc];
 
     let mut target: alloc::boxed::Box<[u8]> =
@@ -922,7 +915,7 @@ mod test {
     b.iter(|| {
       let cursor = &mut 0;
       for _ in 0..128 {
-        let _ = glyph_read(&target, cursor)?;
+        let _ = Glyph::read(&target, cursor)?;
       }
       Ok::<(), GlyphErr>(())
     });
@@ -931,11 +924,11 @@ mod test {
   #[test]
   fn test_dyn_enc_vec() -> Result<(), GlyphErr> {
     let to_encode: Vec<&dyn ToGlyph> = vec![&42u8, &42i64, &"world"];
-    let glyph = glyph_new(&to_encode)?;
+    let glyph = Glyph::new(&to_encode)?;
     dbg!(&glyph);
 
-    let vg = VecGlyph::from_glyph(glyph.borrow())?;
-    let g0 = u8::from_glyph(vg.get(0).unwrap())?;
+    let vg = VecGlyph::from_glyph(glyph.deref())?;
+    let g0 = u32::from_glyph(vg.get(0).unwrap())?;
     assert_eq!(g0, 42);
     let g1 = i64::from_glyph(vg.get(1).unwrap())?;
     assert_eq!(g1, 42);

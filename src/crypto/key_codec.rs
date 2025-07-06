@@ -28,18 +28,19 @@ use crate::{
   crypto::{
     algos::CryptoKey, CryptoKeyTypes, CryptographicHash, Key, Sha3Hash,
   },
-  glyph_read,
+  dynamic::DynGlyph,
   misc::DateTime,
   util::debug::{ShortHexDump, UnquotedDebugString},
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphType, ParsedGlyph, ToGlyph, UnsafeGlyph,
+  GlyphType, ToGlyph,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
   slice::from_raw_parts,
 };
+use std::ops::Deref;
 
 /// A zero-copy header containing metadata for cryptographic key glyphs.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -153,16 +154,16 @@ unsafe impl ZeroCopy for CryptoKeyHeader {}
   - The bounds checks for all of these things must take place upon object
     creation (i.e., `FromGlyph`), as this is assumed by accessors.
 */
-pub struct CryptoKeyGlyph<G: Glyph> {
+pub struct CryptoKeyGlyph<G: Deref<Target = Glyph>> {
   glyph:        G,
   header:       *const CryptoKeyHeader,
   public_bytes: *const u8,
   secret_bytes: *const u8,
-  metadata:     Option<UnsafeGlyph>,
-  signature:    Option<UnsafeGlyph>,
+  metadata:     Option<*const Glyph>,
+  signature:    Option<*const Glyph>,
 }
 
-impl<G: Glyph> CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> CryptoKeyGlyph<G> {
   /// Returns the glyph type header.
   fn header(&self) -> &CryptoKeyHeader {
     // SAFETY: Internal self ref of pinned (via `Glyph`) and immutable data.
@@ -193,15 +194,15 @@ impl<G: Glyph> CryptoKeyGlyph<G> {
   }
 
   /// Returns the metadata stored with the key, if present.
-  pub fn metadata(&self) -> Option<ParsedGlyph<'_>> {
+  pub fn metadata(&self) -> Option<&Glyph> {
     // SAFETY: Internal self-reference, protected by invariants from G
-    unsafe { self.metadata.as_ref().map(|m| m.into_parsed()) }
+    unsafe { self.metadata.as_ref().map(|m| &**m) }
   }
 
   /// Returns the metadata stored with the key, if present.
-  pub fn signature(&self) -> Option<ParsedGlyph<'_>> {
+  pub fn signature(&self) -> Option<&Glyph> {
     // SAFETY: Internal self-reference, protected by invariants from G
-    unsafe { self.signature.as_ref().map(|m| m.into_parsed()) }
+    unsafe { self.signature.as_ref().map(|m| &**m) }
   }
 
   pub fn fingerprint(&self) -> &Sha3Hash {
@@ -209,7 +210,7 @@ impl<G: Glyph> CryptoKeyGlyph<G> {
   }
 }
 
-impl<G: Glyph> ToGlyph for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> ToGlyph for CryptoKeyGlyph<G> {
   fn glyph_encode(
     &self,
     target: &mut [u8],
@@ -223,10 +224,10 @@ impl<G: Glyph> ToGlyph for CryptoKeyGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for CryptoKeyGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     // SAFETY: Remember, everything must be bounds checked here.
-    if let Err(e) = glyph.confirm_type(GlyphType::CryptoKey) {
+    if let Err(e) = glyph.header().confirm_type(GlyphType::CryptoKey) {
       return Err(FromGlyphErr::new(glyph, e));
     }
 
@@ -251,20 +252,20 @@ impl<G: Glyph> FromGlyph<G> for CryptoKeyGlyph<G> {
     cursor = round_to_word(cursor);
 
     let metadata = if ckh.has_metadata() {
-      let mg = match glyph_read(content, &mut cursor) {
+      let mg = match Glyph::read(content, &mut cursor) {
         Ok(mg) => mg,
         Err(e) => return Err(FromGlyphErr::new(glyph, e)),
       };
-      Some(UnsafeGlyph::from_parsed(mg))
+      Some(mg as *const Glyph)
     } else {
       None
     };
     let signature = if ckh.has_signature() {
-      let mg = match glyph_read(content, &mut cursor) {
+      let mg = match Glyph::read(content, &mut cursor) {
         Ok(mg) => mg,
         Err(e) => return Err(FromGlyphErr::new(glyph, e)),
       };
-      Some(UnsafeGlyph::from_parsed(mg))
+      Some(mg as *const Glyph)
     } else {
       None
     };
@@ -283,17 +284,17 @@ impl<G: Glyph> FromGlyph<G> for CryptoKeyGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for CryptoKeyGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    self.glyph.deref()
   }
 }
 
-impl<G: Glyph> Debug for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for CryptoKeyGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("CryptoKeyGlyph");
     df.field("type", &self.header().key_type());
@@ -331,21 +332,21 @@ impl<G: Glyph> Debug for CryptoKeyGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for CryptoKeyGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.glyph.as_ref() == other.glyph.as_ref()
   }
 }
 
-impl<G: Glyph> Eq for CryptoKeyGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for CryptoKeyGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for CryptoKeyGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for CryptoKeyGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for CryptoKeyGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self
       .header()
@@ -357,21 +358,21 @@ impl<G: Glyph> Ord for CryptoKeyGlyph<G> {
       .then_with(|| {
         self
           .metadata()
-          .map(|pg| pg.into_dyn())
-          .cmp(&other.metadata().map(|pg| pg.into_dyn()))
+          .map(|pg| DynGlyph::new(pg))
+          .cmp(&other.metadata().map(|pg| DynGlyph::new(pg)))
       })
       .then_with(|| {
         self
           .signature()
-          .map(|pg| pg.into_dyn())
-          .cmp(&other.signature().map(|pg| pg.into_dyn()))
+          .map(|pg| DynGlyph::new(pg))
+          .cmp(&other.signature().map(|pg| DynGlyph::new(pg)))
       })
       .then_with(|| self.glyph.as_ref().cmp(other.glyph.as_ref()))
   }
 }
 
 // Needed b/c struct contains raw pointers.
-unsafe impl<G: Glyph> Send for CryptoKeyGlyph<G> {}
+unsafe impl<G: Deref<Target = Glyph>> Send for CryptoKeyGlyph<G> {}
 
 impl<C: CryptoKey> ToGlyph for Key<C> {
   fn glyph_encode(

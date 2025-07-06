@@ -1,12 +1,13 @@
 use crate::{
   zerocopy::{ZeroCopy, I128},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
 };
+use std::ops::Deref;
 #[cfg(feature = "std")]
 use std::time::{Duration, SystemTime};
 
@@ -131,9 +132,9 @@ impl TryFrom<DateTime> for chrono::DateTime<chrono::Utc> {
 unsafe impl ZeroCopy for DateTime {}
 
 /// Describes a specific date and time, with nanosecond precision.
-pub struct DateTimeGlyph<G: Glyph>(G);
+pub struct DateTimeGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> DateTimeGlyph<G> {
   /// Returns the number of nanoseconds since the unix epoch (Jan 1, 1970 00:00)
   pub fn timestamp(&self) -> i128 {
     // SAFETY: FromGlyph has guaranteed the content length for us.
@@ -160,7 +161,7 @@ impl<G: Glyph> DateTimeGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for DateTimeGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     if cfg!(feature = "chrono") {
       match self.get_chrono_date_time() {
@@ -174,32 +175,30 @@ impl<G: Glyph> Debug for DateTimeGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DateTimeGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => self
-        .0
-        .borrow()
-        .content_padded()
-        .cmp(&other.0.borrow().content_padded()),
+      GlyphSorting::ByteOrder => {
+        self.0.content_padded().cmp(&other.0.content_padded())
+      },
       GlyphSorting::Experimental => self.timestamp().cmp(&other.timestamp()),
     }
   }
 }
 
-impl<G: Glyph> Eq for DateTimeGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for DateTimeGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for DateTimeGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::DateTime) {
+    if let Err(err) = glyph.header().confirm_type(GlyphType::DateTime) {
       return Err(err.into_fge(glyph));
     }
     // SAFETY: We're going to guarantee that the content is exactly 16 bytes.
@@ -212,19 +211,19 @@ impl<G: Glyph> FromGlyph<G> for DateTimeGlyph<G> {
   }
 }
 
-impl<G: Glyph> Ord for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for DateTimeGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for DateTimeGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for DateTimeGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for DateTimeGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -237,7 +236,7 @@ pub enum DateTimeErr {
 }
 
 #[cfg(feature = "std")]
-impl<G: Glyph> FromGlyph<G> for SystemTime {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     let ts = dtg.timestamp();
@@ -281,7 +280,7 @@ impl<G: Glyph> FromGlyph<G> for SystemTime {
 }
 
 #[cfg(feature = "chrono")]
-impl<G: Glyph> FromGlyph<G> for chrono::DateTime<chrono::Utc> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for chrono::DateTime<chrono::Utc> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     match dtg.get_chrono_date_time() {
@@ -351,7 +350,6 @@ fn timestamp_to_glyph(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::glyph_new;
   use chrono::DateTime;
   use std::dbg;
 
@@ -359,14 +357,14 @@ mod tests {
   fn date_time() {
     let dt = SystemTime::now();
     dbg!(&dt);
-    let dtg = glyph_new(&dt).unwrap();
+    let dtg = Glyph::new(&dt).unwrap();
     dbg!(&dtg);
-    let dt2 = SystemTime::from_glyph(dtg.borrow()).unwrap();
+    let dt2 = SystemTime::from_glyph(&*dtg).unwrap();
     dbg!(&dt2);
     assert_eq!(dt, dt2);
-    let dt3 = DateTime::<chrono::Utc>::from_glyph(dtg.borrow()).unwrap();
+    let dt3 = DateTime::<chrono::Utc>::from_glyph(dtg.deref()).unwrap();
     dbg!(&dt3);
-    let dt4 = DateTimeGlyph::from_glyph(dtg.borrow()).unwrap();
+    let dt4 = DateTimeGlyph::from_glyph(dtg.deref()).unwrap();
     dbg!(&dt4);
   }
 }

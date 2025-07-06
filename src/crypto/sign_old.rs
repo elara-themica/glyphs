@@ -4,11 +4,10 @@ use crate::{
     Sha3Hash,
   },
   glyph::glyph_close,
-  glyph_read,
   util::debug::ShortHexDump,
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U128, U16},
-  BoxGlyph, BoxGlyphBuf, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphType, ParsedGlyph, ToGlyph, UnsafeGlyph,
+  BoxGlyphBuf, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
+  GlyphType, ToGlyph, UnsafeGlyph,
 };
 use core::fmt::{Debug, Formatter};
 use ed25519_dalek::{Digest, Signature, SigningKey, VerifyingKey};
@@ -169,7 +168,7 @@ impl SignatureGlyphHeader {
 unsafe impl ZeroCopy for SignatureGlyphHeader {}
 
 /// A self-proving cryptographic signature, with metadata and proof-of-work.
-pub struct SignatureGlyph<G: Glyph> {
+pub struct SignatureGlyph<G: Deref<Target = Glyph>> {
   glyph:      G,
   header:     *const SignatureGlyphHeader,
   statement:  Option<UnsafeGlyph>,
@@ -179,7 +178,7 @@ pub struct SignatureGlyph<G: Glyph> {
   valid_for:  Option<Sha3Hash>,
 }
 
-impl<G: Glyph> SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> SignatureGlyph<G> {
   fn header(&self) -> &SignatureGlyphHeader {
     // SAFETY: Checked when decoded, pointers used b/c/o internal self-reference
     unsafe { &*self.header }
@@ -228,15 +227,15 @@ impl<G: Glyph> SignatureGlyph<G> {
   }
 
   /// Returns the signing statement made in this signature, if any.
-  pub fn statement(&self) -> Option<ParsedGlyph<'_>> {
+  pub fn statement(&self) -> Option<&Glyph> {
     // SAFETY: Checked when decoded, pointers used b/c/o internal self-reference
     self.statement.map(|ug| unsafe { ug.into_parsed() })
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for SignatureGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(e) = glyph.confirm_type(GlyphType::Signature) {
+    if let Err(e) = glyph.header().confirm_type(GlyphType::Signature) {
       return Err(FromGlyphErr::new(glyph, e));
     }
     let content = glyph.content_padded();
@@ -247,7 +246,7 @@ impl<G: Glyph> FromGlyph<G> for SignatureGlyph<G> {
     };
     let statement =
       if header.flags & SignatureGlyphHeader::FLAG_HAS_STATEMENT != 0 {
-        match glyph_read(content, &mut cursor) {
+        match Glyph::read(content, &mut cursor) {
           Ok(glyph) => Some(glyph),
           Err(e) => return Err(FromGlyphErr::new(glyph, e)),
         }
@@ -291,7 +290,7 @@ impl<G: Glyph> FromGlyph<G> for SignatureGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for SignatureGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("SignatureGlyph");
     df.field("sig_type", &self.sig_type());

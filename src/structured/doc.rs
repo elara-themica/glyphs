@@ -2,10 +2,10 @@
 use crate::{
   crypto::GlyphHash,
   dynamic::DynGlyph,
-  glyph_close, glyph_read,
+  glyph_close,
   zerocopy::{ZeroCopy, U16},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -14,7 +14,7 @@ use core::{
   ptr::NonNull,
 };
 use smallvec::SmallVec;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// The specific type header for document glyphs.
 ///
@@ -125,9 +125,9 @@ impl<I, B> Document<I, B> {
     previous_versions: impl Iterator<Item = &'b DocVer>,
   ) -> Result<Document<I, B>, GlyphErr>
   where
-    G: Glyph,
-    I: FromGlyph<ParsedGlyph<'a>> + ToGlyph,
-    B: FromGlyph<ParsedGlyph<'a>> + ToGlyph,
+    G: Deref<Target = Glyph>,
+    I: FromGlyph<&'a Glyph> + ToGlyph,
+    B: FromGlyph<&'a Glyph> + ToGlyph,
   {
     let id_glyph = parent.id_glyph();
     let body_glyph = parent.body_glyph();
@@ -261,14 +261,14 @@ where
 //   but an invalid `VecGlyph`)
 // - The list of previous `DocVer`s is valid and fully contained within the
 //   `DocGlyph`'s buffer.
-pub struct DocGlyph<G: Glyph> {
+pub struct DocGlyph<G: Deref<Target = Glyph>> {
   glyph:   G,
   parents: NonNull<[DocVer]>,
-  id:      *const [u8],
-  body:    *const [u8],
+  id:      *const Glyph,
+  body:    *const Glyph,
 }
 
-impl<G: Glyph> DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> DocGlyph<G> {
   /// Returns a slice of hashes of previous versions of this document.
   pub fn previous_versions(&self) -> &[DocVer] {
     // SAFETY: Self-reference to self.glyph, which is immutable.
@@ -276,33 +276,33 @@ impl<G: Glyph> DocGlyph<G> {
   }
 
   /// Returns the document's ID
-  pub fn id_glyph(&self) -> ParsedGlyph<'_> {
+  pub fn id_glyph(&self) -> &Glyph {
     // SAFETY: Binds to lifetime of self.
-    unsafe { ParsedGlyph::from_buffer(&*self.id) }
+    unsafe { &*self.id }
   }
 
   /// Returns the document's body
-  pub fn body_glyph(&self) -> ParsedGlyph<'_> {
+  pub fn body_glyph(&self) -> &Glyph {
     // SAFETY: Binds to lifetime of self.
-    unsafe { ParsedGlyph::from_buffer(&*self.body) }
+    unsafe { &*self.body }
   }
 }
 
-impl<'a> DocGlyph<ParsedGlyph<'a>> {
+impl<'a> DocGlyph<&'a Glyph> {
   /// Returns the document's ID, parsed from an underlying buffer.
-  pub fn id_parse(&self) -> ParsedGlyph<'a> {
+  pub fn id_parse(&self) -> &'a Glyph {
     // SAFETY: Bound to lifetime of underlying parsed glyph
-    unsafe { ParsedGlyph::from_buffer(&*self.id) }
+    unsafe { &*self.id }
   }
 
   /// Returns the document's body, parsed from an underlying buffer.
-  pub fn body_parse(&self) -> ParsedGlyph<'a> {
+  pub fn body_parse(&self) -> &'a Glyph {
     // SAFETY: Bound to lifetime of underlying parsed glyph
-    unsafe { ParsedGlyph::from_buffer(&*self.body) }
+    unsafe { &*self.body }
   }
 }
 
-impl<G: Glyph> Debug for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for DocGlyph<G> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut b = f.debug_struct("DocGlyph");
     b.field("replaces", &self.previous_versions());
@@ -312,12 +312,12 @@ impl<G: Glyph> Debug for DocGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DocGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
+  fn glyph(&self) -> &Glyph {
     self.glyph.borrow()
   }
 
@@ -328,13 +328,13 @@ impl<G: Glyph> EncodedGlyph<G> for DocGlyph<G> {
       },
       GlyphSorting::Experimental => {
         // Sort on ID, Body, and finally old versions.
-        let self_id = DynGlyph::from_glyph_u(self.id_glyph());
-        let other_id = DynGlyph::from_glyph_u(other.id_glyph());
+        let self_id = DynGlyph::new(self.id_glyph());
+        let other_id = DynGlyph::new(other.id_glyph());
         self_id
           .glyph_ord(&other_id, sorting)
           .then_with(|| {
-            let self_body = DynGlyph::from_glyph_u(self.body_glyph());
-            let other_body = DynGlyph::from_glyph_u(other.body_glyph());
+            let self_body = DynGlyph::new(self.body_glyph());
+            let other_body = DynGlyph::new(other.body_glyph());
             self_body.glyph_ord(&other_body, sorting)
           })
           .then_with(|| self.previous_versions().cmp(other.previous_versions()))
@@ -343,9 +343,9 @@ impl<G: Glyph> EncodedGlyph<G> for DocGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for DocGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for DocGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for DocGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Document) {
       return Err(FromGlyphErr::new(source, err.into()));
@@ -362,16 +362,16 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
       Ok(versions) => versions,
       Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
-    let id_glyph = match glyph_read(content, cursor) {
+    let id_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
-    let id = id_glyph.as_ref() as *const [u8];
-    let body_glyph = match glyph_read(content, cursor) {
+    let id = id_glyph as *const Glyph;
+    let body_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(FromGlyphErr::new(source, err.into())),
     };
-    let body = body_glyph.as_ref() as *const [u8];
+    let body = body_glyph as *const Glyph;
 
     let parents = NonNull::from(ov);
 
@@ -384,19 +384,19 @@ impl<G: Glyph> FromGlyph<G> for DocGlyph<G> {
   }
 }
 
-impl<G: Glyph> Ord for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for DocGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for DocGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for DocGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for DocGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -405,10 +405,7 @@ impl<G: Glyph> PartialOrd for DocGlyph<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{
-    glyph_new,
-    util::{init_test_logger, BENCH_BUF_SIZE},
-  };
+  use crate::util::{init_test_logger, BENCH_BUF_SIZE};
   use ::test::Bencher;
   use alloc::string::String;
   use std::{dbg, iter, println};
@@ -418,13 +415,13 @@ mod test {
     init_test_logger();
 
     let root = Document::new((), ());
-    let rg = glyph_new(&root)?;
+    let rg = Glyph::new(&root)?;
     dbg!(&rg);
     let rg = DocGlyph::from_glyph(rg)?;
     dbg!(&rg);
     let updated =
       Document::<(), ()>::update(&rg, iter::once(&Default::default()))?;
-    let ug = glyph_new(&updated)?;
+    let ug = Glyph::new(&updated)?;
     dbg!(&ug);
     let ug_len = ug.glyph_len();
     let ug = DocGlyph::from_glyph(Glyph::borrow(&ug))?;
@@ -442,7 +439,7 @@ mod test {
       updated.glyph_encode(target, cursor)?;
 
       while *cursor + ug_len < BENCH_BUF_SIZE {
-        let prev_glyph = glyph_read(target, prev_offset)?;
+        let prev_glyph = Glyph::read(target, prev_offset)?;
         let prev_glyph = DocGlyph::from_glyph(prev_glyph)?;
         let updated = Document::<(), ()>::update(
           &prev_glyph,
@@ -460,7 +457,7 @@ mod test {
   #[test]
   fn glyph_doc() -> Result<(), GlyphErr> {
     let first_doc = Document::new(42u32, "Life, the Universe, and Everything");
-    let first_glyph = glyph_new(&first_doc)?;
+    let first_glyph = Glyph::new(&first_doc)?;
     println!("First glyph encoded as:\n {:?}", &first_glyph);
 
     let first_doc_glyph = DocGlyph::from_glyph(first_glyph)?;
@@ -480,7 +477,7 @@ mod test {
     )?;
     second_doc.set_body(String::from("7 (good) times 6 (evil)"));
 
-    let second_glyph = glyph_new(&second_doc)?;
+    let second_glyph = Glyph::new(&second_doc)?;
     println!("Second glyph encoded as: \n {:?}", &second_glyph);
 
     let second_doc_glyph = DocGlyph::from_glyph(second_glyph)?;

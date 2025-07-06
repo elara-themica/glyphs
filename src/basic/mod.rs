@@ -6,6 +6,7 @@ use crate::{
 };
 #[allow(unused_imports)]
 use core::str::from_utf8;
+use std::ops::Deref;
 
 mod bool;
 pub use bool::*;
@@ -48,25 +49,26 @@ where
 
 impl<B, T> FromGlyph<B> for Option<T>
 where
-  B: Glyph,
+  B: Deref<Target = Glyph>,
   T: FromGlyph<B>,
 {
   fn from_glyph(source: B) -> Result<Self, FromGlyphErr<B>> {
     let type_id = source.header().glyph_type();
     if type_id == GlyphType::Unit {
-      let unit = match UnitGlyph::from_glyph(source.borrow()) {
+      let unit = match UnitGlyph::from_glyph(source.deref()) {
         Ok(unit) => unit,
         Err(err) => {
           let (_glyph, err) = err.into_parts();
-          return Err(err.into_fge(source));
+          return Err(FromGlyphErr::new(source, err));
         },
       };
-      if unit.type_id().eq(&UnitTypes::Nothing) {
+      let unit_type_id = *unit.type_id();
+      if unit_type_id.eq(&UnitTypes::Nothing) {
         Ok(None)
       } else {
         Err(err!(
           debug,
-          GlyphErr::UnexpectedUnitType(*unit.type_id()).into_fge(source)
+          FromGlyphErr::new(source, GlyphErr::UnexpectedUnitType(unit_type_id))
         ))
       }
     } else {
@@ -81,7 +83,6 @@ where
 mod test {
   use super::*;
   use crate::{
-    glyph_new, glyph_read,
     util::{
       debug::HexDump, simple_codec_slice_test, simple_codec_test,
       BENCH_BUF_SIZE,
@@ -98,13 +99,9 @@ mod test {
     simple_codec_test(());
     simple_codec_test(Option::<u32>::None);
     simple_codec_test(Option::<u32>::Some(0xDEAD_BEEF));
-    simple_codec_test(42u8);
-    simple_codec_test(0xF00Du16);
     simple_codec_test(0xDEADBEEFu32);
     simple_codec_test(0xF00DDEADBEEFF00Du64);
     simple_codec_test(0x0102030405060708090A0B0C0D0E0Fu128);
-    simple_codec_test(-8i8);
-    simple_codec_test(-16i16);
     simple_codec_test(-32i32);
     simple_codec_test(-64i64);
     simple_codec_test(-128i128);
@@ -170,7 +167,7 @@ mod test {
         b.iter(|| {
           let cursor = &mut 0;
           loop {
-            let glyph = $crate::glyph_read(&buf, cursor)?;
+            let glyph = $crate::Glyph::read(&buf, cursor)?;
             let _decoded = <$prim>::from_glyph(glyph)?;
           }
           #[allow(unreachable_code)]
@@ -181,8 +178,6 @@ mod test {
     };
   }
 
-  gen_bench!(enc_glyph_u8, dec_glyph_u8, u8);
-  gen_bench!(enc_glyph_u16, dec_glyph_u16, u16);
   gen_bench!(enc_glyph_u32, dec_glyph_u32, u32);
   gen_bench!(enc_glyph_u64, dec_glyph_u64, u64);
 
@@ -200,16 +195,16 @@ mod test {
 
     dbg!(&HexDump(buf.as_ref()));
 
-    let mut outside = 0i128;
+    let mut outside = 0i32;
 
     // Read all the glyphs from the buffer
     b.bytes = BENCH_BUF_SIZE as u64;
     b.iter::<_, _>(|| -> Result<(), GlyphErr> {
       let cursor = &mut 0;
       loop {
-        let glyph = glyph_read(&buf, cursor)?;
+        let glyph = Glyph::read(&buf, cursor)?;
         let decoded = IntGlyph::from_glyph(glyph)?;
-        outside = decoded.get();
+        outside = decoded.get_i32()?;
       }
     });
     Ok(())
@@ -219,16 +214,16 @@ mod test {
   fn codec_glyph_str() -> Result<(), GlyphErr> {
     // Basic encoding
     let text = "hunter2";
-    let glyph = glyph_new(text)?;
+    let glyph = Glyph::new(text)?;
     dbg!(&glyph);
 
-    let read_str = <&str>::from_glyph(glyph.borrow())?;
+    let read_str = <&str>::from_glyph(glyph.as_ref())?;
     assert_eq!(read_str, text);
 
-    let read_string = String::from_glyph(glyph.borrow())?;
+    let read_string = String::from_glyph(glyph.as_ref())?;
     assert_eq!(read_string.as_str(), text);
 
-    let str_glyph = StringGlyph::from_glyph(glyph.borrow())?;
+    let str_glyph = StringGlyph::from_glyph(glyph.as_ref())?;
     assert_eq!(str_glyph.deref(), text);
 
     Ok(())
@@ -242,7 +237,7 @@ mod test {
                  I am the very model of a scientist Salarian!";
 
     let target = buf.as_mut();
-    let glyph = glyph_new(value)?;
+    let glyph = Glyph::new(value)?;
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
 
     b.bytes = BENCH_BUF_SIZE as u64;
@@ -255,7 +250,7 @@ mod test {
 
     let cursor = &mut 0;
     for _ in 0..iterations {
-      let glyph = glyph_read(&buf, cursor)?;
+      let glyph = Glyph::read(&buf, cursor)?;
       let as_read = <&str>::from_glyph(glyph)?;
       assert_eq!(value, as_read);
     }
@@ -269,19 +264,31 @@ mod test {
     let value = "My xenoscience studies range from urban to agrarian, \
                  I am the very model of a scientist Salarian!";
 
-    let glyph = glyph_new(value)?;
+    let glyph = Glyph::new(value)?;
+    dbg!(&glyph);
+
+    // let mut buf = [0xFFu8; 120];
+    // let mut cursor = 0;
+    // value.glyph_encode(&mut buf, &mut cursor)?;
+    // dbg!(cursor);
+    // dbg!(HexDump(&buf[..]));
+
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
+    dbg!(&glyph.glyph_len());
+    dbg!(&iterations);
 
     let cursor = &mut 0;
     for _ in 0..iterations {
+      dbg!(&cursor);
       value.glyph_encode(buf.as_mut(), cursor)?;
     }
+    std::println!("HERE");
 
     b.bytes = BENCH_BUF_SIZE as u64;
     b.iter(|| {
       let cursor = &mut 0;
       for _ in 0..iterations {
-        let glyph = glyph_read(&buf, cursor)?;
+        let glyph = Glyph::read(&buf, cursor)?;
         let _ = <&str>::from_glyph(glyph)?;
       }
       Ok::<(), GlyphErr>(())
@@ -292,7 +299,7 @@ mod test {
   #[test]
   fn codec_glyph_char() {
     let value = 'K';
-    let glyph = glyph_new(&value).unwrap();
+    let glyph = Glyph::new(&value).unwrap();
     let as_read = char::from_glyph(glyph).unwrap();
     assert_eq!(value, as_read);
   }
@@ -303,7 +310,7 @@ mod test {
       core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
     let value = 'K';
 
-    let glyph = glyph_new(&value).unwrap();
+    let glyph = Glyph::new(&value).unwrap();
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
 
     b.bytes = BENCH_BUF_SIZE as u64;
@@ -316,7 +323,7 @@ mod test {
 
     let cursor = &mut 0;
     for _ in 0..iterations {
-      let glyph = glyph_read(&buf, cursor).unwrap();
+      let glyph = Glyph::read(&buf, cursor).unwrap();
       let as_read = char::from_glyph(glyph).unwrap();
       assert_eq!(value, as_read);
     }
@@ -328,7 +335,7 @@ mod test {
       core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
     let value = 'K';
 
-    let glyph = glyph_new(&value).unwrap();
+    let glyph = Glyph::new(&value).unwrap();
     let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
 
     let cursor = &mut 0;
@@ -340,7 +347,7 @@ mod test {
     b.iter(|| {
       let cursor = &mut 0;
       for _ in 0..iterations {
-        let glyph = glyph_read(&buf, cursor)?;
+        let glyph = Glyph::read(&buf, cursor)?;
         let _ = char::from_glyph(glyph)?;
       }
       Ok::<(), GlyphErr>(())

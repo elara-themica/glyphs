@@ -3,18 +3,19 @@ use crate::{
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{round_to_word, ZeroCopy},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphType, ParsedGlyph, ToGlyph,
+  GlyphType, ToGlyph,
 };
 use core::{
   cmp::Ordering,
   fmt::{Debug, Formatter},
 };
+use std::ops::Deref;
 
 /// A glyph containing a boolean value.
 ///
-pub struct BoolGlyph<G: Glyph>(G);
+pub struct BoolGlyph<G: Deref<Target = Glyph>>(G);
 
-impl<G: Glyph> BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> BoolGlyph<G> {
   /// Fetches the glyph's truth value.
   ///
   /// `BoolGlyph`s are short glyphs, with the content stored in the length
@@ -25,9 +26,9 @@ impl<G: Glyph> BoolGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for BoolGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.confirm_type(GlyphType::Bool) {
+    if let Err(err) = source.header().confirm_type(GlyphType::Bool) {
       Err(FromGlyphErr::new(source, err))
     } else {
       Ok(BoolGlyph(source))
@@ -35,38 +36,38 @@ impl<G: Glyph> FromGlyph<G> for BoolGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for BoolGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(f, "BoolGlyph({:?})", self.get())?;
     Ok(())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BoolGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
-impl<G: Glyph> Eq for BoolGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for BoolGlyph<G> {}
 
-impl<G: Glyph> Ord for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for BoolGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.get().cmp(&other.get())
   }
 }
 
-impl<G: Glyph> PartialEq for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for BoolGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.get() == other.get()
   }
 }
 
-impl<G: Glyph> PartialOrd for BoolGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for BoolGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -254,9 +255,11 @@ where
 
 impl<B> Eq for BitVec<B> where B: AsRef<[u8]> {}
 
-impl<G: Glyph> FromGlyph<G> for BitVec<alloc::boxed::Box<[u8]>> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G>
+  for BitVec<alloc::boxed::Box<[u8]>>
+{
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    match BitVec::<&[u8]>::from_glyph(source.borrow()) {
+    match BitVec::<&[u8]>::from_glyph(source.deref()) {
       Ok(b) => {
         let data = alloc::boxed::Box::<[u8]>::from(b.data);
         Ok(BitVec {
@@ -273,11 +276,9 @@ impl<G: Glyph> FromGlyph<G> for BitVec<alloc::boxed::Box<[u8]>> {
   }
 }
 
-impl<'a> FromGlyph<ParsedGlyph<'a>> for BitVec<&'a [u8]> {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
-    let bvg = BitVecGlyph::<ParsedGlyph<'a>>::from_glyph(source)?;
+impl<'a> FromGlyph<&'a Glyph> for BitVec<&'a [u8]> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+    let bvg = BitVecGlyph::<&'a Glyph>::from_glyph(source)?;
     let bv = bvg.bit_vector_parsed();
     Ok(bv)
   }
@@ -449,11 +450,11 @@ where
 }
 
 /// A glyph containing a dense (8 bits per byte) bit vector.
-pub struct BitVecGlyph<G: Glyph> {
+pub struct BitVecGlyph<G: Deref<Target = Glyph>> {
   glyph: G,
 }
 
-impl<G: Glyph> BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> BitVecGlyph<G> {
   const BIT_PADDING_MASK: u8 = 0b0000_0111;
 
   /// Returns the actual bit vector contained in this glyph.
@@ -472,17 +473,16 @@ impl<G: Glyph> BitVecGlyph<G> {
   }
 }
 
-impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
+impl<'a> BitVecGlyph<&'a Glyph> {
   /// Returns the actual bit vector contained in this glyph, but with a lifetime
   /// bound only to the underlying buffer.
   ///
   /// See the [`BitVec`] type for more details, though note that the
   /// resulting BitVector will be immutable.
   pub fn bit_vector_parsed(&self) -> BitVec<&'a [u8]> {
-    if let (Some(bits_padding), Some(buffer)) = (
-      self.glyph.content_parsed().get(0),
-      self.glyph.content_parsed().get(1..),
-    ) {
+    if let (Some(bits_padding), Some(buffer)) =
+      (self.glyph.content().get(0), self.glyph.content().get(1..))
+    {
       let bits_padding = *bits_padding & Self::BIT_PADDING_MASK;
       BitVec::from_bytes(buffer, bits_padding)
     } else {
@@ -491,7 +491,7 @@ impl<'a> BitVecGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<G: Glyph> Debug for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for BitVecGlyph<G> {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     let mut df = f.debug_struct("BitVectorGlyph");
     let bv = self.bit_vector();
@@ -506,19 +506,19 @@ impl<G: Glyph> Debug for BitVecGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BitVecGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph.deref()
   }
 }
 
-impl<G: Glyph> Eq for BitVecGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for BitVecGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for BitVecGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     match source.header().confirm_type(GlyphType::VecBool) {
       Ok(_) => Ok(BitVecGlyph { glyph: source }),
@@ -527,19 +527,19 @@ impl<G: Glyph> FromGlyph<G> for BitVecGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for BitVecGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for BitVecGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for BitVecGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for BitVecGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.bit_vector().cmp(&other.bit_vector())
   }
@@ -547,13 +547,13 @@ impl<G: Glyph> Ord for BitVecGlyph<G> {
 
 impl<G> FromGlyph<G> for bool
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Bool) {
-      return Err(err.into_fge(source));
+      return Err(FromGlyphErr::new(source, err));
     }
-    let content = source.short_content();
+    let content = source.header().short_content();
     let value = u32::from_le_bytes(*content);
     Ok(value != 0)
   }
@@ -624,7 +624,6 @@ impl ToGlyph for [bool] {
 #[allow(unused_imports)]
 mod tests {
   use super::*;
-  use crate::glyph_new;
   use alloc::vec::Vec;
   use std::{dbg, vec};
 
@@ -632,7 +631,7 @@ mod tests {
   fn bit_vec() {
     // Vector of bool
     let bools = vec![true, false, true, false, true, true, false, true];
-    let bools_g = glyph_new(&bools[..]).unwrap();
+    let bools_g = Glyph::new(&bools[..]).unwrap();
     let bools_g = BitVecGlyph::<_>::from_glyph(bools_g).unwrap();
 
     for (bools_val, bools_g_val) in
@@ -648,7 +647,7 @@ mod tests {
     assert!(bvz.iter().collect::<Vec<_>>().is_empty()); // Empty iter
 
     // Basic BitVecG ops
-    let bvz_g = glyph_new(&bvz).unwrap();
+    let bvz_g = Glyph::new(&bvz).unwrap();
     let bvz_g = BitVecGlyph::<_>::from_glyph(bvz_g).unwrap();
     assert_eq!(bvz_g.bit_vector(), bvz);
 
@@ -665,9 +664,9 @@ mod tests {
       }
 
       // Encode and decode the BitVector
-      let bvg = glyph_new(&bv).unwrap();
+      let bvg = Glyph::new(&bv).unwrap();
       // dbg!(&bvg);
-      let decoded = BitVec::<&[u8]>::from_glyph(bvg.borrow()).unwrap();
+      let decoded = BitVec::<&[u8]>::from_glyph(bvg.as_ref()).unwrap();
       // dbg!(&decoded);
 
       // Check equality between original and decoded

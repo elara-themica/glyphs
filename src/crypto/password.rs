@@ -6,7 +6,7 @@ use crate::{
   },
   util::debug::ShortHexDump,
   zerocopy::{round_to_word, ZeroCopy, U16},
-  EncodedGlyph, FromGlyphErr, GlyphSorting, ParsedGlyph,
+  EncodedGlyph, FromGlyphErr, GlyphSorting,
 };
 use argon2::{Algorithm, Version};
 use core::{
@@ -16,6 +16,7 @@ use core::{
   slice::from_raw_parts,
 };
 use rand::{CryptoRng, Rng, RngCore};
+use std::ops::Deref;
 
 // /// A password to be used as an encryption and/or decryption key.
 // pub struct PasswordKey<T>
@@ -382,13 +383,13 @@ impl From<PasswordAlgorithm> for U16 {
   }
 }
 
-pub struct PasswordGlyph<G: Glyph> {
+pub struct PasswordGlyph<G: Deref<Target = Glyph>> {
   glyph:  G,
   salt:   *const u8,
   digest: *const u8,
 }
 
-impl<G: Glyph> PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> PasswordGlyph<G> {
   fn header(&self) -> &PasswordGlyphHeader {
     let content = self.glyph.content_padded();
     // SAFETY: `from_glyph()` guarantees that contents contains a valid header.
@@ -448,7 +449,7 @@ impl<G: Glyph> PasswordGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for PasswordGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     /*  SAFETY:  We guarantee the following:
 
@@ -458,7 +459,7 @@ impl<G: Glyph> FromGlyph<G> for PasswordGlyph<G> {
        - If the password type is known, the salt and digest lengths match
          what is expected by those password algorithms.
     */
-    if let Err(err) = glyph.confirm_type(GlyphType::PasswordHash) {
+    if let Err(err) = glyph.header().confirm_type(GlyphType::PasswordHash) {
       return Err(err.into_fge(glyph));
     }
     let content = glyph.content();
@@ -507,7 +508,7 @@ impl<G: Glyph> FromGlyph<G> for PasswordGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for PasswordGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("PasswordGlyph");
     df.field("salt", &ShortHexDump(self.salt(), 0));
@@ -527,40 +528,40 @@ impl<G: Glyph> Debug for PasswordGlyph<G> {
   }
 }
 
-impl<G: Glyph> PartialEq for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for PasswordGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> Eq for PasswordGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for PasswordGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for PasswordGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for PasswordGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, GlyphSorting::default())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for PasswordGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for PasswordGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
       GlyphSorting::ByteOrder => {
-        let a = self.glyph.borrow();
-        let b = other.glyph.borrow();
+        let a = self.glyph.deref();
+        let b = other.glyph.deref();
         a.glyph_type()
           .cmp(&b.glyph_type())
           .then_with(|| a.content().cmp(b.content()))
@@ -580,9 +581,7 @@ impl<G: Glyph> EncodedGlyph<G> for PasswordGlyph<G> {
 #[allow(unused)]
 mod test {
   use super::*;
-  use crate::{
-    crypto::test::TEST_PLAINTEXT, glyph_new, util::init_test_logger,
-  };
+  use crate::{crypto::test::TEST_PLAINTEXT, util::init_test_logger};
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;
@@ -605,7 +604,7 @@ mod test {
     assert!(!epw2.matches(pw1).unwrap());
 
     //== Round Trip Codec of `Password` into `PasswordGlyph` ==//
-    let g = glyph_new(&epw1).unwrap();
+    let g = Glyph::new(&epw1).unwrap();
     std::dbg!(&g);
     let pwg = PasswordGlyph::from_glyph(g).unwrap();
     dbg!(&pwg);

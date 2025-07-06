@@ -1,15 +1,14 @@
 //! Glyph (de-)serialization for tuples and the dynamic [`TupleGlyph`].
 
 use crate::{
-  dynamic::DynGlyph, glyph_close, glyph_read, EncodedGlyph, FromGlyph,
-  FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphSorting, GlyphType,
-  ParsedGlyph, ToGlyph,
+  dynamic::DynGlyph, glyph_close, EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
+  GlyphErr, GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// A glyph containing a series of other glyphs.
 ///
@@ -19,11 +18,11 @@ use std::cmp::Ordering;
 /// the variable length of each contained item.
 pub struct TupleGlyph<T>(T)
 where
-  T: Glyph;
+  T: Deref<Target = Glyph>;
 
 impl<T> TupleGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   /// Returns the `index`-th item in the Tuple Glyph.
   ///
@@ -33,240 +32,229 @@ where
   ///
   /// Typically, an entire `TupleGlyph` can be decoded more efficiently by using
   /// the `FromGlyph` trait on the target tuple type.
-  pub fn get(&self, index: usize) -> Result<ParsedGlyph<'_>, GlyphErr> {
+  pub fn get(&self, index: usize) -> Result<&Glyph, GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     for _ in 0..index {
-      let _ = glyph_read(content, cursor)?;
+      let _ = Glyph::read(content, cursor)?;
     }
-    glyph_read(content, cursor)
+    Glyph::read(content, cursor)
   }
 
   /// Decodes a 1-tuple
-  pub fn single<'g, A: FromGlyph<ParsedGlyph<'g>>>(
-    &'g self,
-  ) -> Result<A, GlyphErr> {
+  pub fn single<'g, A: FromGlyph<&'g Glyph>>(&'g self) -> Result<A, GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
-    Ok(A::from_glyph(glyph_read(content, cursor)?)?)
+    Ok(A::from_glyph(Glyph::read(content, cursor)?)?)
   }
 
   /// Decodes a 2-tuple
-  pub fn double<
-    'g,
-    A: FromGlyph<ParsedGlyph<'g>>,
-    B: FromGlyph<ParsedGlyph<'g>>,
-  >(
+  pub fn double<'g, A: FromGlyph<&'g Glyph>, B: FromGlyph<&'g Glyph>>(
     &'g self,
   ) -> Result<(A, B), GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 3-tuple
   pub fn triple<
     'g,
-    A: FromGlyph<ParsedGlyph<'g>>,
-    B: FromGlyph<ParsedGlyph<'g>>,
-    C: FromGlyph<ParsedGlyph<'g>>,
+    A: FromGlyph<&'g Glyph>,
+    B: FromGlyph<&'g Glyph>,
+    C: FromGlyph<&'g Glyph>,
   >(
     &'g self,
   ) -> Result<(A, B, C), GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 4-tuple
   pub fn quadruple<
     'g,
-    A: FromGlyph<ParsedGlyph<'g>>,
-    B: FromGlyph<ParsedGlyph<'g>>,
-    C: FromGlyph<ParsedGlyph<'g>>,
-    D: FromGlyph<ParsedGlyph<'g>>,
+    A: FromGlyph<&'g Glyph>,
+    B: FromGlyph<&'g Glyph>,
+    C: FromGlyph<&'g Glyph>,
+    D: FromGlyph<&'g Glyph>,
   >(
     &'g self,
   ) -> Result<(A, B, C, D), GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 5-tuple
   pub fn quintuple<
     'g,
-    A: FromGlyph<ParsedGlyph<'g>>,
-    B: FromGlyph<ParsedGlyph<'g>>,
-    C: FromGlyph<ParsedGlyph<'g>>,
-    D: FromGlyph<ParsedGlyph<'g>>,
-    E: FromGlyph<ParsedGlyph<'g>>,
+    A: FromGlyph<&'g Glyph>,
+    B: FromGlyph<&'g Glyph>,
+    C: FromGlyph<&'g Glyph>,
+    D: FromGlyph<&'g Glyph>,
+    E: FromGlyph<&'g Glyph>,
   >(
     &'g self,
   ) -> Result<(A, B, C, D, E), GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
-      E::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
+      E::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 6-tuple
   pub fn sextuple<
     'g,
-    A: FromGlyph<ParsedGlyph<'g>>,
-    B: FromGlyph<ParsedGlyph<'g>>,
-    C: FromGlyph<ParsedGlyph<'g>>,
-    D: FromGlyph<ParsedGlyph<'g>>,
-    E: FromGlyph<ParsedGlyph<'g>>,
-    F: FromGlyph<ParsedGlyph<'g>>,
+    A: FromGlyph<&'g Glyph>,
+    B: FromGlyph<&'g Glyph>,
+    C: FromGlyph<&'g Glyph>,
+    D: FromGlyph<&'g Glyph>,
+    E: FromGlyph<&'g Glyph>,
+    F: FromGlyph<&'g Glyph>,
   >(
     &'g self,
   ) -> Result<(A, B, C, D, E, F), GlyphErr> {
     let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
-      E::from_glyph(glyph_read(content, cursor)?)?,
-      F::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
+      E::from_glyph(Glyph::read(content, cursor)?)?,
+      F::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Iterate through the elements of the tuple.
-  pub fn iter(&self) -> impl Iterator<Item = ParsedGlyph<'_>> {
+  pub fn iter(&self) -> impl Iterator<Item = &Glyph> {
     let content = self.0.content_padded();
     IterTuple(content, 0)
   }
 }
 
-impl<'a> TupleGlyph<ParsedGlyph<'a>> {
+impl<'a> TupleGlyph<&'a Glyph> {
   /// Iterate through the elements of the tuple, but with the resulting
   /// lifetimes bound to the underlying byte buffer.
-  pub fn iter_parsed(&self) -> impl Iterator<Item = ParsedGlyph<'a>> {
-    let content = self.0.content_parsed();
+  pub fn iter_parsed(&self) -> impl Iterator<Item = &'a Glyph> {
+    let content = self.0.content();
     IterTuple(content, 0)
   }
 
   /// Decodes a 1-tuple
-  pub fn single_parsed<A: FromGlyph<ParsedGlyph<'a>>>(
-    &self,
-  ) -> Result<A, GlyphErr> {
-    let content = self.0.content_padded_parsed();
+  pub fn single_parsed<A: FromGlyph<&'a Glyph>>(&self) -> Result<A, GlyphErr> {
+    let content = self.0.content_padded();
     let cursor = &mut 0;
-    Ok(A::from_glyph(glyph_read(content, cursor)?)?)
+    Ok(A::from_glyph(Glyph::read(content, cursor)?)?)
   }
 
   /// Decodes a 2-tuple
-  pub fn double_parsed<
-    A: FromGlyph<ParsedGlyph<'a>>,
-    B: FromGlyph<ParsedGlyph<'a>>,
-  >(
+  pub fn double_parsed<A: FromGlyph<&'a Glyph>, B: FromGlyph<&'a Glyph>>(
     &self,
   ) -> Result<(A, B), GlyphErr> {
-    let content = self.0.content_padded_parsed();
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 3-tuple
   pub fn triple_parsed<
-    A: FromGlyph<ParsedGlyph<'a>>,
-    B: FromGlyph<ParsedGlyph<'a>>,
-    C: FromGlyph<ParsedGlyph<'a>>,
+    A: FromGlyph<&'a Glyph>,
+    B: FromGlyph<&'a Glyph>,
+    C: FromGlyph<&'a Glyph>,
   >(
     &self,
   ) -> Result<(A, B, C), GlyphErr> {
-    let content = self.0.content_padded_parsed();
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 4-tuple
   pub fn quadruple_parsed<
-    A: FromGlyph<ParsedGlyph<'a>>,
-    B: FromGlyph<ParsedGlyph<'a>>,
-    C: FromGlyph<ParsedGlyph<'a>>,
-    D: FromGlyph<ParsedGlyph<'a>>,
+    A: FromGlyph<&'a Glyph>,
+    B: FromGlyph<&'a Glyph>,
+    C: FromGlyph<&'a Glyph>,
+    D: FromGlyph<&'a Glyph>,
   >(
     &self,
   ) -> Result<(A, B, C, D), GlyphErr> {
-    let content = self.0.content_padded_parsed();
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 5-tuple
   pub fn quintuple_parsed<
-    A: FromGlyph<ParsedGlyph<'a>>,
-    B: FromGlyph<ParsedGlyph<'a>>,
-    C: FromGlyph<ParsedGlyph<'a>>,
-    D: FromGlyph<ParsedGlyph<'a>>,
-    E: FromGlyph<ParsedGlyph<'a>>,
+    A: FromGlyph<&'a Glyph>,
+    B: FromGlyph<&'a Glyph>,
+    C: FromGlyph<&'a Glyph>,
+    D: FromGlyph<&'a Glyph>,
+    E: FromGlyph<&'a Glyph>,
   >(
     &self,
   ) -> Result<(A, B, C, D, E), GlyphErr> {
-    let content = self.0.content_padded_parsed();
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
-      E::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
+      E::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
   /// Decodes a 6-tuple
   pub fn sextuple_parsed<
-    A: FromGlyph<ParsedGlyph<'a>>,
-    B: FromGlyph<ParsedGlyph<'a>>,
-    C: FromGlyph<ParsedGlyph<'a>>,
-    D: FromGlyph<ParsedGlyph<'a>>,
-    E: FromGlyph<ParsedGlyph<'a>>,
-    F: FromGlyph<ParsedGlyph<'a>>,
+    A: FromGlyph<&'a Glyph>,
+    B: FromGlyph<&'a Glyph>,
+    C: FromGlyph<&'a Glyph>,
+    D: FromGlyph<&'a Glyph>,
+    E: FromGlyph<&'a Glyph>,
+    F: FromGlyph<&'a Glyph>,
   >(
     &self,
   ) -> Result<(A, B, C, D, E, F), GlyphErr> {
-    let content = self.0.content_padded_parsed();
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     Ok((
-      A::from_glyph(glyph_read(content, cursor)?)?,
-      B::from_glyph(glyph_read(content, cursor)?)?,
-      C::from_glyph(glyph_read(content, cursor)?)?,
-      D::from_glyph(glyph_read(content, cursor)?)?,
-      E::from_glyph(glyph_read(content, cursor)?)?,
-      F::from_glyph(glyph_read(content, cursor)?)?,
+      A::from_glyph(Glyph::read(content, cursor)?)?,
+      B::from_glyph(Glyph::read(content, cursor)?)?,
+      C::from_glyph(Glyph::read(content, cursor)?)?,
+      D::from_glyph(Glyph::read(content, cursor)?)?,
+      E::from_glyph(Glyph::read(content, cursor)?)?,
+      F::from_glyph(Glyph::read(content, cursor)?)?,
     ))
   }
 
@@ -278,56 +266,56 @@ impl<'a> TupleGlyph<ParsedGlyph<'a>> {
   ///
   /// Typically, an entire `TupleGlyph` can be decoded more efficiently by using
   /// the `FromGlyph` trait on the target tuple type.
-  pub fn get_parsed(&self, index: usize) -> Result<ParsedGlyph<'a>, GlyphErr> {
-    let content = self.0.content_padded_parsed();
+  pub fn get_parsed(&self, index: usize) -> Result<&'a Glyph, GlyphErr> {
+    let content = self.0.content_padded();
     let cursor = &mut 0;
     for _ in 0..index {
-      let _ = glyph_read(content, cursor)?;
+      let _ = Glyph::read(content, cursor)?;
     }
-    glyph_read(content, cursor)
+    Glyph::read(content, cursor)
   }
 }
 
 impl<T> Debug for TupleGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_tuple("TupleGlyph");
     for glyph in self.iter() {
-      let decoded = DynGlyph::from_glyph_u(glyph);
+      let decoded = DynGlyph::new(glyph);
       df.field(&decoded);
     }
     df.finish()
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for TupleGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for TupleGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
       GlyphSorting::ByteOrder => {
-        GlyphSorting::byte_ord(self.0.borrow(), other.0.borrow())
+        GlyphSorting::byte_ord(self.0.deref(), other.0.deref())
       },
       GlyphSorting::Experimental => {
-        GlyphSorting::dyn_ord(self.0.borrow(), other.0.borrow(), sorting)
+        GlyphSorting::dyn_ord(self.0.deref(), other.0.deref(), sorting)
       },
     }
   }
 }
 
-impl<G: Glyph> Eq for TupleGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for TupleGlyph<G> {}
 
 impl<T> FromGlyph<T> for TupleGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
     match source.header().confirm_type(GlyphType::Tuple) {
@@ -337,19 +325,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for TupleGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for TupleGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for TupleGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for TupleGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for TupleGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for TupleGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -359,10 +347,10 @@ impl<G: Glyph> PartialOrd for TupleGlyph<G> {
 pub(crate) struct IterTuple<'a>(&'a [u8], usize);
 
 impl<'a> Iterator for IterTuple<'a> {
-  type Item = ParsedGlyph<'a>;
+  type Item = &'a Glyph;
 
   fn next(&mut self) -> Option<Self::Item> {
-    match glyph_read(self.0, &mut self.1) {
+    match Glyph::read(self.0, &mut self.1) {
       Ok(glyph_ref) => Some(glyph_ref),
       Err(_) => None,
     }
@@ -421,25 +409,23 @@ impl<'a> TupleGlyphSerializer<'a> {
   }
 }
 
-impl<'a, A, B> FromGlyph<ParsedGlyph<'a>> for (A, B)
+impl<'a, A, B> FromGlyph<&'a Glyph> for (A, B)
 where
-  A: FromGlyph<ParsedGlyph<'a>>,
-  B: FromGlyph<ParsedGlyph<'a>>,
+  A: FromGlyph<&'a Glyph>,
+  B: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
 
-    let content = source.content_parsed();
+    let content = source.content();
     let cursor = &mut 0;
-    let a = match glyph_read(content, cursor) {
+    let a = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let b = match glyph_read(content, cursor) {
+    let b = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
@@ -451,30 +437,28 @@ where
   }
 }
 
-impl<'a, A, B, C> FromGlyph<ParsedGlyph<'a>> for (A, B, C)
+impl<'a, A, B, C> FromGlyph<&'a Glyph> for (A, B, C)
 where
-  A: FromGlyph<ParsedGlyph<'a>>,
-  B: FromGlyph<ParsedGlyph<'a>>,
-  C: FromGlyph<ParsedGlyph<'a>>,
+  A: FromGlyph<&'a Glyph>,
+  B: FromGlyph<&'a Glyph>,
+  C: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
 
-    let content = source.content_parsed();
+    let content = source.content();
     let cursor = &mut 0;
-    let a = match glyph_read(content, cursor) {
+    let a = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let b = match glyph_read(content, cursor) {
+    let b = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let c = match glyph_read(content, cursor) {
+    let c = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
@@ -487,35 +471,33 @@ where
   }
 }
 
-impl<'a, A, B, C, D> FromGlyph<ParsedGlyph<'a>> for (A, B, C, D)
+impl<'a, A, B, C, D> FromGlyph<&'a Glyph> for (A, B, C, D)
 where
-  A: FromGlyph<ParsedGlyph<'a>>,
-  B: FromGlyph<ParsedGlyph<'a>>,
-  C: FromGlyph<ParsedGlyph<'a>>,
-  D: FromGlyph<ParsedGlyph<'a>>,
+  A: FromGlyph<&'a Glyph>,
+  B: FromGlyph<&'a Glyph>,
+  C: FromGlyph<&'a Glyph>,
+  D: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
 
-    let content = source.content_parsed();
+    let content = source.content();
     let cursor = &mut 0;
-    let a = match glyph_read(content, cursor) {
+    let a = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let b = match glyph_read(content, cursor) {
+    let b = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let c = match glyph_read(content, cursor) {
+    let c = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let d = match glyph_read(content, cursor) {
+    let d = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
@@ -529,40 +511,38 @@ where
   }
 }
 
-impl<'a, A, B, C, D, E> FromGlyph<ParsedGlyph<'a>> for (A, B, C, D, E)
+impl<'a, A, B, C, D, E> FromGlyph<&'a Glyph> for (A, B, C, D, E)
 where
-  A: FromGlyph<ParsedGlyph<'a>>,
-  B: FromGlyph<ParsedGlyph<'a>>,
-  C: FromGlyph<ParsedGlyph<'a>>,
-  D: FromGlyph<ParsedGlyph<'a>>,
-  E: FromGlyph<ParsedGlyph<'a>>,
+  A: FromGlyph<&'a Glyph>,
+  B: FromGlyph<&'a Glyph>,
+  C: FromGlyph<&'a Glyph>,
+  D: FromGlyph<&'a Glyph>,
+  E: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
 
-    let content = source.content_parsed();
+    let content = source.content();
     let cursor = &mut 0;
-    let a = match glyph_read(content, cursor) {
+    let a = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let b = match glyph_read(content, cursor) {
+    let b = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let c = match glyph_read(content, cursor) {
+    let c = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let d = match glyph_read(content, cursor) {
+    let d = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let e = match glyph_read(content, cursor) {
+    let e = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
@@ -577,45 +557,43 @@ where
   }
 }
 
-impl<'a, A, B, C, D, E, F> FromGlyph<ParsedGlyph<'a>> for (A, B, C, D, E, F)
+impl<'a, A, B, C, D, E, F> FromGlyph<&'a Glyph> for (A, B, C, D, E, F)
 where
-  A: FromGlyph<ParsedGlyph<'a>>,
-  B: FromGlyph<ParsedGlyph<'a>>,
-  C: FromGlyph<ParsedGlyph<'a>>,
-  D: FromGlyph<ParsedGlyph<'a>>,
-  E: FromGlyph<ParsedGlyph<'a>>,
-  F: FromGlyph<ParsedGlyph<'a>>,
+  A: FromGlyph<&'a Glyph>,
+  B: FromGlyph<&'a Glyph>,
+  C: FromGlyph<&'a Glyph>,
+  D: FromGlyph<&'a Glyph>,
+  E: FromGlyph<&'a Glyph>,
+  F: FromGlyph<&'a Glyph>,
 {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Tuple) {
       return Err(err.into_fge(source));
     };
 
-    let content = source.content_parsed();
+    let content = source.content();
     let cursor = &mut 0;
-    let a = match glyph_read(content, cursor) {
+    let a = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let b = match glyph_read(content, cursor) {
+    let b = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let c = match glyph_read(content, cursor) {
+    let c = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let d = match glyph_read(content, cursor) {
+    let d = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let e = match glyph_read(content, cursor) {
+    let e = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
-    let f = match glyph_read(content, cursor) {
+    let f = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
       Err(err) => return Err(err.into_fge(source)),
     };
@@ -784,7 +762,6 @@ where
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::glyph::glyph_new;
   use ::test::Bencher;
   use std::hint::black_box;
 
@@ -795,23 +772,23 @@ mod test {
   fn codec_glyph_tuple() -> Result<(), GlyphErr> {
     let (a, b, c, d, e, f) = (8, 6, 7, 5, 3, 0);
 
-    let ab = glyph_new(&(a, b))?;
-    let abc = glyph_new(&(a, b, c))?;
-    let abcd = glyph_new(&(a, b, c, d))?;
-    let abcde = glyph_new(&(a, b, c, d, e))?;
-    let abcdef = glyph_new(&(a, b, c, d, e, f))?;
+    let ab = Glyph::new(&(a, b))?;
+    let abc = Glyph::new(&(a, b, c))?;
+    let abcd = Glyph::new(&(a, b, c, d))?;
+    let abcde = Glyph::new(&(a, b, c, d, e))?;
+    let abcdef = Glyph::new(&(a, b, c, d, e, f))?;
 
-    let (aa, bb) = <(i32, i32)>::from_glyph(ab.borrow())?;
+    let (aa, bb) = <(i32, i32)>::from_glyph(ab.as_ref())?;
     assert_eq!((a, b), (aa, bb));
-    let (aa, bb, cc) = <(i32, i32, i32)>::from_glyph(abc.borrow())?;
+    let (aa, bb, cc) = <(i32, i32, i32)>::from_glyph(abc.as_ref())?;
     assert_eq!((aa, bb, cc), (a, b, c));
-    let (aa, bb, cc, dd) = <(i32, i32, i32, i32)>::from_glyph(abcd.borrow())?;
+    let (aa, bb, cc, dd) = <(i32, i32, i32, i32)>::from_glyph(abcd.as_ref())?;
     assert_eq!((aa, bb, cc, dd), (a, b, c, d));
     let (aa, bb, cc, dd, ee) =
-      <(i32, i32, i32, i32, i32)>::from_glyph(abcde.borrow())?;
+      <(i32, i32, i32, i32, i32)>::from_glyph(abcde.as_ref())?;
     assert_eq!((aa, bb, cc, dd, ee), (a, b, c, d, e));
     let (aa, bb, cc, dd, ee, ff) =
-      <(i32, i32, i32, i32, i32, i32)>::from_glyph(abcdef.borrow())?;
+      <(i32, i32, i32, i32, i32, i32)>::from_glyph(abcdef.as_ref())?;
     assert_eq!((aa, bb, cc, dd, ee, ff), (a, b, c, d, e, f));
 
     let tg = TupleGlyph::from_glyph(abcdef)?;
@@ -870,7 +847,7 @@ mod test {
     b.iter(|| {
       let cursor = &mut 0;
       for _ in 0..256 {
-        let tg = glyph_read(&buf, cursor)?;
+        let tg = Glyph::read(&buf, cursor)?;
         let (a, b, c): ((), (), ()) = FromGlyph::from_glyph(tg)?;
         black_box((a, b, c));
       }

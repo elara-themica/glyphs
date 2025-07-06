@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{bounds_check, ZeroCopyGlyph},
-  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, ParsedGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, Glyph,
 };
 use core::fmt::{Debug, Formatter};
 use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
@@ -22,31 +22,34 @@ use std::{cmp::Ordering, marker::PhantomData, ops::Deref};
 /// from the glyph header.
 ///
 // TODO: Write doc example.
-pub struct BasicGlyph<G: Glyph, T: ZeroCopyGlyph>(G, PhantomData<T>);
+pub struct BasicGlyph<G: Deref<Target = Glyph>, T: ZeroCopyGlyph>(
+  G,
+  PhantomData<T>,
+);
 
-impl<'a, T: ZeroCopyGlyph> BasicGlyph<ParsedGlyph<'a>, T> {
+impl<'a, T: ZeroCopyGlyph> BasicGlyph<&'a Glyph, T> {
   /// Returns a reference to the target type from the underlying buffer (i.e.,
   /// not also this `BasicGlyph`.
   pub fn get_parsed(&self) -> &'a T {
     // SAFETY: We already did the bounds check in `FromGlyph`.
     unsafe {
       let buf = if size_of::<T>() > 4 {
-        self.0.content_padded_parsed()
+        self.0.content_padded()
       } else {
-        &self.0.header_parsed().short_content()[..]
+        &self.0.header().short_content()[..]
       };
       T::bbrf_u(buf, &mut 0)
     }
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> Debug for BasicGlyph<G, T> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     Debug::fmt(self.deref(), f)
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
   type Target = T;
 
   fn deref(&self) -> &Self::Target {
@@ -62,22 +65,26 @@ impl<G: Glyph, T: ZeroCopyGlyph> Deref for BasicGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> EncodedGlyph<G> for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> EncodedGlyph<G>
+  for BasicGlyph<G, T>
+{
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Eq for BasicGlyph<G, T> {}
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> Eq for BasicGlyph<G, T> {}
 
-impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> FromGlyph<G>
+  for BasicGlyph<G, T>
+{
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(T::GLYPH_TYPE_ID) {
-      return Err(err.into_fge(glyph));
+    if let Err(err) = glyph.header().confirm_type(T::GLYPH_TYPE_ID) {
+      return Err(FromGlyphErr::new(glyph, err));
     }
 
     if size_of::<T>() > 4 {
@@ -92,23 +99,28 @@ impl<G: Glyph, T: ZeroCopyGlyph> FromGlyph<G> for BasicGlyph<G, T> {
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> Ord for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> Ord for BasicGlyph<G, T> {
   fn cmp(&self, other: &Self) -> Ordering {
     self
       .glyph()
+      .header()
       .glyph_type()
-      .cmp(&other.glyph().glyph_type())
+      .cmp(&other.glyph().header().glyph_type())
       .then_with(|| self.deref().cmp(other.deref()))
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> PartialEq for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> PartialEq
+  for BasicGlyph<G, T>
+{
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph, T: ZeroCopyGlyph> PartialOrd for BasicGlyph<G, T> {
+impl<G: Deref<Target = Glyph>, T: ZeroCopyGlyph> PartialOrd
+  for BasicGlyph<G, T>
+{
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }

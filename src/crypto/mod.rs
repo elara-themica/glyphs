@@ -385,16 +385,6 @@ fn verify_fingerprint(
 #[cfg(test)]
 #[allow(unused)]
 pub(crate) mod test {
-  use crate::{
-    crypto::{
-      algos::ed25519::{Ed25519PublicKey, Ed25519SecretKey},
-      CryptoKeyGlyph,
-    },
-    glyph_new, EncodedGlyph, FromGlyph,
-  };
-  use rand::SeedableRng;
-  use rand_chacha::ChaCha20Rng;
-  use std::dbg;
 
   #[cfg(test)]
   pub(crate) const TEST_PLAINTEXT: &[u8; 39] =

@@ -3,10 +3,10 @@
 
 use crate::{
   dynamic::DynGlyph,
-  glyph_close, glyph_read,
+  glyph_close,
   zerocopy::{round_to_word, ZeroCopy, U32},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphOffset, GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::collections::BTreeMap;
 use core::{
@@ -14,7 +14,7 @@ use core::{
   mem::size_of,
   ptr::NonNull,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// The specific type header for map glyphs.  Currently, this is identical to
 /// the header for [`VecGlyph`].
@@ -54,7 +54,7 @@ unsafe impl ZeroCopy for MapGlyphHeader {}
 /// A glyph-based associative array.
 pub struct MapGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   glyph:   G,
   offsets: NonNull<[GlyphOffset]>,
@@ -62,7 +62,7 @@ where
 
 impl<G> MapGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   /// Gives the self-reference to offsets with the lifetime of &self.
   fn offsets(&self) -> &[GlyphOffset] {
@@ -81,15 +81,12 @@ where
   }
 
   /// Returns the _index_-th Key/Value pair.
-  pub fn get(
-    &self,
-    index: usize,
-  ) -> Option<(ParsedGlyph<'_>, ParsedGlyph<'_>)> {
+  pub fn get(&self, index: usize) -> Option<(&Glyph, &Glyph)> {
     let offset = self.offsets().get(index)?;
     let content = self.glyph.content_padded();
     let mut cursor = offset.cursor(0);
-    let key = glyph_read(content, &mut cursor).ok()?;
-    let value = glyph_read(content, &mut cursor).ok()?;
+    let key = Glyph::read(content, &mut cursor).ok()?;
+    let value = Glyph::read(content, &mut cursor).ok()?;
     Some((key, value))
   }
 
@@ -100,7 +97,7 @@ where
   /// container from which they were originally serialized.
   pub fn iter(
     &self,
-  ) -> impl Iterator<Item = (ParsedGlyph<'_>, ParsedGlyph<'_>)>
+  ) -> impl Iterator<Item = (&Glyph, &Glyph)>
        + Clone
        + DoubleEndedIterator
        + ExactSizeIterator {
@@ -111,18 +108,15 @@ where
   }
 }
 
-impl<'a> MapGlyph<ParsedGlyph<'a>> {
+impl<'a> MapGlyph<&'a Glyph> {
   /// Returns the _index_-th Key/Value pair with lifetimes bound only to the
   /// glyph's backing buffer.
-  pub fn get_parsed(
-    &self,
-    index: usize,
-  ) -> Option<(ParsedGlyph<'a>, ParsedGlyph<'a>)> {
+  pub fn get_parsed(&self, index: usize) -> Option<(&'a Glyph, &'a Glyph)> {
     let offset = self.offsets().get(index)?;
-    let content = self.glyph.content_padded_parsed();
+    let content = self.glyph.content_padded();
     let mut cursor = offset.cursor(0);
-    let key = glyph_read(content, &mut cursor).ok()?;
-    let value = glyph_read(content, &mut cursor).ok()?;
+    let key = Glyph::read(content, &mut cursor).ok()?;
+    let value = Glyph::read(content, &mut cursor).ok()?;
     Some((key, value))
   }
 
@@ -134,41 +128,41 @@ impl<'a> MapGlyph<ParsedGlyph<'a>> {
   /// container from which they were originally serialized.
   pub fn iter_parsed(
     &self,
-  ) -> impl Iterator<Item = (ParsedGlyph<'a>, ParsedGlyph<'a>)>
+  ) -> impl Iterator<Item = (&'a Glyph, &'a Glyph)>
        + Clone
        + DoubleEndedIterator
        + ExactSizeIterator {
     IterMap {
       // SAFETY: Bounds on G
       offsets: unsafe { self.offsets.as_ref() },
-      content: self.glyph.content_padded_parsed(),
+      content: self.glyph.content_padded(),
     }
   }
 }
 
 impl<G> Debug for MapGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter) -> core::fmt::Result {
     f.write_str("MapGlyph")?;
     let mut df = f.debug_map();
     for (key, val) in self.iter() {
-      let key = DynGlyph::from_glyph_u(key);
-      let val = DynGlyph::from_glyph_u(val);
+      let key = DynGlyph::new(key);
+      let val = DynGlyph::new(val);
       df.entry(&key, &val);
     }
     df.finish()
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for MapGlyph<G> {
   fn into_inner(self) -> G {
     self.glyph
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.glyph.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.glyph.deref()
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
@@ -179,11 +173,11 @@ impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
       GlyphSorting::Experimental => {
         let mut self_iter = self
           .iter()
-          .map(|(k, v)| (DynGlyph::from_glyph_u(k), DynGlyph::from_glyph_u(v)));
+          .map(|(k, v)| (DynGlyph::new(k), DynGlyph::new(v)));
 
         let mut other_iter = self
           .iter()
-          .map(|(k, v)| (DynGlyph::from_glyph_u(k), DynGlyph::from_glyph_u(v)));
+          .map(|(k, v)| (DynGlyph::new(k), DynGlyph::new(v)));
 
         loop {
           match (self_iter.next(), other_iter.next()) {
@@ -205,14 +199,14 @@ impl<G: Glyph> EncodedGlyph<G> for MapGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for MapGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for MapGlyph<G> {}
 
 impl<G> FromGlyph<G> for MapGlyph<G>
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = source.confirm_type(GlyphType::Map) {
+    if let Err(err) = source.header().confirm_type(GlyphType::Map) {
       return Err(err.into_fge(source));
     }
 
@@ -237,19 +231,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for MapGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for MapGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for MapGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for MapGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for MapGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for MapGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -268,8 +262,8 @@ impl<'a> DoubleEndedIterator for IterMap<'a> {
     self.offsets = remainder;
 
     let mut cursor = offset.cursor(0);
-    let key = glyph_read(self.content, &mut cursor).ok()?;
-    let value = glyph_read(self.content, &mut cursor).ok()?;
+    let key = Glyph::read(self.content, &mut cursor).ok()?;
+    let value = Glyph::read(self.content, &mut cursor).ok()?;
     Some((key, value))
   }
 }
@@ -281,15 +275,15 @@ impl<'a> ExactSizeIterator for IterMap<'a> {
 }
 
 impl<'a> Iterator for IterMap<'a> {
-  type Item = (ParsedGlyph<'a>, ParsedGlyph<'a>);
+  type Item = (&'a Glyph, &'a Glyph);
 
   fn next(&mut self) -> Option<Self::Item> {
     let (offset, remainder) = self.offsets.split_first()?;
     self.offsets = remainder;
 
     let mut cursor = offset.cursor(0);
-    let key = glyph_read(self.content, &mut cursor).ok()?;
-    let value = glyph_read(self.content, &mut cursor).ok()?;
+    let key = Glyph::read(self.content, &mut cursor).ok()?;
+    let value = Glyph::read(self.content, &mut cursor).ok()?;
     Some((key, value))
   }
 
@@ -425,7 +419,6 @@ where
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::glyph::glyph_new;
 
   /// Basic encoding and decoding test.
   #[test]
@@ -440,7 +433,7 @@ mod test {
     map.insert("Thane", "Krios");
     // std::dbg!(&map);
 
-    let glyph = glyph_new(&map)?;
+    let glyph = Glyph::new(&map)?;
     // std::dbg!(&glyph);
 
     let decoded = MapGlyph::from_glyph(glyph)?;

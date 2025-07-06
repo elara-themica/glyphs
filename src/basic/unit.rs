@@ -1,10 +1,10 @@
 use crate::{
   zerocopy::{ZeroCopy, U32},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphType, ParsedGlyph, ToGlyph,
+  GlyphType, ToGlyph,
 };
 use core::{fmt::Debug, mem::transmute};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// Glyph for Unit Types
 ///
@@ -12,65 +12,65 @@ use std::cmp::Ordering;
 /// further information, e.g., [`()`] or [`Option::None`].  For the list of
 /// known unit types, see `enum` [`UnitTypes`] .
 #[derive(Copy, Clone)]
-pub struct UnitGlyph<G: Glyph>(G, UnitTypes);
+pub struct UnitGlyph<G: Deref<Target = Glyph>>(G, UnitTypes);
 
-impl<G: Glyph> UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> UnitGlyph<G> {
   /// Returns the specific unit type represented by the glyph.
   pub fn type_id(&self) -> &UnitTypes {
     &self.1
   }
 }
 
-impl<G: Glyph> Debug for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for UnitGlyph<G> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     write!(f, "UnitGlyph({:?})", self.type_id())?;
     Ok(())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for UnitGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
-impl<G: Glyph> Eq for UnitGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for UnitGlyph<G> {}
 
-impl<G: Glyph> FromGlyph<G> for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for UnitGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::Unit) {
-      return Err(err.into_fge(glyph));
-    }
-    if glyph.header().is_short() {
-      let type_id = u32::from_le_bytes(*glyph.header().short_content());
-      let type_id = UnitTypes::from(type_id);
-      Ok(UnitGlyph(glyph, type_id))
-    } else {
-      err!(
-        debug,
-        Err(GlyphErr::UnitLength(glyph.content().len()).into_fge(glyph))
-      )
+    match glyph.header().confirm_type(GlyphType::Unit) {
+      Ok(()) => {
+        if glyph.header().is_short() {
+          let type_id = u32::from_le_bytes(*glyph.header().short_content());
+          let type_id = UnitTypes::from(type_id);
+          Ok(UnitGlyph(glyph, type_id))
+        } else {
+          let glyph_len = glyph.as_ref().len();
+          Err(FromGlyphErr::new(glyph, GlyphErr::UnitLength(glyph_len)))
+        }
+      },
+      Err(err) => Err(FromGlyphErr::new(glyph, err)),
     }
   }
 }
 
-impl<G: Glyph> Ord for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for UnitGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.1.cmp(&other.1)
   }
 }
 
-impl<G: Glyph> PartialEq for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for UnitGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for UnitGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for UnitGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -126,13 +126,13 @@ impl From<UnitTypes> for U32 {
 
 impl<G> FromGlyph<G> for UnitTypes
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    if let Err(err) = glyph.confirm_type(GlyphType::Unit) {
-      return Err(err.into_fge(glyph));
+    if let Err(err) = glyph.header().confirm_type(GlyphType::Unit) {
+      return Err(FromGlyphErr::new(glyph, err));
     }
-    let content = glyph.short_content();
+    let content = glyph.header().short_content();
     let type_id = u32::from_le_bytes(*content);
     let type_id = UnitTypes::from(type_id);
     Ok(type_id)
@@ -158,14 +158,14 @@ impl ToGlyph for UnitTypes {
 
 impl<G> FromGlyph<G> for ()
 where
-  G: Glyph,
+  G: Deref<Target = Glyph>,
 {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
-    let ug = match UnitTypes::from_glyph(glyph.borrow()) {
+    let ug = match UnitTypes::from_glyph(glyph.deref()) {
       Ok(unit_type) => unit_type,
       Err(err) => {
         let (_glyph, err) = err.into_parts();
-        return Err(err.into_fge(glyph));
+        return Err(FromGlyphErr::new(glyph, err));
       },
     };
     if ug.eq(&UnitTypes::Nothing) {
@@ -173,13 +173,13 @@ where
     } else {
       err!(
         debug,
-        Err(
+        Err(FromGlyphErr::new(
+          glyph,
           GlyphErr::UnitTypeMismatch {
             expected: UnitTypes::Nothing,
             observed: ug,
           }
-          .into_fge(glyph)
-        )
+        ))
       )
     }
   }
@@ -202,15 +202,14 @@ impl ToGlyph for () {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::glyph_new;
 
   #[test]
   fn codec_unit() {
-    let nothing_glyph = glyph_new(&UnitTypes::Nothing).unwrap();
+    let nothing_glyph = Glyph::new(&UnitTypes::Nothing).unwrap();
     std::dbg!(&nothing_glyph);
-    let ut = UnitTypes::from_glyph(nothing_glyph.borrow()).unwrap();
+    let ut = UnitTypes::from_glyph(nothing_glyph.as_ref()).unwrap();
     assert_eq!(ut, UnitTypes::Nothing);
-    let ug = UnitGlyph::from_glyph(nothing_glyph.borrow()).unwrap();
+    let ug = UnitGlyph::from_glyph(nothing_glyph.as_ref()).unwrap();
     assert_eq!(ug.type_id(), &UnitTypes::Nothing);
   }
 }

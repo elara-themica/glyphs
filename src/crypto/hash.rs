@@ -9,13 +9,13 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ParsedGlyph, ToGlyph,
+  EncodedGlyph, FromGlyph, FromGlyphErr, GlyphErr, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::transmute,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 
 /// The default cryptographic hash for glyphs.
 pub type GlyphHash = blake3::Blake3Hash;
@@ -28,7 +28,7 @@ pub trait CryptographicHash:
   + Default
   + AsRef<[u8]>
   + ToGlyph
-  + for<'a> FromGlyph<ParsedGlyph<'a>>
+  + for<'a> FromGlyph<&'a Glyph>
   + Send
   + Sync
   + 'static
@@ -189,9 +189,9 @@ impl From<CryptoHashType> for U16 {
 }
 
 /// Glyph containing one or more cryptographic hashes.
-pub struct HashGlyph<G: Glyph>(G, *const [u8]);
+pub struct HashGlyph<G: Deref<Target = Glyph>>(G, *const [u8]);
 
-impl<G: Glyph> HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> HashGlyph<G> {
   /// The old_crypto hash header.
   fn header(&self) -> &CryptoHashHeader {
     // SAFETY: `from_glyph` creation guarantees valid header.
@@ -218,12 +218,12 @@ impl<G: Glyph> HashGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for HashGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     /* SAFETY: We're going to guarantee that contents contain at least a header,
                to avoid duplicate bounds checks.
     */
-    if let Err(err) = glyph.confirm_type(GlyphType::CryptoHash) {
+    if let Err(err) = glyph.header().confirm_type(GlyphType::CryptoHash) {
       return Err(err.into_fge(glyph));
     }
     let content = glyph.content();
@@ -237,7 +237,7 @@ impl<G: Glyph> FromGlyph<G> for HashGlyph<G> {
   }
 }
 
-impl<'a> HashGlyph<ParsedGlyph<'a>> {
+impl<'a> HashGlyph<&'a Glyph> {
   pub fn digest_bytes_parsed(&self) -> &'a [u8] {
     unsafe { &*self.1 }
   }
@@ -249,27 +249,27 @@ impl<'a> HashGlyph<ParsedGlyph<'a>> {
   }
 }
 
-impl<G: Glyph> PartialEq for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for HashGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> Eq for HashGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for HashGlyph<G> {}
 
-impl<G: Glyph> PartialOrd for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for HashGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<G: Glyph> Ord for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for HashGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> Debug for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for HashGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     match self.hash_type() {
       CryptoHashType::Unspecified => {
@@ -302,13 +302,13 @@ impl<G: Glyph> Debug for HashGlyph<G> {
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for HashGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for HashGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 }
 
@@ -624,16 +624,16 @@ macro_rules! hash_impls {
       }
     }
 
-    impl<G: $crate::Glyph> $crate::FromGlyph<G> for $hash_name {
+    impl<G: Deref<Target = $crate::Glyph>> $crate::FromGlyph<G> for $hash_name {
       fn from_glyph(glyph: G) -> Result<Self, $crate::FromGlyphErr<G>> {
-        let hg =
-          match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.borrow()) {
-            Ok(hg) => hg,
-            Err(err) => {
-              let (_glyph, err) = err.into_parts();
-              return Err(err.into_fge(glyph));
-            },
-          };
+        let hg = match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.deref())
+        {
+          Ok(hg) => hg,
+          Err(err) => {
+            let (_glyph, err) = err.into_parts();
+            return Err(err.into_fge(glyph));
+          },
+        };
         let hash = match hg.get::<$hash_name>() {
           Ok(hash) => hash,
           Err(err) => return Err(err.into_fge(glyph)),

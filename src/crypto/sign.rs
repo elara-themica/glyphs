@@ -28,16 +28,16 @@ use crate::{
     CryptoErr, CryptoKeyTypes, CryptoSignatureTypes, GlyphHash, HashContext,
     Sha256Context, Sha256Hash, Sha3Hash,
   },
-  glyph_read,
   util::debug::UnquotedDebugString,
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16},
   FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphOffset,
-  GlyphType, ParsedGlyph, ToGlyph,
+  GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   slice::from_raw_parts,
 };
+use std::ops::Deref;
 
 /// The default number of hashes to check when creating a new cryptographic
 /// signature.
@@ -181,7 +181,7 @@ pub struct SignatureGlyph<G> {
   statement_offset: GlyphOffset,
 }
 
-impl<G: Glyph> SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> SignatureGlyph<G> {
   fn header(&self) -> &SignatureGlyphHeader {
     // SAFETY: Header is zero-copy, was read and bounds checked at creation.
     unsafe { SignatureGlyphHeader::bbrf_u(self.glyph.content(), &mut 0) }
@@ -219,10 +219,10 @@ impl<G: Glyph> SignatureGlyph<G> {
     self.signature_metadata().why_signed()
   }
 
-  pub fn why_signed_statement(&self) -> Option<ParsedGlyph<'_>> {
+  pub fn why_signed_statement(&self) -> Option<&Glyph> {
     let mut cursor = self.statement_offset.cursor(0);
     if cursor > 0 {
-      let glyph = glyph_read(self.glyph.content(), &mut cursor).ok()?;
+      let glyph = Glyph::read(self.glyph.content(), &mut cursor).ok()?;
       // This will invisibly ignore a corrupt why signed statement.  Is this
       // the correct behavior?
       if &glyph.glyph_hash() == self.why_signed_hash() {
@@ -269,7 +269,7 @@ impl<G: Glyph> SignatureGlyph<G> {
   }
 }
 
-impl<G: Glyph> ToGlyph for SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> ToGlyph for SignatureGlyph<G> {
   fn glyph_encode(
     &self,
     target: &mut [u8],
@@ -283,10 +283,10 @@ impl<G: Glyph> ToGlyph for SignatureGlyph<G> {
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for SignatureGlyph<G> {
   fn from_glyph(glyph: G) -> Result<Self, FromGlyphErr<G>> {
     let parse_result = || {
-      glyph.confirm_type(GlyphType::Signature)?;
+      glyph.header().confirm_type(GlyphType::Signature)?;
       let content = glyph.content();
       let cursor = &mut 0;
 
@@ -318,7 +318,7 @@ impl<G: Glyph> FromGlyph<G> for SignatureGlyph<G> {
   }
 }
 
-impl<G: Glyph> Debug for SignatureGlyph<G> {
+impl<G: Deref<Target = Glyph>> Debug for SignatureGlyph<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     let mut df = f.debug_struct("CryptoSignature");
     df.field("proof_of_work", &self.signature_metadata().show_work());
@@ -459,7 +459,7 @@ impl<G: Glyph> Debug for SignatureGlyph<G> {
 fn signature_glyph_len<SIG: CryptoSignature>(
   signature: &SIG,
   key: &SIG::AuthenticationKey,
-  statement: Option<ParsedGlyph<'_>>,
+  statement: Option<&Glyph>,
 ) -> usize {
   size_of::<GlyphHeader>()
     + size_of::<SignatureGlyphHeader>()
@@ -472,7 +472,7 @@ fn signature_glyph_write<SIG: CryptoSignature>(
   signature: &SIG,
   key: &SIG::AuthenticationKey,
   metadata: SignatureMetadata,
-  signing_statement: Option<ParsedGlyph<'_>>,
+  signing_statement: Option<&Glyph>,
   target: &mut [u8],
   cursor: &mut usize,
 ) -> Result<(), GlyphErr> {

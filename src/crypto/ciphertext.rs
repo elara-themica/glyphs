@@ -8,11 +8,11 @@ use crate::{
     CryptographicHash, GlyphHash, Nonce, Sha3Hash,
   },
   zerocopy::{ZeroCopy, U16},
-  BoxGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType,
-  ToGlyph,
+  FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use rand::{CryptoRng, Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
+use std::ops::Deref;
 
 pub(super) const X25519_KEY_LEN: usize = 32;
 
@@ -143,19 +143,22 @@ impl CiphertextMetadata {
   }
 }
 
-pub struct EncryptedGlyph<G: Glyph> {
+pub struct EncryptedGlyph<G: Deref<Target = Glyph>> {
   glyph:      G,
   metadata:   CiphertextMetadata,
   ciphertext: *const [u8],
 }
 
-impl<G: Glyph> EncryptedGlyph<G> {
-  pub fn decrypt(&self, _key: DecryptionKey) -> Result<BoxGlyph, GlyphErr> {
+impl<G: Deref<Target = Glyph>> EncryptedGlyph<G> {
+  pub fn decrypt(
+    &self,
+    _key: DecryptionKey,
+  ) -> Result<alloc::boxed::Box<Glyph>, GlyphErr> {
     todo!()
   }
 }
 
-impl<G: Glyph> FromGlyph<G> for EncryptedGlyph<G> {
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for EncryptedGlyph<G> {
   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
       return Err(err.into_fge(source));
@@ -181,7 +184,7 @@ impl<G: Glyph> FromGlyph<G> for EncryptedGlyph<G> {
   }
 }
 
-pub struct EncryptedExtent<G: Glyph> {
+pub struct EncryptedExtent<G: Deref<Target = Glyph>> {
   glyph: G,
 }
 

@@ -1,13 +1,13 @@
 use crate::{
   zerocopy::{bounds_check, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID},
   EncodedGlyph, FromGlyph, FromGlyphErr, Glyph, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ParsedGlyph, ToGlyph,
+  GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
 };
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::Deref};
 use uuid::Uuid;
 
 impl ToGlyph for Uuid {
@@ -33,10 +33,10 @@ impl HasZeroCopyID for Uuid {
 
 impl<T> FromGlyph<T> for Uuid
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
-    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+    if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
       return Err(err.into_fge(source));
     }
     let content = source.content_padded();
@@ -49,14 +49,12 @@ where
   }
 }
 
-impl<'a> FromGlyph<ParsedGlyph<'a>> for &'a Uuid {
-  fn from_glyph(
-    source: ParsedGlyph<'a>,
-  ) -> Result<Self, FromGlyphErr<ParsedGlyph<'a>>> {
-    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+impl<'a> FromGlyph<&'a Glyph> for &'a Uuid {
+  fn from_glyph(source: &'a Glyph) -> Result<Self, FromGlyphErr<&'a Glyph>> {
+    if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
       return Err(err.into_fge(source));
     }
-    let content = source.content_parsed();
+    let content = source.content();
     if let Err(err) = bounds_check(content, size_of::<Uuid>()) {
       return Err(FromGlyphErr::new(source, err.into()));
     }
@@ -71,11 +69,11 @@ unsafe impl ZeroCopy for Uuid {}
 /// Glyph containing a UUID.
 pub struct UuidGlyph<T>(T)
 where
-  T: Glyph;
+  T: Deref<Target = Glyph>;
 
 impl<T> UuidGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   /// Returns a reference to the UUID contained in the glyph.
   pub fn get(&self) -> &Uuid {
@@ -87,20 +85,20 @@ where
 
 impl<T> Debug for UuidGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     write!(f, "UuidGlyph({:?})", self.get())
   }
 }
 
-impl<G: Glyph> EncodedGlyph<G> for UuidGlyph<G> {
+impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for UuidGlyph<G> {
   fn into_inner(self) -> G {
     self.0
   }
 
-  fn glyph(&self) -> ParsedGlyph<'_> {
-    self.0.borrow()
+  fn glyph(&self) -> &Glyph {
+    &self.0
   }
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
@@ -110,14 +108,14 @@ impl<G: Glyph> EncodedGlyph<G> for UuidGlyph<G> {
   }
 }
 
-impl<G: Glyph> Eq for UuidGlyph<G> {}
+impl<G: Deref<Target = Glyph>> Eq for UuidGlyph<G> {}
 
 impl<T> FromGlyph<T> for UuidGlyph<T>
 where
-  T: Glyph,
+  T: Deref<Target = Glyph>,
 {
   fn from_glyph(source: T) -> Result<Self, FromGlyphErr<T>> {
-    if let Err(err) = source.confirm_type(GlyphType::UUID) {
+    if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
       return Err(err.into_fge(source));
     }
     if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
@@ -127,19 +125,19 @@ where
   }
 }
 
-impl<G: Glyph> Ord for UuidGlyph<G> {
+impl<G: Deref<Target = Glyph>> Ord for UuidGlyph<G> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.glyph_ord(other, Default::default())
   }
 }
 
-impl<G: Glyph> PartialEq for UuidGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialEq for UuidGlyph<G> {
   fn eq(&self, other: &Self) -> bool {
     self.cmp(other) == Ordering::Equal
   }
 }
 
-impl<G: Glyph> PartialOrd for UuidGlyph<G> {
+impl<G: Deref<Target = Glyph>> PartialOrd for UuidGlyph<G> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.cmp(other))
   }
@@ -152,7 +150,7 @@ gen_prim_slice_to_glyph!(Uuid);
 mod test {
 
   use super::*;
-  use crate::{collections::BasicVecGlyph, glyph_new};
+  use crate::collections::BasicVecGlyph;
   use alloc::vec::Vec;
   use std::dbg;
 
@@ -161,14 +159,14 @@ mod test {
     // Scalar tests
     let uuid = Uuid::new_v4();
     dbg!(&uuid);
-    let glyph = glyph_new(&uuid)?;
+    let glyph = Glyph::new(&uuid)?;
     dbg!(&glyph);
-    let uuid_ref = <&Uuid>::from_glyph(glyph.borrow())?;
+    let uuid_ref = <&Uuid>::from_glyph(glyph.as_ref())?;
     assert_eq!(uuid, *uuid_ref);
-    let new_uuid = Uuid::from_glyph(glyph.borrow())?;
+    let new_uuid = Uuid::from_glyph(glyph.as_ref())?;
     assert_eq!(uuid, new_uuid);
 
-    let uuid_glyph = UuidGlyph::from_glyph(glyph.borrow())?;
+    let uuid_glyph = UuidGlyph::from_glyph(glyph.as_ref())?;
     dbg!(&uuid_glyph);
     assert_eq!(uuid_glyph.get(), &uuid);
 
@@ -178,11 +176,11 @@ mod test {
       uuids.push(Uuid::new_v4());
     }
     dbg!(&uuids);
-    let glyph = glyph_new(&uuids[..])?;
+    let glyph = Glyph::new(&uuids[..])?;
     dbg!(&glyph);
-    let uuids_decoded = <&[Uuid]>::from_glyph(glyph.borrow())?;
+    let uuids_decoded = <&[Uuid]>::from_glyph(glyph.as_ref())?;
     assert_eq!(uuids_decoded, &uuids);
-    let vec_uuid_glyph = BasicVecGlyph::<_>::from_glyph(glyph.borrow())?;
+    let vec_uuid_glyph = BasicVecGlyph::<_>::from_glyph(glyph.as_ref())?;
     assert_eq!(vec_uuid_glyph.get::<Uuid>()?, &uuids[..]);
     let uuids_parsed = vec_uuid_glyph.get_parsed::<Uuid>()?;
     drop(vec_uuid_glyph);

@@ -13,12 +13,10 @@ pub(crate) use self::test::*;
 #[allow(unused_imports)]
 pub(crate) use self::{bloom::*, log::*, memoize::*, sorting::*};
 #[allow(unused_imports)]
-#[cfg(feature = "alloc")]
-use crate::BoxGlyph;
 use crate::{
   util::debug::ShortHexDump,
   zerocopy::{pad_to_word, round_to_word, ZeroCopy},
-  FromGlyph, Glyph, GlyphErr, GlyphOffset, ParsedGlyph, ToGlyph,
+  FromGlyph, Glyph, GlyphErr, GlyphOffset, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -143,10 +141,12 @@ pub(crate) const BENCH_BUF_SIZE: usize = 8192;
 
 /// Does a round trip codec test for a simple
 #[cfg(all(test, feature = "alloc"))]
-pub fn simple_codec_test<T: Debug + Eq + ToGlyph + FromGlyph<BoxGlyph>>(
+pub fn simple_codec_test<
+  T: Debug + Eq + ToGlyph + FromGlyph<alloc::boxed::Box<Glyph>>,
+>(
   value: T,
 ) {
-  let glyph = crate::glyph_new(&value).unwrap();
+  let glyph = crate::Glyph::new(&value).unwrap();
   let decoded = T::from_glyph(glyph).unwrap();
   assert_eq!(decoded, value);
 }
@@ -154,12 +154,12 @@ pub fn simple_codec_test<T: Debug + Eq + ToGlyph + FromGlyph<BoxGlyph>>(
 /// Does a round trip codec test for a simple
 #[cfg(all(test, feature = "alloc"))]
 pub fn simple_codec_test_debug<
-  T: Debug + Eq + ToGlyph + FromGlyph<BoxGlyph>,
+  T: Debug + Eq + ToGlyph + FromGlyph<alloc::boxed::Box<Glyph>>,
 >(
   value: T,
 ) {
   std::dbg!(&value);
-  let glyph = crate::glyph_new(&value).unwrap();
+  let glyph = crate::Glyph::new(&value).unwrap();
   std::dbg!(&glyph);
   let decoded = T::from_glyph(glyph).unwrap();
   std::dbg!(&decoded);
@@ -171,13 +171,13 @@ where
   T: Copy + Sized,
   ZCT: ZeroCopy + From<T> + Eq + Debug,
   [ZCT]: ToGlyph,
-  for<'a> &'a [ZCT]: FromGlyph<ParsedGlyph<'a>>,
+  for<'a> &'a [ZCT]: FromGlyph<&'a Glyph>,
 {
   let array = [ZCT::from(value); L];
   let slice = &array[..];
-  let vg = crate::glyph_new(slice).unwrap();
+  let vg = crate::Glyph::new(slice).unwrap();
   std::dbg!(&vg);
-  let decoded = <&[ZCT]>::from_glyph(vg.borrow()).unwrap();
+  let decoded = <&[ZCT]>::from_glyph(&*vg).unwrap();
   assert_eq!(slice, decoded);
 }
 
@@ -186,14 +186,14 @@ where
   T: Copy + Sized,
   ZCT: ZeroCopy + From<T> + Eq + Debug,
   [ZCT]: ToGlyph,
-  for<'a> &'a [ZCT]: FromGlyph<ParsedGlyph<'a>>,
+  for<'a> &'a [ZCT]: FromGlyph<&'a Glyph>,
 {
   let array = [ZCT::from(value); L];
   let slice = &array[..];
   std::dbg!(&slice);
-  let vg = crate::glyph_new(slice).unwrap();
+  let vg = crate::Glyph::new(slice).unwrap();
   std::dbg!(&vg);
-  let decoded = <&[ZCT]>::from_glyph(vg.borrow()).unwrap();
+  let decoded = <&[ZCT]>::from_glyph(&*vg).unwrap();
   std::dbg!(&decoded);
   assert_eq!(slice, decoded);
 }

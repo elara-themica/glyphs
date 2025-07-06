@@ -13,6 +13,7 @@ edition = "2021"
 [dependencies]
 argon2 = { optional = true, version = "0.5" }
 aes = { optional = true, version = "0.8" }
+num-bigint = "0.4.6"
 chrono = { optional = true, version = "0.4" }
 ctr = { optional = true, version = "0.9" }
 backtrace = { optional = true, version = "0.3" }
