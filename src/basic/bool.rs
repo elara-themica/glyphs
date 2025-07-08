@@ -587,7 +587,8 @@ impl ToGlyph for [bool] {
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
     if self.len() > 0 {
-      let glyph_start = GlyphHeader::skip(cursor);
+      let glyph_start = *cursor;
+      *cursor += size_of::<GlyphHeader>();
       let bits_padding = (8 - self.len() % 8) as u8 & 0b0000_0111;
       bits_padding.bbwr(target, cursor)?;
       let num_bytes = (self.len() + 7) / 8;

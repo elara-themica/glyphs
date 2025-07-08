@@ -859,7 +859,8 @@ impl<'a> ObjGlyphSerializer<'a> {
     cursor: &'a mut usize,
   ) -> Result<Self, GlyphErr> {
     //== Set up Headers and Object-Level Labels ==/
-    let glyph_start = GlyphHeader::skip(cursor);
+    let glyph_start = *cursor;
+    *cursor += size_of::<GlyphHeader>();
     let content_start = *cursor;
     ObjGlyphHeader::new(
       length,

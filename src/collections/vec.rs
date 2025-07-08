@@ -335,7 +335,8 @@ impl<'a> VecGlyphSerializer<'a> {
     target: &'a mut [u8],
     cursor: &'a mut usize,
   ) -> Result<Self, GlyphErr> {
-    let glyph_start = GlyphHeader::skip(cursor);
+    let glyph_start = *cursor;
+    *cursor += size_of::<GlyphHeader>();
     let content_start = *cursor;
     VecGlyphHeader::new(len)?.bbwr(target, cursor)?;
     let offsets_cursor = GlyphOffset::skip(target, cursor, len, true)?;

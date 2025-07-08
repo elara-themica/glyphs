@@ -385,7 +385,8 @@ impl<'a> TupleGlyphSerializer<'a> {
     target: &'a mut [u8],
     cursor: &'a mut usize,
   ) -> Result<Self, GlyphErr> {
-    let glyph_start = GlyphHeader::skip(cursor);
+    let glyph_start = *cursor;
+    *cursor += size_of::<GlyphHeader>();
     Ok(Self {
       target,
       cursor,

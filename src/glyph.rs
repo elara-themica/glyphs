@@ -386,23 +386,23 @@ impl GlyphHeader {
     &self.len_data
   }
 
-  /// Advances the cursor by the size of the header and returns the position
-  /// at which it would have been written.
-  ///
-  /// ```
-  /// use glyphs::GlyphHeader;
-  ///
-  /// let cursor = &mut 8usize;
-  /// let offset = GlyphHeader::skip(cursor);
-  /// assert_eq!(offset, 8);
-  /// assert_eq!(*cursor, 16);
-  ///
-  /// ```
-  pub fn skip(cursor: &mut usize) -> usize {
-    let glyph_start = *cursor;
-    *cursor += size_of::<Self>();
-    glyph_start
-  }
+  // /// Advances the cursor by the size of the header and returns the position
+  // /// at which it would have been written.
+  // ///
+  // /// ```
+  // /// use glyphs::GlyphHeader;
+  // ///
+  // /// let cursor = &mut 8usize;
+  // /// let offset = GlyphHeader::skip(cursor);
+  // /// assert_eq!(offset, 8);
+  // /// assert_eq!(*cursor, 16);
+  // ///
+  // /// ```
+  // pub fn skip(cursor: &mut usize) -> usize {
+  //   let glyph_start = *cursor;
+  //   *cursor += size_of::<GlyphHeader>();
+  //   glyph_start
+  // }
 }
 
 impl Debug for GlyphHeader {
