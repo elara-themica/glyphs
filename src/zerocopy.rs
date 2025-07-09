@@ -1,3 +1,4 @@
+// TODO: Consider if this can now be replace with the zerocopy crate.
 //! Types to facilitate direct zero-copy use of data in glyphs.
 //!
 //! # Zero Copy Types

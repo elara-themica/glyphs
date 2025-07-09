@@ -2,7 +2,7 @@
 use alloc::string::FromUtf8Error;
 
 use crate::{
-  basic::UnitTypes,
+  basic::UnitType,
   crypto::{CryptoErr, CryptographicHash, GlyphHash},
   dynamic::DynGlyph,
   util::debug::{HexDump, ShortHexDump},
@@ -452,16 +452,9 @@ impl GlyphOffset {
   ///   the inputs are valid.
   /// - `Err(GlyphErr)`: An error if either of the positions is not aligned to
   ///    an 8-byte boundary or if the length exceeds `u32::MAX * 8`.
-  pub fn new(start: usize, position: usize) -> Result<Self, GlyphErr> {
-    if (start % 8 != 0) || (position % 8 != 0) {
-      return Err(err!(
-        error,
-        GlyphErr::GlyphOffsetInvalid { start, position }
-      ));
-    }
-
-    let len = position.saturating_sub(start);
-    let len_words = u32::try_from(len / 8)?;
+  pub fn new(num_bytes: usize) -> Result<Self, GlyphErr> {
+    debug_assert!(num_bytes % 8 == 0);
+    let len_words = u32::try_from(num_bytes >> 3)?;
     Ok(Self(len_words.into()))
   }
 
@@ -1161,12 +1154,7 @@ pub enum GlyphErr {
 
   /// Offsets into glyphs must be multiples of 8 bytes and less than
   /// `core::u32::MAX << 3` bytes.
-  GlyphOffsetInvalid {
-    start:    usize,
-    position: usize,
-  },
-
-  InvalidUserTypeLabel,
+  GlyphOffsetInvalid(usize),
 
   /// The content length is larger than the maximum `core::u32::MAX << 3`
   TooLarge(usize),

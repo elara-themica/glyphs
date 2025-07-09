@@ -293,15 +293,15 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SignatureGlyph<G> {
       let sgh = SignatureGlyphHeader::bbrf(content, cursor)?;
       let _sig_bytes = u8::bbrfs(content, cursor, sgh.signature_len())?;
       *cursor = round_to_word(*cursor);
-      let key_offset = GlyphOffset::new(0, *cursor)?;
+      let key_offset = GlyphOffset::new(*cursor)?;
       let _key_bytes = u8::bbrfs(content, cursor, sgh.key_len())?;
       *cursor = round_to_word(*cursor);
       let statement_offset = if sgh.includes_reason()
         && sgh.metadata.why_signed() != &GlyphHash::default()
       {
-        GlyphOffset::new(0, *cursor)?
+        GlyphOffset::new(*cursor)?
       } else {
-        GlyphOffset::new(0, 0).unwrap()
+        GlyphOffset::new(0).unwrap()
       };
 
       Result::<_, GlyphErr>::Ok((key_offset, statement_offset))

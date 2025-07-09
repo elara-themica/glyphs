@@ -878,19 +878,18 @@ where
 /// Types are serialized as follows (which also corresponds to how these types
 /// are deserialized):
 ///
-/// - _Numeric Primitives_.  Any integer type that is 32 bits or less are
-///   encoded as a [`U32Glyph`] or [`I32Glyph`].  Other primitives are encoded
-///   as their more specific types (e.g., [`F64Glyph`], [`U128Glyph`].
-/// - _Strings_. Encoded as [`StringGlyph`].  Currently only UTF-8 is
+/// - _Numeric Primitives_.  Nuneric primitives are encoded as [IntGlyph]s,
+///    [UIntGlyph]s, or [FloatGlyph]s.
+/// - _Strings_. Encoded as [StringGlyph].  Currently only UTF-8 is
 ///   supported.
-/// - _Options_. `None` is encoded as a [`NothingGlyph`].  `Some(T)` is encoded
-///   as a `T`.
-/// - _Sequences_.  All sequences are encoded as [`VecGlyph`].  Specialized
+/// - _Options_. `None` is encoded as a [UnitGlyph] with a [UnitType] of
+///    [Nothing].  `Some(T)` is just encoded as a `T`.
+/// - _Sequences_.  All sequences are encoded as [VecGlyph].  Specialized
 ///   sequences of a single primitive type are not yet supported, but this may
 ///   be possible in a future revision.
-/// - _Tuples_.  Serialized as [`TupleGlyph`]s.
-/// - _Maps_.  Serialized as [`MapGlyph`]s.
-/// - _Structs_.  Serialized as [`ObjGlyph`]s with corresponding type names.
+/// - _Tuples_.  Serialized as [TupleGlyph]s.
+/// - _Maps_.  Serialized as [MapGlyph]s.
+/// - _Structs_.  Serialized as [ObjGlyph]s with corresponding type names.
 ///   Unit structs have no fields, tuple structs have unnamed fields, and
 ///   regular structs have named fields.  Newtype structs are serialized
 ///   transparently, e.g., `struct T(U)` will be serialized as if it were of
@@ -898,7 +897,19 @@ where
 /// - _Enums_.  Serialized like structs, except that (1) the target `ObjGlyph`
 ///   will also contain the variant name and (2) newtype variants are serialized
 ///   as tuple variants with a single item.
-pub fn glyph_serde_serialize<T>(
+///
+/// [IntGlyph]: crate::basic::IntGlyph
+/// [UIntGlyph]: crate::basic::UIntGlyph
+/// [FloatGlyph]: crate::basic::FloatGlyph
+/// [StringGlyph]: crate::basic::StringGlyph
+/// [UnitGlyph]: crate::basic::UnitGlyph
+/// [UnitType]: crate::basic::UnitType
+/// [Nothing]: crate::basic::UnitType::Nothing
+/// [VecGlyph]: crate::collections::VecGlyph
+/// [MapGlyph]: crate::collections::MapGlyph
+/// [TupleGlyph]: crate::collections::TupleGlyph
+/// [ObjGlyph]: crate::structured::ObjGlyph
+pub(crate) fn glyph_serde_serialize<T>(
   value: &T,
   target: &mut [u8],
   cursor: &mut usize,

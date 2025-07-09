@@ -350,7 +350,7 @@ impl<'a> VecGlyphSerializer<'a> {
   }
 
   pub fn add_field<T: ToGlyph>(&mut self, field: &T) -> Result<(), GlyphErr> {
-    GlyphOffset::new(self.content_start, *self.cursor)?
+    GlyphOffset::new(*self.cursor - self.content_start)?
       .bbwr(self.target, &mut self.offsets_cursor)?;
     field.glyph_encode(self.target, self.cursor)
   }

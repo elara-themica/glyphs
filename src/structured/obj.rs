@@ -905,7 +905,7 @@ impl<'a> ObjGlyphSerializer<'a> {
   where
     T: ToGlyph,
   {
-    GlyphOffset::new(self.content_start, *self.cursor)?
+    GlyphOffset::new(*self.cursor - self.content_start)?
       .bbwr(self.target, &mut self.offsets_cursor)?;
     if let Some(field_name) = field_name {
       field_name.glyph_tiny_str_write(self.target, self.cursor)?;

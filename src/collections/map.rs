@@ -331,7 +331,36 @@ impl MapGlyphLenCalc {
   }
 }
 
-pub(crate) struct MapGlyphSerializer<'a> {
+/// A serializer for writing [MapGlyph]s.
+///
+///
+/// - The [new()] method writes a skeleton to the target buffer and prepares
+///   the serializer for writing key/value pairs.  Note that the number of
+///   entries in the map is required at initialization because we need to know
+///   the size of the offset table.
+/// - Entries must be added either via the [write_entry()] method or paired
+///   calls to [write_key()] and [write_value()].
+/// - Once all entries have been written, the serializer must be finalized by
+///   calling [finish()].
+/// - This type does nothing to prevent its incorrect use!  For example,
+///   initializing a serializer with an expected length of N and then writing
+///   fewer than N entries will result in uninitialized data being present in
+///   the resulting offsets table, even if the total length of the glyph was
+///   still somehow correct!  Similarly, writing more than N entries will
+///   result in the extra offsets overwriting the contents of the first entries.
+///   Your code / tests should include the appropriate checks to ensure
+///   correctness.
+/// - This serializer is not intended to be a part of this crate's public API
+///   and therefore will not be bound by typical SemVer guarantees.
+///
+/// [MapGlyph]: crate::collections::MapGlyph
+/// [new()]: crate::collections::MapGlyphSerializer::new
+/// [write_key()]: crate::collections::MapGlyphSerializer::write_key
+/// [write_value()]: crate::collections::MapGlyphSerializer::write_value
+/// [write_entry()]: crate::collections::MapGlyphSerializer::write_entry
+/// [finish()]: crate::collections::MapGlyphSerializer::finish
+#[doc(hidden)]
+pub struct MapGlyphSerializer<'a> {
   target:         &'a mut [u8],
   cursor:         &'a mut usize,
   glyph_start:    usize,
@@ -340,6 +369,8 @@ pub(crate) struct MapGlyphSerializer<'a> {
 }
 
 impl<'a> MapGlyphSerializer<'a> {
+  /// Writes the skeleton of a MapGlyph and initializes the serializer to
+  /// accept entries.
   pub fn new(
     len: usize,
     target: &'a mut [u8],
@@ -359,7 +390,8 @@ impl<'a> MapGlyphSerializer<'a> {
     })
   }
 
-  pub fn add_item<K: ToGlyph, V: ToGlyph>(
+  /// Encode a key/value pair
+  pub fn write_entry<K: ToGlyph, V: ToGlyph>(
     &mut self,
     key: &K,
     value: &V,
@@ -368,12 +400,14 @@ impl<'a> MapGlyphSerializer<'a> {
     self.add_value(value)
   }
 
+  /// Encode a key
   pub fn add_key<K: ToGlyph>(&mut self, key: &K) -> Result<(), GlyphErr> {
-    GlyphOffset::new(self.content_start, *self.cursor)?
+    GlyphOffset::new(*self.cursor - self.content_start)?
       .bbwr(self.target, &mut self.offsets_cursor)?;
     key.glyph_encode(self.target, self.cursor)
   }
 
+  /// Encode a value
   pub fn add_value<V: ToGlyph>(&mut self, value: &V) -> Result<(), GlyphErr> {
     value.glyph_encode(self.target, self.cursor)
   }
@@ -403,7 +437,7 @@ where
   ) -> Result<(), GlyphErr> {
     let mut mgs = MapGlyphSerializer::new(self.len(), target, cursor)?;
     for (key, value) in self.iter() {
-      mgs.add_item(key, value)?;
+      mgs.write_entry(key, value)?;
     }
     mgs.finish()
   }
