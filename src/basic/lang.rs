@@ -124,7 +124,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for StringGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => self
+      GlyphSorting::TypeAndBytes => self
         .language()
         .cmp(&other.language())
         .then(self.direction().cmp(&other.direction()))

@@ -543,7 +543,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for ObjGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => {
+      GlyphSorting::TypeAndBytes => {
         self.glyph.content().cmp(&other.glyph.content())
       },
       GlyphSorting::Experimental => {

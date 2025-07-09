@@ -559,7 +559,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for PasswordGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => {
+      GlyphSorting::TypeAndBytes => {
         let a = self.glyph.deref();
         let b = other.glyph.deref();
         a.glyph_type()

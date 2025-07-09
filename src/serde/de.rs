@@ -1,5 +1,5 @@
 use crate::{
-  basic::{BitVecGlyph, FloatGlyph, IntGlyph, UIntGlyph, UnitGlyph, UnitTypes},
+  basic::{BitVecGlyph, FloatGlyph, IntGlyph, UIntGlyph, UnitGlyph, UnitType},
   collections::{
     BasicVecGlyph, BasicVecGlyphHeader, MapGlyph, TupleGlyph, VecGlyph,
   },
@@ -61,7 +61,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
       },
       GlyphType::Unit => {
         let ug = UnitGlyph::from_glyph(self.0)?;
-        if ug.type_id().eq(&UnitTypes::Nothing) {
+        if ug.type_id().eq(&UnitType::Nothing) {
           visitor.visit_none()
         } else {
           visitor.visit_unit()
@@ -244,7 +244,7 @@ impl<'de> Deserializer<'de> for GlyphDeserializer<'de> {
   {
     if self.0.glyph_type() == GlyphType::Unit {
       let unit = UnitGlyph::from_glyph(self.0)?;
-      if unit.type_id().eq(&UnitTypes::Nothing) {
+      if unit.type_id().eq(&UnitType::Nothing) {
         visitor.visit_none()
       } else {
         visitor.visit_some(self)

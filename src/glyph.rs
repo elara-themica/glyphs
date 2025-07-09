@@ -189,14 +189,16 @@ pub trait EncodedGlyph<G: Deref<Target = Glyph>>:
   /// Returns a reference to the underlying glyph
   fn glyph(&self) -> &Glyph;
 
-  /// Sorting order for glyphs
+  /// Configurable sort order for glyphs.
+  ///
+  /// As contrasted with the standard [`Ord`] and friends, we want to allow for
+  /// different possible ways to order glyphs.
   ///
   /// See [`GlyphSorting`] for more details.
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => {
-        // GlyphSorting::byte_ord(self.glyph().as_ref(), other.glyph().as_ref())
-        todo!()
+      GlyphSorting::TypeAndBytes => {
+        GlyphSorting::type_and_bytes(self.glyph(), other.glyph())
       },
       GlyphSorting::Experimental => self.cmp(other),
     }
@@ -518,15 +520,15 @@ pub enum GlyphSorting {
   ///
   /// This is a simple fallback sorting, in contexts where more sophisticated
   /// sorting is unavailable.
-  ByteOrder = 0,
+  TypeAndBytes = 0,
 
   /// Initial content-aware sorting efforts during PoC development.
   Experimental = 1,
 }
 
 impl GlyphSorting {
-  /// Sort glyphs based on type ID and
-  pub fn byte_ord(a: &Glyph, b: &Glyph) -> Ordering {
+  /// Sort glyphs based on type ID and then content bytes.
+  pub fn type_and_bytes(a: &Glyph, b: &Glyph) -> Ordering {
     let a_type = a.header().type_id;
     let b_type = b.header().type_id;
     if a_type != b_type {
@@ -539,7 +541,7 @@ impl GlyphSorting {
   /// Order glyphs based on semantic content.
   pub fn dyn_ord(a: &Glyph, b: &Glyph, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => GlyphSorting::byte_ord(a, b),
+      GlyphSorting::TypeAndBytes => GlyphSorting::type_and_bytes(a, b),
       GlyphSorting::Experimental => {
         let a_dyn = DynGlyph::new(a);
         let b_dyn = DynGlyph::new(b);
@@ -1445,14 +1447,14 @@ pub enum GlyphErr {
   /// glyph.
   UnitLength(usize),
   UnitTypeMismatch {
-    expected: UnitTypes,
-    observed: UnitTypes,
+    expected: UnitType,
+    observed: UnitType,
   },
   /// An unexpected unit type was encountered
   ///
   /// Likely, this was caused by decoding an [`Option`] from a unit
-  /// type other than [`UnitTypes::Nothing`].
-  UnexpectedUnitType(UnitTypes),
+  /// type other than [`UnitType::Nothing`].
+  UnexpectedUnitType(UnitType),
   TensorRankOverflow(usize),
   UnsupportedCryptoScheme,
 

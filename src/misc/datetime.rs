@@ -186,7 +186,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DateTimeGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => {
+      GlyphSorting::TypeAndBytes => {
         self.0.content_padded().cmp(&other.0.content_padded())
       },
       GlyphSorting::Experimental => self.timestamp().cmp(&other.timestamp()),

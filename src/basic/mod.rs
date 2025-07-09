@@ -63,7 +63,7 @@ where
         },
       };
       let unit_type_id = *unit.type_id();
-      if unit_type_id.eq(&UnitTypes::Nothing) {
+      if unit_type_id.eq(&UnitType::Nothing) {
         Ok(None)
       } else {
         Err(err!(

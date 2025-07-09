@@ -611,7 +611,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BasicVecGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => self
+      GlyphSorting::TypeAndBytes => self
         .header()
         .basic_type_id
         .get()

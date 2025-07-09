@@ -301,8 +301,8 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for TupleGlyph<G> {
 
   fn glyph_ord(&self, other: &Self, sorting: GlyphSorting) -> Ordering {
     match sorting {
-      GlyphSorting::ByteOrder => {
-        GlyphSorting::byte_ord(self.0.deref(), other.0.deref())
+      GlyphSorting::TypeAndBytes => {
+        GlyphSorting::type_and_bytes(self.0.deref(), other.0.deref())
       },
       GlyphSorting::Experimental => {
         GlyphSorting::dyn_ord(self.0.deref(), other.0.deref(), sorting)
