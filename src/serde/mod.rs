@@ -53,7 +53,10 @@ pub(crate) mod de;
 #[warn(missing_docs)]
 pub(crate) mod ser;
 
-use crate::{zerocopy::BufferErr, Glyph, GlyphDecodeErr, GlyphErr, GlyphType};
+use crate::{
+  structured::ObjGlyphErr, zerocopy::BufferErr, Glyph, GlyphDecodeErr,
+  GlyphErr, GlyphType,
+};
 use alloc::string::{String, ToString};
 use core::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
@@ -129,6 +132,8 @@ pub enum SerdeGlyphErr {
   Unreachable,
   InvalidSourceGlyphTypeEnum(GlyphType),
   AllocError,
+
+  ObjGlyphErr(ObjGlyphErr),
 }
 
 impl Display for SerdeGlyphErr {
@@ -174,6 +179,12 @@ impl From<GlyphErr> for SerdeGlyphErr {
   }
 }
 
+impl From<ObjGlyphErr> for SerdeGlyphErr {
+  fn from(src: ObjGlyphErr) -> Self {
+    Self::ObjGlyphErr(src)
+  }
+}
+
 impl From<alloc::alloc::AllocError> for SerdeGlyphErr {
   fn from(_value: alloc::alloc::AllocError) -> Self {
     SerdeGlyphErr::AllocError
@@ -198,11 +209,15 @@ mod test {
 
   use super::*;
   use crate::{
-    serde::{de::glyph_serde_deserialize, ser::glyph_new_serde},
+    serde::{
+      de::glyph_serde_deserialize,
+      ser::{glyph_new_serde, glyph_serde_serialize},
+    },
     structured::ObjGlyph,
     util::init_test_logger,
     FromGlyph, Glyph, ToGlyph,
   };
+  use ::test::black_box;
   use alloc::{collections::BTreeMap, vec::Vec};
   use core::fmt::Debug;
   use serde::{de::DeserializeOwned, Serialize};
@@ -238,6 +253,67 @@ mod test {
     compare_primitives('🦋')?;
     compare_primitives("Glyph")?;
     Ok(())
+  }
+
+  #[bench]
+  fn serde_bench_primitives_serialize(b: &mut ::test::Bencher) {
+    let mut buffer = [0u8; 5600];
+    let target = &mut buffer[..];
+    b.bytes = target.len() as u64; // Length of the glyphs below, in bytes.
+    b.iter(|| {
+      black_box({
+        let cursor = &mut 0usize;
+        for _ in 0..100 {
+          let _ = glyph_serde_serialize(&true, target, cursor).is_ok();
+          let _ = glyph_serde_serialize(&42u32, target, cursor).is_ok();
+          let _ = glyph_serde_serialize(&"Glyph", target, cursor).is_ok();
+          let _ = glyph_serde_serialize(&'🦋', target, cursor).is_ok();
+          let _ = glyph_serde_serialize(&12345678u64, target, cursor).is_ok();
+        }
+      });
+    });
+  }
+
+  /// Benchmark for deserialization of glyphs using the serde interface.
+  ///
+  /// This is close to a worst-case scenario for deserialization, as using
+  /// serde involves actually deserializing the entire buffer.  First, this test
+  /// is mostly primitives, averaging just over 10 bytes per object.  Second,
+  /// using the glyph interface natively allows working with larger data
+  /// structures where we only need to deserialize the parts we actually use,
+  /// not the entire buffer.
+  #[bench]
+  fn serde_bench_primitives_deserialize(b: &mut ::test::Bencher) {
+    let mut buffer = [0u8; 5600];
+    let target = &mut buffer[..];
+    let cursor = &mut 0usize;
+    for _ in 0..100 {
+      let _ = glyph_serde_serialize(&true, target, cursor).is_ok();
+      let _ = glyph_serde_serialize(&42u32, target, cursor).is_ok();
+      let _ = glyph_serde_serialize(&"Glyph", target, cursor).is_ok();
+      let _ = glyph_serde_serialize(&'🦋', target, cursor).is_ok();
+      let _ = glyph_serde_serialize(&12345678u64, target, cursor).is_ok();
+    }
+
+    b.bytes = target.len() as u64; // Length of the glyphs below, in bytes.
+
+    b.iter(|| {
+      black_box({
+        let cursor = &mut 0usize;
+        for _ in 0..100 {
+          let glyph = Glyph::read(buffer.as_ref(), cursor).unwrap();
+          let _ = glyph_serde_deserialize::<bool>(glyph).is_ok();
+          let glyph = Glyph::read(buffer.as_ref(), cursor).unwrap();
+          let _ = glyph_serde_deserialize::<i32>(glyph).is_ok();
+          let glyph = Glyph::read(buffer.as_ref(), cursor).unwrap();
+          let _ = glyph_serde_deserialize::<&str>(glyph).is_ok();
+          let glyph = Glyph::read(buffer.as_ref(), cursor).unwrap();
+          let _ = glyph_serde_deserialize::<char>(glyph).is_ok();
+          let glyph = Glyph::read(buffer.as_ref(), cursor).unwrap();
+          let _ = glyph_serde_deserialize::<u64>(glyph).is_ok();
+        }
+      });
+    });
   }
 
   /// Confirms round-trip encoding of a raw tuple (`(i32, &str)`, etc...)

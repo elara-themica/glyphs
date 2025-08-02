@@ -150,8 +150,8 @@ impl<'a> Serializer for GlyphSerializer<'a> {
     let ogs = ObjGlyphSerializer::new(
       None,
       Some(name),
-      None,
       Some(variant),
+      None,
       false,
       false,
       0,
@@ -187,8 +187,8 @@ impl<'a> Serializer for GlyphSerializer<'a> {
     let mut ogs = ObjGlyphSerializer::new(
       None,
       Some(name),
-      None,
       Some(variant),
+      None,
       false,
       false,
       1,
@@ -250,8 +250,8 @@ impl<'a> Serializer for GlyphSerializer<'a> {
     let ogs = ObjGlyphSerializer::new(
       None,
       Some(name),
-      None,
       Some(variant),
+      None,
       false,
       false,
       len,
@@ -303,8 +303,8 @@ impl<'a> Serializer for GlyphSerializer<'a> {
     let ogs = ObjGlyphSerializer::new(
       None,
       Some(name),
-      None,
       Some(variant),
+      None,
       true,
       false,
       len,
@@ -547,7 +547,7 @@ impl Serializer for GlyphLenCalc {
   ) -> Result<Self::Ok, Self::Error> {
     // Unit structs are stored as ObjGlyphs, with a labeled type name and no
     // fields.
-    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false)?;
+    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false, false)?;
     Ok(obj_len.finish())
   }
 
@@ -560,7 +560,7 @@ impl Serializer for GlyphLenCalc {
     // Unit variants are stored as ObjGlyphs, with a labeled type name, a
     // labeled variant name, and no fields.
     let obj_len =
-      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false)?;
+      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false, false)?;
     Ok(obj_len.finish())
   }
 
@@ -590,7 +590,7 @@ impl Serializer for GlyphLenCalc {
     // Newtype Variants (e.g., `NewType::Variant(OldType)`) are stored as
     // ObjGlyphs, with a labeled type name, a labeled and one  unnamed field.
     let mut obj_len =
-      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false)?;
+      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false, false)?;
     let field_len = value.serialize(GlyphLenCalc)?;
     obj_len.add_field(None, field_len)?;
     Ok(obj_len.finish())
@@ -616,7 +616,7 @@ impl Serializer for GlyphLenCalc {
     _len: usize,
   ) -> Result<Self::SerializeTupleStruct, Self::Error> {
     // Tuple structs are just ObjGlyphs with unnamed fields.
-    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false)?;
+    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false, false)?;
     Ok(obj_len)
   }
 
@@ -628,7 +628,7 @@ impl Serializer for GlyphLenCalc {
     _len: usize,
   ) -> Result<Self::SerializeTupleVariant, Self::Error> {
     let obj_len =
-      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false)?;
+      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false, false)?;
     Ok(obj_len)
   }
 
@@ -644,7 +644,7 @@ impl Serializer for GlyphLenCalc {
     name: &'static str,
     _len: usize,
   ) -> Result<Self::SerializeStruct, Self::Error> {
-    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false)?;
+    let obj_len = ObjGlyphLenCalc::new(false, Some(name), None, false, true)?;
     Ok(obj_len)
   }
 
@@ -656,7 +656,7 @@ impl Serializer for GlyphLenCalc {
     _len: usize,
   ) -> Result<Self::SerializeStructVariant, Self::Error> {
     let obj_len =
-      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false)?;
+      ObjGlyphLenCalc::new(false, Some(name), Some(variant), false, true)?;
     Ok(obj_len)
   }
 }

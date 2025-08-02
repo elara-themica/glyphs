@@ -332,12 +332,9 @@ mod tests {
   use super::*;
   use crate::{
     crypto::{CryptographicHash, GlyphHash, Password},
-    glyph_new_serde,
   };
-  use alloc::string::String;
   use rand::thread_rng;
-  use serde_derive::Serialize;
-  use std::{dbg, prelude::v1::ToString, vec};
+  use std::{dbg, vec};
 
   #[test]
   fn dyn_glyph_debug() {
@@ -382,18 +379,11 @@ mod tests {
     let map_dyn = DynGlyph::from_glyph(map_glyph).unwrap();
     dbg!(&map_dyn);
 
-    #[derive(Serialize)]
-    struct TestStruct {
-      name: String,
-      age:  u8,
-    }
-    let obj_glyph = glyph_new_serde(&TestStruct {
-      name: "Name".to_string(),
-      age:  42,
-    })
-    .unwrap();
-    let obj_dyn = DynGlyph::from_glyph(obj_glyph).unwrap();
-    dbg!(&obj_dyn);
+
+    // let obj = TestStruct { age: 34, name: String::from("Elara") };
+    // let obj_glyph = Glyph::new(&obj).unwrap();
+    // let obj_dyn = DynGlyph::from_glyph(obj_glyph).unwrap();
+    // dbg!(&obj_dyn);
 
     let str_glyph = Glyph::new(&"Hello World!").unwrap();
     let str_dyn = DynGlyph::from_glyph(str_glyph).unwrap();

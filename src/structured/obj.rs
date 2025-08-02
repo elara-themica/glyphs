@@ -18,7 +18,6 @@ use crate::{
   EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
-use alloc::collections::BTreeMap;
 use core::{
   fmt::{Debug, Formatter},
   mem::size_of,
@@ -747,34 +746,56 @@ impl<'a> Iterator for IterFields<'a> {
 
 /// Calculates the length of an [`ObjGlyph`], in bytes.
 ///
-///
-///
+/// This type allows user to calculate the length of an Object Glyph, typically
+/// in advance of writing one using [`ObjGlyphSerializer`].  This is done by
+/// first calling `new()` with object-level details, a series of successive
+/// calls to `add_field()` for each field the object contains, and finally a
+/// call to `finish()` to obtain the number of bytes necessary to encode the
+/// described object.
 pub(crate) struct ObjGlyphLenCalc {
-  /// Length of the type IDs, variant IDs, and field names (if present)
+  /// Length of the type IDs, variant IDs, and field names (if present).
+  ///
+  /// This is a consolidation of the type hash, type name, and variant name, and
+  /// (presence of a) variant id as specified when the length calculator is
+  /// created with a call to `new()`.
   labels_len: usize,
+
   /// The number of fields to be serialized (necessary to calculate length of
-  /// offsets table.
+  /// the offset table).
+  ///
+  /// This will increase with successive calls to `add_field()`.
   num_fields: usize,
+
   /// The total length of all field values to be serialized in the object.
   fields_len: usize,
+
+  /// Whether the object has named fields.
+  ///
+  /// This is necessary to give errors if the user calls `add_field()`
+  /// incorrectly.
+  named_fields: bool,
 }
 
 impl ObjGlyphLenCalc {
   /// Starts a new [`ObjGlyph`] length calculation.
   ///
   /// Parameters:
-  /// - `type_hash` Does the object include a hash referencing more information
+  /// - `type_hash`. Does the object include a hash referencing more information
   ///   about the type?
-  /// - `type_name` If the object will have a type name, include it here.
-  /// - `variant_name` If the object will have a variant name (e.g., for the
+  /// - `type_name`. If the object will have a type name, include it here.
+  /// - `variant_name`. If the object will have a variant name (e.g., for the
   ///   discriminant of an `enum`), include it here.
-  /// - `variant_id` If the object will have a variant identifier (e.g., for the
+  /// - `variant_id`. If the object will have a variant identifier (e.g., for the
   ///   value of an `enum`), include it here.
+  /// - `named_fields`. Whether or not the fields of the object will be named
+  ///   (i.e., whether `add_field()` should expect field names or not).  This
+  ///   must be consistent for all fields of the object.
   pub fn new(
     type_hash: bool,
     type_name: Option<&str>,
     variant_name: Option<&str>,
     variant_id: bool,
+    named_fields: bool,
   ) -> Result<Self, GlyphErr> {
     let mut labels_len = 0;
     if type_hash {
@@ -793,23 +814,26 @@ impl ObjGlyphLenCalc {
       labels_len,
       num_fields: 0,
       fields_len: 0,
+      named_fields,
     })
   }
 
-  /// Adds the length necessary to include a new field.
-  ///
-  /// Note: Calling this function with field names only some of the time will
-  ///       not produce a valid length--this property is per-_object_, not
-  ///       per-field.
+  /// Tracks the length necessary to include another field.
   pub fn add_field(
     &mut self,
     field_name: Option<&str>,
     field_len: usize,
-  ) -> Result<(), GlyphErr> {
+  ) -> Result<(), ObjGlyphErr> {
+    if field_name.is_some() != self.named_fields {
+      return Err(ObjGlyphErr::NamedFieldsConsistency);
+    }
     if let Some(field_name) = field_name {
-      let field_name_len = field_name.glyph_tiny_str_len()?;
+      let field_name_len = field_name
+        .glyph_tiny_str_len()
+        .map_err(|_| ObjGlyphErr::FieldNameTooLong(field_name.len()))?;
       self.labels_len = self.labels_len.saturating_add(field_name_len);
     }
+
     self.num_fields = self.num_fields.saturating_add(1);
     self.fields_len = self.fields_len.saturating_add(field_len);
     Ok(())
@@ -834,7 +858,7 @@ impl ObjGlyphLenCalc {
 /// Note that the number of fields and total length must be known in advance,
 /// or the serialized glyph will not be valid.  The latter can be determined
 /// with [`ObjGlyphLenCalc`].
-pub(crate) struct ObjGlyphSerializer<'a> {
+pub struct ObjGlyphSerializer<'a> {
   target:         &'a mut [u8],
   glyph_start:    usize,
   content_start:  usize,
@@ -845,16 +869,35 @@ pub(crate) struct ObjGlyphSerializer<'a> {
 impl<'a> ObjGlyphSerializer<'a> {
   /// Starts serializing an [`ObjGlyph`].
   ///
-  /// Internal headers, labels (where appropriate), and the offsets table are
-  /// written immediately.
-  pub(crate) fn new(
+  /// Parameters:
+  ///
+  /// - `type_hash`. The hash of a glyph describing this object type, if
+  ///   present.
+  /// - `type_name`. A human-readable name of the object type, if present.
+  /// - `variant_name`. A human-readable name of the object's variant, if
+  ///   applicable.
+  /// - `variant_id`. A numeric identifier of the object's variant, if
+  ///   applicable.
+  /// - `field_names`. Whether or not fields will be named.
+  /// - `fields_ordered`. Whether or not the fields provided to the
+  ///   `add_field()` method will be named.  This must be consistent across the
+  ///   entire object.
+  /// - `num_fields`.  The number of fields in the object.
+  /// - `target`. The byte buffer into which the object glyph will be written.
+  /// - `cursor`. The location in the target byte buffer at which the object
+  ///   glyph will be written.
+  ///
+  /// Errors:
+  ///
+  /// - If `type_name` or `variant_name` are more than 255 bytes.
+  pub fn new(
     type_hash: Option<&GlyphHash>,
     type_name: Option<&str>,
-    variant_id: Option<u64>,
     variant_name: Option<&str>,
+    variant_id: Option<u64>,
     field_names: bool,
     fields_ordered: bool,
-    length: usize,
+    num_fields: usize,
     target: &'a mut [u8],
     cursor: &'a mut usize,
   ) -> Result<Self, GlyphErr> {
@@ -863,7 +906,7 @@ impl<'a> ObjGlyphSerializer<'a> {
     *cursor += size_of::<GlyphHeader>();
     let content_start = *cursor;
     ObjGlyphHeader::new(
-      length,
+      num_fields,
       type_hash.is_some(),
       type_name.is_some(),
       variant_id.is_some(),
@@ -886,7 +929,7 @@ impl<'a> ObjGlyphSerializer<'a> {
     }
 
     //== Set up offsets table ==/
-    let offsets_cursor = GlyphOffset::skip(target, cursor, length, true)?;
+    let offsets_cursor = GlyphOffset::skip(target, cursor, num_fields, true)?;
 
     Ok(Self {
       target,
@@ -897,6 +940,7 @@ impl<'a> ObjGlyphSerializer<'a> {
     })
   }
 
+  /// Writes an additional field.
   pub fn add_field<T>(
     &mut self,
     field_name: Option<&str>,
@@ -913,6 +957,7 @@ impl<'a> ObjGlyphSerializer<'a> {
     field_value.glyph_encode(self.target, self.cursor)
   }
 
+  /// Finishes writing the glyph.
   pub fn finish(self) -> Result<(), GlyphErr> {
     glyph_close(
       GlyphType::Object,
@@ -925,92 +970,115 @@ impl<'a> ObjGlyphSerializer<'a> {
   }
 }
 
-struct ObjGlyphMapWriter<K, V> {
-  type_hash:    Option<GlyphHash>,
-  type_name:    Option<alloc::string::String>,
-  variant_id:   Option<u64>,
-  variant_name: Option<alloc::string::String>,
-  data:         BTreeMap<K, V>,
-}
+/// Errors related to Object Glyphs.
+#[derive(Debug, Copy, Clone)]
+pub enum ObjGlyphErr {
+  /// When writing an object glyph, either all or no fields must be named.
+  NamedFieldsConsistency,
 
-impl<K, V> ToGlyph for ObjGlyphMapWriter<K, V>
-where
-  K: Ord + AsRef<str>,
-  V: ToGlyph,
-{
-  fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut ogs = ObjGlyphSerializer::new(
-      self.type_hash.as_ref(),
-      self.type_name.as_deref(),
-      self.variant_id,
-      self.variant_name.as_deref(),
-      true,
-      true,
-      self.data.len(),
-      target,
-      cursor,
-    )?;
-    for (key, value) in self.data.iter() {
-      ogs.add_field(Some(key.as_ref()), value)?;
-    }
-    ogs.finish()
-  }
-
-  fn glyph_len(&self) -> usize {
-    if let Ok(mut oglc) = ObjGlyphLenCalc::new(
-      self.type_hash.is_some(),
-      self.type_name.as_deref(),
-      self.variant_name.as_deref(),
-      self.variant_id.is_some(),
-    ) {
-      for (key, value) in self.data.iter() {
-        oglc.add_field(Some(key.as_ref()), value.glyph_len()).ok();
-      }
-      oglc.finish()
-    } else {
-      0
-    }
-  }
+  /// The maximum length of field names is 255 bytes.
+  FieldNameTooLong(usize),
 }
 
 #[cfg(test)]
-mod test {
-
+pub(crate) mod test {
   use super::*;
+  use crate::util::debug::HexDump;
   use std::{
-    collections::BTreeMap,
-    println,
     string::{String, ToString},
   };
+
+  pub(crate) struct TestObject {
+    pub name: String,
+    pub age:  u8,
+  }
+
+  impl ToGlyph for TestObject {
+    fn glyph_encode(
+      &self,
+      target: &mut [u8],
+      cursor: &mut usize,
+    ) -> Result<(), GlyphErr> {
+      let mut writer = ObjGlyphSerializer::new(
+        None,
+        Some("TestStruct"),
+        None,
+        None,
+        true,
+        true,
+        self.glyph_len(),
+        target,
+        cursor,
+      )?;
+      writer.add_field(Some("age"), &self.age)?;
+      writer.add_field(Some("name"), &self.name)?;
+      writer.finish()
+    }
+
+    fn glyph_len(&self) -> usize {
+      if let Ok(mut calc) =
+        ObjGlyphLenCalc::new(false, Some("TestStruct"), None, false, true)
+      {
+        calc
+          .add_field(Some("age"), self.age.glyph_len())
+          .unwrap_or_default();
+        calc
+          .add_field(Some("name"), self.name.glyph_len())
+          .unwrap_or_default();
+        calc.finish()
+      } else {
+        0
+      }
+    }
+  }
 
   #[test]
   fn obj_glyph() {
     // Basic Encoding
-    let fields: BTreeMap<String, i32> =
-      ('a'..='z').map(|c| String::from(c)).zip(1..=26).collect();
-    let ogmw = ObjGlyphMapWriter {
-      type_hash:    None,
-      type_name:    Some("TestType".to_string()),
-      variant_id:   None,
-      variant_name: None,
-      data:         fields,
-    };
-    let encoded = Glyph::new(&ogmw).unwrap();
-    // dbg!(&encoded);
-    let decoded = ObjGlyph::from_glyph(encoded).unwrap();
-    // dbg!(&decoded);
+    let mut len_calc =
+      ObjGlyphLenCalc::new(false, Some("TestType"), None, false, true).unwrap();
+    let letters = 'a'..='z';
+    for (n, c) in letters.clone().enumerate() {
+      len_calc
+        .add_field(Some(&c.to_string()), (n as u32).glyph_len())
+        .unwrap();
+    }
+    let len = len_calc.finish();
+    std::dbg!(len);
 
-    // Testing binary search
-    for key in ogmw.data.keys() {
-      let value = decoded.by_name(key.as_str());
-      let decoded_value = i32::from_glyph(value.unwrap()).unwrap();
-      println!("{key:?}, {decoded_value:?}");
+    let mut buffer = std::vec![0u8; len];
+    let cursor = &mut 0;
+    let mut writer = ObjGlyphSerializer::new(
+      None,
+      Some("TestType"),
+      None,
+      None,
+      true,
+      true,
+      letters.size_hint().0,
+      &mut buffer,
+      cursor,
+    )
+    .unwrap();
+    for (n, c) in letters.clone().enumerate() {
+      writer.add_field(Some(&c.to_string()), &(n as u32)).unwrap();
+    }
+    writer.finish().unwrap();
+    std::dbg!(&HexDump(&buffer));
+
+    let obj_glyph = Glyph::read(&buffer, &mut 0).unwrap();
+    let decoded = ObjGlyph::from_glyph(obj_glyph).unwrap();
+    std::dbg!(&decoded);
+
+    for (n, c) in letters.clone().enumerate() {
+      let field_name = c.to_string();
+      let expected_value = n as u32;
+
+      let field = decoded.by_name(&field_name).unwrap();
+      let observed_value = u32::from_glyph(field).unwrap();
+      assert_eq!(expected_value, observed_value);
     }
 
-    // LATER: Expand testing, look to cover most / all paths.
+    // LATER: Expand test coverage
   }
 }
