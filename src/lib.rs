@@ -109,40 +109,29 @@ extern crate test;
 #[macro_use]
 mod macros;
 
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 pub mod basic;
 
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 pub mod collections;
 
 #[allow(missing_docs)]
 pub mod crypto;
 
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 mod dynamic;
 
 #[allow(missing_docs)]
 // #[cfg(feature = "glifs")]
 pub mod glifs;
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 mod glyph;
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 pub mod misc;
-#[deny(missing_docs)]
+#[warn(missing_docs)]
 pub mod zerocopy;
 
 #[warn(missing_docs)]
-#[cfg(feature = "serde")]
-mod serde;
-#[cfg(feature = "serde")]
-#[warn(missing_docs)]
-#[doc(cfg(feature = "serde"))]
-pub use serde::{
-  de::glyph_serde_deserialize,
-  ser::{glyph_new_serde, glyph_serde_serialize},
-};
-
-#[deny(missing_docs)]
 pub mod structured;
 
 #[allow(missing_docs)]

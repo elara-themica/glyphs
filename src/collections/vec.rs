@@ -296,8 +296,9 @@ impl<'a> Iterator for VecGlyphIterator<'a> {
   }
 }
 
+#[doc(hidden)]
 #[derive(Default)]
-pub(crate) struct VecGlyphLenCalc {
+pub struct VecGlyphLenCalc {
   num_items: usize,
   items_len: usize,
 }
@@ -321,7 +322,8 @@ impl VecGlyphLenCalc {
   }
 }
 
-pub(crate) struct VecGlyphSerializer<'a> {
+#[doc(hidden)]
+pub struct VecGlyphSerializer<'a> {
   target:         &'a mut [u8],
   cursor:         &'a mut usize,
   glyph_start:    usize,

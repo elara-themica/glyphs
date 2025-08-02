@@ -744,6 +744,7 @@ impl<'a> Iterator for IterFields<'a> {
   }
 }
 
+#[doc(hidden)]
 /// Calculates the length of an [`ObjGlyph`], in bytes.
 ///
 /// This type allows user to calculate the length of an Object Glyph, typically
@@ -752,7 +753,7 @@ impl<'a> Iterator for IterFields<'a> {
 /// calls to `add_field()` for each field the object contains, and finally a
 /// call to `finish()` to obtain the number of bytes necessary to encode the
 /// described object.
-pub(crate) struct ObjGlyphLenCalc {
+pub struct ObjGlyphLenCalc {
   /// Length of the type IDs, variant IDs, and field names (if present).
   ///
   /// This is a consolidation of the type hash, type name, and variant name, and

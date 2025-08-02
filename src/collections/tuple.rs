@@ -357,8 +357,9 @@ impl<'a> Iterator for IterTuple<'a> {
   }
 }
 
+#[doc(hidden)]
 #[derive(Default)]
-pub(crate) struct TupleGlyphLenCalc(usize);
+pub struct TupleGlyphLenCalc(usize);
 
 impl TupleGlyphLenCalc {
   pub fn new() -> Self {
@@ -374,7 +375,8 @@ impl TupleGlyphLenCalc {
   }
 }
 
-pub(crate) struct TupleGlyphSerializer<'a> {
+#[doc(hidden)]
+pub struct TupleGlyphSerializer<'a> {
   target:      &'a mut [u8],
   cursor:      &'a mut usize,
   glyph_start: usize,

@@ -293,8 +293,9 @@ impl<'a> Iterator for IterMap<'a> {
   }
 }
 
+#[doc(hidden)]
 #[derive(Default)]
-pub(crate) struct MapGlyphLenCalc {
+pub struct MapGlyphLenCalc {
   num_items: usize,
   items_len: usize,
 }
