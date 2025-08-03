@@ -18,6 +18,7 @@ use core::{
   },
 };
 use icu_collator::{Collator, CollatorOptions};
+use crate::zerocopy::BufferErr;
 
 pub(crate) static COLLATOR: StringCollator =
   StringCollator(AtomicUsize::new(0));
@@ -154,6 +155,15 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for LocalizedStr<'static> {
     todo!()
   }
 }
+
+impl<'a> TryFrom<&'a Glyph> for LocalizedStr<'a> {
+  type Error = StringGlyphErr;
+
+  fn try_from(value: &'a Glyph) -> Result<Self, Self::Error> {
+    todo!()
+  }
+}
+
 
 impl<'a> ToGlyph for LocalizedStr<'a> {
   fn glyph_encode(
@@ -717,7 +727,10 @@ impl<G: Deref<Target = Glyph>> Ord for CharGlyph<G> {
   }
 }
 
-pub enum StringGlyphErr {}
+/// Errors resulting from working with string glyphs
+pub enum StringGlyphErr {
+  BufferReadErr(BufferErr)
+}
 
 pub(crate) struct StringCollator(AtomicUsize);
 
@@ -918,6 +931,7 @@ fn str_glyph_encode(
 fn str_glyph_len(content_len: usize) -> usize {
   size_of::<GlyphHeader>() + round_to_word(2 + content_len)
 }
+
 
 #[cfg(test)]
 #[allow(unused)]

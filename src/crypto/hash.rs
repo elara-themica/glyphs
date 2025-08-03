@@ -23,12 +23,19 @@ pub type GlyphHash = blake3::Blake3Hash;
 pub type GlyphHashContext = blake3::Blake3Context;
 
 /// Glyphs trait for cryptographic hash functions.
+///
+/// Requirements:
+///
+/// - The hash digest must be at least 16 bytes.  E.g., CRC-32 might be useful
+///   for error correction, but should not be used for cryptographic purposes.
 pub trait CryptographicHash:
   ZeroCopy
   + Default
   + AsRef<[u8]>
+  + AsMut<[u8]>
   + ToGlyph
   + for<'a> FromGlyph<&'a Glyph>
+  + for<'a> TryFrom<&'a [u8], Error=HashErr>
   + Send
   + Sync
   + 'static
@@ -55,26 +62,29 @@ pub trait CryptographicHash:
   }
 
   /// The raw hash bytes.
-  fn hash_bytes(&self) -> &[u8; <Self as CryptographicHash>::HASH_LEN];
+  fn hash_bytes(&self) -> &[u8];
 
   /// Returns the last 4 bytes of the hash.
   fn suffix_bytes(&self) -> [u8; 4];
 
-  /// Create a new hash from an array of bytes.
-  fn from_hash_bytes(
-    hash_bytes: [u8; <Self as CryptographicHash>::HASH_LEN],
-  ) -> Self;
-
   /// Create a new random hash.
-  // TODO: Is this necessary?
   #[cfg(feature = "rand")]
-  fn random<R: rand::RngCore>(rng: &mut R) -> Self
-  where
-    [(); <Self as CryptographicHash>::HASH_LEN]:,
+  fn random<R: rand::Rng>(rng: &mut R) -> Self
   {
-    let mut hash_bytes = [0u8; <Self as CryptographicHash>::HASH_LEN];
-    rng.fill_bytes(&mut hash_bytes[..]);
-    <Self as CryptographicHash>::from_hash_bytes(hash_bytes)
+    let mut hash = Self::default();
+    rng.fill_bytes(hash.as_mut());
+    hash
+  }
+
+  /// An instance of the hash with all zeroes.
+  ///
+  /// This will typically be the same as the hash returned by
+  /// `Default::default()`, but the `Default` trait does not formally require
+  /// this.
+  fn zero() -> Self {
+    let mut hash = Self::default();
+    hash.as_mut().fill(0);
+    hash
   }
 }
 
@@ -356,8 +366,17 @@ impl HashPrefix {
     }
   }
 
+  /// For working with the prefix as a big-endian u128.
+  ///
+  /// This loads the u128 from the prefix, as if it were a big-endian u128.
+  /// However, remember that this must be converted back to big-endian bytes
+  /// if you need to write hash data back into a byte buffer.
   fn as_u128(&self) -> u128 {
-    unsafe { u128::from_be_bytes(*transmute::<&Self, &[u8; 16]>(self)) & !0xff }
+    u128::from_be_bytes([
+      self.prefix[0], self.prefix[1], self.prefix[2], self.prefix[3],
+      self.prefix[4], self.prefix[5], self.prefix[6], self.prefix[7],
+      self.prefix[8], self.prefix[9], self.prefix[10], self.prefix[11],
+      self.prefix[12], self.prefix[13], self.prefix[14], 0])
   }
 
   /// Returns the number of bits in the hash mask.
@@ -461,14 +480,20 @@ impl HashPrefix {
   ///   internal storage is a fixed-length CIDR-like format.
   // TODO: Test and better docs
   pub fn lower_bound<H: CryptographicHash>(self) -> H
-  where
-    [(); <H as CryptographicHash>::HASH_LEN]:,
   {
-    let mut buf = [0u8; H::HASH_LEN];
-    for (prefix, buf) in self.prefix.iter().zip(buf.iter_mut()) {
-      *buf = *prefix;
-    }
-    H::from_hash_bytes(buf)
+    let num = self.as_u128();
+    let mask = if self.prefix_len == 0 {
+      0u128
+    } else {
+      // Need to use signed integers for arithmetic vs. logical shift
+      let mask = i128::MAX >> (self.prefix_len - 1);
+      mask as u128
+    };
+    let masked = num & mask;
+    let mut hash = H::default();
+    let hash_bytes = hash.as_mut();
+    hash_bytes.copy_from_slice(masked.to_be_bytes().as_ref());
+    hash
   }
 
   /// Returns the upper bounds of the hash prefix, like a CIDR broadcast
@@ -479,20 +504,15 @@ impl HashPrefix {
   ///   internal storage is a fixed-length CIDR-like format.
   // TODO: Test and better docs
   pub fn upper_bound<H: CryptographicHash>(self) -> H
-  where
-    [(); <H as CryptographicHash>::HASH_LEN]:,
   {
-    let prefix = self.as_u128();
-    let prefix_mask = u128::MAX << 128 - self.prefix_len() as u128;
-    let n_mask = !prefix_mask;
-    let upper = prefix | n_mask;
-    let upper = upper.to_be_bytes();
+    let num = self.as_u128();
+    let mask = u128::MAX >> self.prefix_len();
+    let masked = num | mask;
 
-    let mut buf = [0u8; H::HASH_LEN];
-    for (src, dst) in upper.iter().zip(buf.iter_mut()) {
-      *dst = *src;
-    }
-    H::from_hash_bytes(buf)
+    let mut hash = H::default();
+    let hash_bytes = hash.as_mut();
+    hash_bytes.copy_from_slice(masked.to_be_bytes().as_ref());
+    hash
   }
 
   /// The number of bits in the prefix.
@@ -528,6 +548,26 @@ impl Debug for HashPrefix {
   }
 }
 
+// TODO
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum HashErr {
+  /// Attempt to read a hash from a byte buffer shorter than the hash digest.
+  ReadUnderflow {
+    expected: usize,
+    observed: usize,
+  },
+
+  /// Attempt to read a hash from a byte buffer longer than the hash digest.
+  ReadOverflow{
+    expected: usize,
+    observed: usize,
+  },
+
+  /// Errors caused by bugs in the
+  InternalErr,
+
+}
+
 // TODO: Test implementing these from another crate, and fully convert trait
 //       call reference style to
 macro_rules! hash_impls {
@@ -546,12 +586,8 @@ macro_rules! hash_impls {
       const HASH_TYPE_ID: $crate::crypto::CryptoHashType =
         $crate::crypto::CryptoHashType::$hash_tid;
 
-      fn from_hash_bytes(hash_bytes: [u8; $hash_len]) -> Self {
-        $hash_name(hash_bytes)
-      }
-
-      fn hash_bytes(&self) -> &[u8; $hash_len] {
-        &self.0
+      fn hash_bytes(&self) -> &[u8] {
+        &self.0[..]
       }
 
       fn suffix_bytes(&self) -> [u8; 4] {
@@ -561,6 +597,21 @@ macro_rules! hash_impls {
           self.0[Self::HASH_LEN - 2],
           self.0[Self::HASH_LEN - 1],
         ]
+      }
+    }
+
+    impl<'a> TryFrom<&'a [u8]> for $hash_name {
+      type Error = HashErr;
+      fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
+        match bytes.len().cmp(&($hash_name::HASH_LEN)) {
+          core::cmp::Ordering::Less => Err(HashErr::ReadUnderflow { expected: Self::HASH_LEN, observed: bytes.len()}),
+          core::cmp::Ordering::Greater => Err(HashErr::ReadOverflow { expected: Self::HASH_LEN, observed: bytes.len()}),
+          core::cmp::Ordering::Equal => {
+            let mut hash = Self::default();
+            hash.as_mut().copy_from_slice(&bytes);
+            Ok(hash)
+          }
+        }
       }
     }
 
@@ -574,6 +625,12 @@ macro_rules! hash_impls {
     impl core::convert::AsRef<[u8]> for $hash_name {
       fn as_ref(&self) -> &[u8] {
         &self.0[..]
+      }
+    }
+
+    impl core::convert::AsMut<[u8]> for $hash_name {
+      fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0[..]
       }
     }
 

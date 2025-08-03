@@ -205,7 +205,7 @@ unsafe impl ZeroCopy for AesMac {}
 
 impl From<GlyphHash> for AesMac {
   fn from(src: GlyphHash) -> Self {
-    AesMac(*src.hash_bytes())
+    AesMac(src.0)
   }
 }
 
@@ -226,7 +226,7 @@ pub fn aes_256ctr_encrypt(
   let hash = GlyphHash::new(data);
   let mut crypter = Aes256Ctr::new(key.bytes().into(), iv.bytes().into());
   crypter.apply_keystream(data);
-  let mut mac = AesMac(*hash.hash_bytes());
+  let mut mac = AesMac(hash.0);
   crypter.apply_keystream(&mut mac.0[..]);
   (hash, mac)
 }
@@ -246,7 +246,7 @@ pub fn aes_256ctr_decrypt(
   crypter.apply_keystream(data);
   let mut decrypted_mac = *stored_mac;
   crypter.apply_keystream(&mut decrypted_mac.0[..]);
-  let mac_hash = GlyphHash::from_hash_bytes(decrypted_mac.0);
+  let mac_hash = GlyphHash::try_from(&decrypted_mac.0[..])?;
   let calc_hash = GlyphHash::new(data);
   if calc_hash.eq(&mac_hash) {
     Ok(mac_hash)

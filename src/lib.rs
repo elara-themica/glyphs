@@ -80,8 +80,7 @@
 //!
 
 #![no_std]
-// Used to allow const generics in trait APIs.
-#![feature(generic_const_exprs)]
+
 // Used to enable testing with no_std
 #![feature(test)]
 // Used to allow specialized vector encoding for slices of primitives.
@@ -90,7 +89,10 @@
 #![feature(allocator_api)]
 // Used for generated documentation to reference feature requirements.
 #![feature(doc_cfg)]
+
 #![feature(pointer_is_aligned_to)]
+
+
 // Used by specialization feature
 #![allow(incomplete_features)]
 // Warnings disabled while in concept development.

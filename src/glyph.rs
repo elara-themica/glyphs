@@ -22,6 +22,7 @@ use core::{
   str::Utf8Error,
 };
 use std::ops::Deref;
+use crate::crypto::HashErr;
 // /// Semi-structured data designed to be read without deserialization.
 // /* === IMPORTANT: SAFETY ===
 //
@@ -1481,6 +1482,7 @@ pub enum GlyphErr {
   UnicodeCharInvalidGlyphLen(usize),
   UnicodeCharIllegalCodepoint(u32),
   PasswordErr(PasswordErr),
+  HashErr(HashErr),
 }
 
 impl GlyphErr {
@@ -1551,6 +1553,12 @@ impl<T> From<std::sync::PoisonError<T>> for GlyphErr {
 impl From<AllocError> for GlyphErr {
   fn from(_err: AllocError) -> Self {
     GlyphErr::AllocationFailed
+  }
+}
+
+impl From<HashErr> for GlyphErr {
+  fn from(value: HashErr) -> Self {
+    GlyphErr::HashErr(value)
   }
 }
 
