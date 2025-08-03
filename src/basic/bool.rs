@@ -222,11 +222,9 @@ impl BitVec<alloc::boxed::Box<[u8]>> {
   pub fn new(num_bits: u64) -> Result<Self, GlyphErr> {
     let num_bytes = (num_bits + 7) / 8;
     let bits_padding = (8 - (num_bits % 8)) as u8 & 0b111;
-    let data = unsafe {
-      alloc::boxed::Box::<[u8]>::try_new_zeroed_slice(num_bytes as usize)?
-        .assume_init()
-    };
-
+    let mut data = alloc::vec::Vec::<u8>::with_capacity(num_bytes as usize);
+    data.resize(num_bytes as usize, 0);
+    let data = data.into_boxed_slice();
     Ok(BitVec { data, bits_padding })
   }
 }

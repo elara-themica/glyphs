@@ -1,10 +1,8 @@
-use alloc::boxed::Box;
 use core::{
   cell::UnsafeCell,
   fmt::{Debug, Formatter},
-  marker::PhantomData,
   sync::atomic::{
-    AtomicUsize, Ordering,
+    AtomicUsize,
     Ordering::{Acquire, Relaxed, Release},
   },
 };
@@ -144,129 +142,7 @@ where
 
 unsafe impl<T> Sync for MemoizedInvariant<T> where T: Default {}
 
-#[cfg(feature = "alloc")]
-pub struct BoxedMemoizedInvariant<T> {
-  ptr:      AtomicUsize,
-  _phantom: PhantomData<T>,
-}
 
-#[cfg(feature = "alloc")]
-impl<T> BoxedMemoizedInvariant<T>
-where
-  T: Copy,
-{
-  /// Returns `true` iff a value has already been computed and stored.
-  pub fn is_computed(&self) -> bool {
-    self.ptr.load(Relaxed) != 0
-  }
-
-  /// If a memoized value has been previously stored, return a reference.
-  ///
-  /// This function is not guaranteed to return [`Some`] even after a call to
-  /// `set()` because that function may fail.
-  pub fn get<F>(&self, calc_fn: F) -> T
-  where
-    F: FnOnce() -> T,
-  {
-    unsafe {
-      // First, we'll try to reference the existing value, if it's already been
-      // calculated.
-      let current = self.ptr.load(Relaxed);
-      if current != 0 {
-        *(current as *const T)
-      } else {
-        // Otherwise, we'll have to calculate it and store the result.
-        let value: T = calc_fn();
-        if let Ok(boxed) = Box::try_new(value) {
-          let as_ptr: *mut T = Box::into_raw(boxed);
-          if let Err(_) = self.ptr.compare_exchange(
-            0,
-            as_ptr as usize,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-          ) {
-            // Re-create the box so it get dropped.
-            let _boxed = Box::from_raw(as_ptr);
-          }
-        }
-        value
-      }
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl<T> BoxedMemoizedInvariant<T>
-where
-  T: Copy,
-{
-  pub fn pre_computed(value: T) -> Self {
-    if let Ok(boxed) = Box::try_new(value) {
-      let as_ptr = Box::into_raw(boxed);
-      Self {
-        ptr:      AtomicUsize::new(as_ptr as usize),
-        _phantom: Default::default(),
-      }
-    } else {
-      Default::default()
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl<T> Clone for BoxedMemoizedInvariant<T>
-where
-  T: Copy + Clone,
-{
-  fn clone(&self) -> Self {
-    let ptr = self.ptr.load(Ordering::Relaxed) as *const T;
-    if !ptr.is_null() {
-      let cloned = unsafe { (*ptr).clone() };
-      Self::pre_computed(cloned)
-    } else {
-      Default::default()
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl<T> Debug for BoxedMemoizedInvariant<T>
-where
-  T: Debug,
-{
-  fn fmt(&self, f: &mut Formatter) -> Result<(), core::fmt::Error> {
-    write!(f, "BoxedMemoizedInvariant: {{ ")?;
-    let ptr = self.ptr.load(Ordering::Relaxed) as *const T;
-    if ptr.is_null() {
-      writeln!(f, "not computed }}")?;
-    } else {
-      let val = unsafe { &*ptr };
-      writeln!(f, "{:?} }}", &val)?;
-    }
-    Ok(())
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl<T> Default for BoxedMemoizedInvariant<T> {
-  fn default() -> Self {
-    Self {
-      ptr:      Default::default(),
-      _phantom: Default::default(),
-    }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl<T> Drop for BoxedMemoizedInvariant<T> {
-  fn drop(&mut self) {
-    let cur_ptr = self.ptr.load(Ordering::Relaxed);
-    if cur_ptr != 0 {
-      // Create box so it's dropped.
-      let _boxed = unsafe { Box::from_raw(cur_ptr as *mut T) };
-    }
-  }
-}
 
 #[cfg(test)]
 mod test {
@@ -322,16 +198,5 @@ mod test {
     });
     println!("Sum was {:?}", &sum);
   }
-
-  #[test]
-  #[cfg(feature = "alloc")]
-  fn boxed_memoized_invariant() {
-    let b = BoxedMemoizedInvariant::default();
-    let val = b.get(|| 5);
-    assert_eq!(val, 5);
-
-    // Shouldn't re-compute
-    let val = b.get(|| 6);
-    assert_eq!(val, 5);
-  }
+  
 }

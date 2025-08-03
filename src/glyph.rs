@@ -12,7 +12,7 @@ use crate::{
   },
 };
 #[cfg(feature = "alloc")]
-use alloc::{alloc::AllocError, boxed::Box, sync::Arc};
+use alloc::{boxed::Box, sync::Arc};
 use core::{
   cell::UnsafeCell,
   cmp::Ordering,
@@ -1550,12 +1550,6 @@ impl<T> From<std::sync::PoisonError<T>> for GlyphErr {
   }
 }
 
-impl From<AllocError> for GlyphErr {
-  fn from(_err: AllocError) -> Self {
-    GlyphErr::AllocationFailed
-  }
-}
-
 impl From<HashErr> for GlyphErr {
   fn from(value: HashErr) -> Self {
     GlyphErr::HashErr(value)
@@ -1660,9 +1654,10 @@ impl Glyph {
     // Allocate the buffer into which we'll write the glyph.
     let glyph_len = src.glyph_len().max(size_of::<GlyphHeader>());
     debug_assert_eq!(glyph_len % 8, 0);
-    let mut buffer =
-      unsafe { Box::<[u8]>::try_new_uninit_slice(glyph_len)?.assume_init() };
-
+    let mut buffer = alloc::vec::Vec::with_capacity(glyph_len);
+    buffer.resize(glyph_len, 0);
+    let mut buffer = buffer.into_boxed_slice();
+    
     // Encode the source into the buffer as a glyph.
     let mut cursor = 0;
     src.glyph_encode(buffer.as_mut(), &mut cursor)?;
@@ -1782,7 +1777,7 @@ impl<G: Deref<Target = Glyph>> Debug for GlyphDecodeErr<G> {
 }
 
 /// An error that occurs while decoding a glyph
-/// 
+///
 /// This is basically just the error combined with getting the source glyph back.
 pub struct DecodeErr<G, E>
 where
