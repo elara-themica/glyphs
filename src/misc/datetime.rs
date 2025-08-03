@@ -1,7 +1,7 @@
 use crate::{
   zerocopy::{ZeroCopy, I128},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr,
+  GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   cmp::Ordering,
@@ -197,14 +197,16 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DateTimeGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DateTimeGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DateTimeGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = glyph.header().confirm_type(GlyphType::DateTime) {
-      return Err(err.into_fge(glyph));
+      return Err(DecodeErr::new(glyph, err));
     }
     // SAFETY: We're going to guarantee that the content is exactly 16 bytes.
     //         This guarantee is used in Self::timestamp().
     if glyph.content().len() != size_of::<i128>() {
-      Err(GlyphErr::InvalidDateTime.into_fge(glyph))
+      Err(DecodeErr::new(glyph, GlyphErr::InvalidDateTime))
     } else {
       Ok(DateTimeGlyph(glyph))
     }
@@ -237,7 +239,9 @@ pub enum DateTimeErr {
 
 #[cfg(feature = "std")]
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     let ts = dtg.timestamp();
     match ts.cmp(&0) {
@@ -245,15 +249,19 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
         let ts = 0 - ts;
         let secs = ts / 1_000_000_000;
         if secs > u64::MAX as i128 {
-          Err(GlyphErr::DateTimeOverflow(0 - ts).into_fge(dtg.into_inner()))
+          Err(DecodeErr::new(
+            dtg.into_inner(),
+            GlyphErr::DateTimeOverflow(0 - ts),
+          ))
         } else {
           let secs = secs as u64;
           let nanos = (ts % 1_000_000_000) as u32;
           let duration = std::time::Duration::new(secs, nanos);
           match SystemTime::UNIX_EPOCH.checked_sub(duration) {
-            None => {
-              Err(GlyphErr::DateTimeOverflow(0 - ts).into_fge(dtg.into_inner()))
-            },
+            None => Err(DecodeErr::new(
+              dtg.into_inner(),
+              GlyphErr::DateTimeOverflow(0 - ts),
+            )),
             Some(time) => Ok(time),
           }
         }
@@ -261,15 +269,19 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
       Ordering::Greater => {
         let secs = ts / 1_000_000_000;
         if secs > u64::MAX as i128 {
-          Err(GlyphErr::DateTimeOverflow(ts).into_fge(dtg.into_inner()))
+          Err(DecodeErr::new(
+            dtg.into_inner(),
+            GlyphErr::DateTimeOverflow(ts),
+          ))
         } else {
           let secs = secs as u64;
           let nanos = (ts % 1_000_000_000) as u32;
           let duration = std::time::Duration::new(secs, nanos);
           match SystemTime::UNIX_EPOCH.checked_add(duration) {
-            None => {
-              Err(GlyphErr::DateTimeOverflow(ts).into_fge(dtg.into_inner()))
-            },
+            None => Err(DecodeErr::new(
+              dtg.into_inner(),
+              GlyphErr::DateTimeOverflow(ts),
+            )),
             Some(time) => Ok(time),
           }
         }
@@ -281,11 +293,13 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SystemTime {
 
 #[cfg(feature = "chrono")]
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for chrono::DateTime<chrono::Utc> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     let dtg = DateTimeGlyph::from_glyph(glyph)?;
     match dtg.get_chrono_date_time() {
       Ok(time) => Ok(time),
-      Err(err) => Err(err.into_fge(dtg.into_inner())),
+      Err(err) => Err(DecodeErr::new(dtg.into_inner(), err)),
     }
   }
 }

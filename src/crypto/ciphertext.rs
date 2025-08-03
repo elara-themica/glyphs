@@ -8,7 +8,7 @@ use crate::{
     CryptographicHash, GlyphHash, Nonce, Sha3Hash,
   },
   zerocopy::{ZeroCopy, U16},
-  FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  DecodeErr, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
 };
 use rand::{CryptoRng, Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -159,21 +159,23 @@ impl<G: Deref<Target = Glyph>> EncryptedGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for EncryptedGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, GlyphErr>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
     let contents = source.content_padded();
     let mut cursor = 0;
     let header = match CiphertextHeader::bbrd(&contents, &mut cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let scheme: EncryptionScheme = header.encryption_scheme.get().into();
     let metadata = match CiphertextMetadata::read(contents, &mut cursor, scheme)
     {
       Ok(metadata) => metadata,
-      Err(err) => return Err(err.into_fge(source)),
+      Err(err) => return Err(DecodeErr::new(source, err)),
     };
     let ciphertext = u8::bbrfs_i(contents, &mut cursor) as *const [u8];
     Ok(Self {

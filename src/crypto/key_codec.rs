@@ -32,8 +32,8 @@ use crate::{
   misc::DateTime,
   util::debug::{ShortHexDump, UnquotedDebugString},
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ToGlyph,
 };
 use core::{
   cmp::Ordering,
@@ -225,10 +225,12 @@ impl<G: Deref<Target = Glyph>> ToGlyph for CryptoKeyGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for CryptoKeyGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, GlyphErr>> {
     // SAFETY: Remember, everything must be bounds checked here.
     if let Err(e) = glyph.header().confirm_type(GlyphType::CryptoKey) {
-      return Err(GlyphDecodeErr::new(glyph, e));
+      return Err(DecodeErr::new(glyph, e));
     }
 
     let content = glyph.content_padded();
@@ -236,25 +238,25 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for CryptoKeyGlyph<G> {
 
     let ckh = match CryptoKeyHeader::bbrf(content, &mut cursor) {
       Ok(ckh) => ckh,
-      Err(e) => return Err(GlyphDecodeErr::new(glyph, e.into())),
+      Err(e) => return Err(DecodeErr::new(glyph, e.into())),
     };
 
     let public_bytes = match u8::bbrfs(content, &mut cursor, ckh.public_len()) {
       Ok(public_bytes) => public_bytes,
-      Err(e) => return Err(GlyphDecodeErr::new(glyph, e.into())),
+      Err(e) => return Err(DecodeErr::new(glyph, e.into())),
     };
     cursor = round_to_word(cursor);
 
     let secret_bytes = match u8::bbrfs(content, &mut cursor, ckh.secret_len()) {
       Ok(secret_bytes) => secret_bytes,
-      Err(e) => return Err(GlyphDecodeErr::new(glyph, e.into())),
+      Err(e) => return Err(DecodeErr::new(glyph, e.into())),
     };
     cursor = round_to_word(cursor);
 
     let metadata = if ckh.has_metadata() {
       let mg = match Glyph::read(content, &mut cursor) {
         Ok(mg) => mg,
-        Err(e) => return Err(GlyphDecodeErr::new(glyph, e)),
+        Err(e) => return Err(DecodeErr::new(glyph, e)),
       };
       Some(mg as *const Glyph)
     } else {
@@ -263,7 +265,7 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for CryptoKeyGlyph<G> {
     let signature = if ckh.has_signature() {
       let mg = match Glyph::read(content, &mut cursor) {
         Ok(mg) => mg,
-        Err(e) => return Err(GlyphDecodeErr::new(glyph, e)),
+        Err(e) => return Err(DecodeErr::new(glyph, e)),
       };
       Some(mg as *const Glyph)
     } else {

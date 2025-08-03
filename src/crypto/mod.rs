@@ -178,6 +178,12 @@ impl<const N: usize> Debug for Nonce<N> {
   }
 }
 
+impl<const N: usize> AsRef<[u8]> for Nonce<N> {
+  fn as_ref(&self) -> &[u8] {
+    self.0.as_ref()
+  }
+}
+
 /// Identifies the type of cryptographic signature used.
 // SAFETY: (1) All values must be contiguous, and (2) `Unknown` must be highest.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -380,13 +386,4 @@ fn verify_fingerprint(
   } else {
     Ok(())
   }
-}
-
-#[cfg(test)]
-#[allow(unused)]
-pub(crate) mod test {
-
-  #[cfg(test)]
-  pub(crate) const TEST_PLAINTEXT: &[u8; 39] =
-    b"Deutsche Truppen sind jetzt in England.";
 }

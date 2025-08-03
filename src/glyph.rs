@@ -3,7 +3,7 @@ use alloc::string::FromUtf8Error;
 
 use crate::{
   basic::UnitType,
-  crypto::{CryptoErr, CryptographicHash, GlyphHash},
+  crypto::{CryptoErr, CryptographicHash, GlyphHash, PasswordErr},
   dynamic::DynGlyph,
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{
@@ -210,6 +210,9 @@ pub trait FromGlyph<G>: Sized
 where
   G: Deref<Target = Glyph>,
 {
+  /// The type of error that can be thrown if conversion fails.
+  type Error: Debug + Into<GlyphErr>;
+
   //  /// Create a new instance of the type from a source glyph.
   //  ///
   //  /// ```
@@ -228,7 +231,7 @@ where
   // This is a `T` and not a `&T` because we want to be able to have something
   // like a `VectorGlyph` take a `HashGlyph` in which case the `VectorGlyph`'s
   // lifetime won't be bound to some other object.
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>>;
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>>;
 }
 
 /// Types that can be encoded into glyphs.
@@ -1477,6 +1480,7 @@ pub enum GlyphErr {
   GlyphLenUnderflow(usize),
   UnicodeCharInvalidGlyphLen(usize),
   UnicodeCharIllegalCodepoint(u32),
+  PasswordErr(PasswordErr),
 }
 
 impl GlyphErr {
@@ -1523,6 +1527,17 @@ impl From<TryFromIntError> for GlyphErr {
 impl From<core::convert::Infallible> for GlyphErr {
   fn from(_value: core::convert::Infallible) -> Self {
     GlyphErr::Infallible
+  }
+}
+
+impl<G, E> From<DecodeErr<G, E>> for GlyphErr
+where
+  G: Deref<Target = Glyph>,
+  E: Debug,
+  GlyphErr: From<E>,
+{
+  fn from(value: DecodeErr<G, E>) -> Self {
+    value.into_err().into()
   }
 }
 
@@ -1729,6 +1744,7 @@ impl ToGlyph for Glyph {
 /// cause.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct GlyphDecodeErr<G: Deref<Target = Glyph>>(G, GlyphErr);
+
 impl<G: Deref<Target = Glyph>> GlyphDecodeErr<G> {
   /// Creates a new `FromGlyphErr` instance with the given glyph and error.
   pub fn new(glyph: G, err: GlyphErr) -> Self {
@@ -1754,6 +1770,68 @@ impl<G: Deref<Target = Glyph>> GlyphDecodeErr<G> {
 impl<G: Deref<Target = Glyph>> Debug for GlyphDecodeErr<G> {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
     Debug::fmt(&self.1, f)
+  }
+}
+
+/// An error that occurs while decoding a glyph
+/// 
+/// This is basically just the error combined with getting the source glyph back.
+pub struct DecodeErr<G, E>
+where
+  G: Deref<Target = Glyph>,
+  E: Debug,
+{
+  glyph: G,
+  err:   E,
+}
+
+// TODO: How much of this interface should be public?
+
+impl<G, E> DecodeErr<G, E>
+where
+  G: Deref<Target = Glyph>,
+  E: Debug,
+{
+  // TODO: How much of this interface should be public?
+  pub(crate) fn new(glyph: G, err: E) -> Self {
+    DecodeErr { glyph, err }
+  }
+
+  fn glyph(&self) -> &G {
+    &self.glyph
+  }
+
+  fn into_glyph(self) -> G {
+    self.glyph
+  }
+
+  pub(crate) fn into_err(self) -> E {
+    self.err
+  }
+
+  pub(crate) fn into_parts(self) -> (G, E) {
+    (self.glyph, self.err)
+  }
+
+  // TODO: How much of this interface should be public?
+  pub(crate) fn map_err<NE>(self, f: impl FnOnce(E) -> NE) -> DecodeErr<G, NE>
+  where
+    NE: From<E> + Debug,
+  {
+    DecodeErr {
+      glyph: self.glyph,
+      err:   f(self.err),
+    }
+  }
+}
+
+impl<G, E> Debug for DecodeErr<G, E>
+where
+  G: Deref<Target = Glyph>,
+  E: Debug,
+{
+  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+    Debug::fmt(&self.err, f)
   }
 }
 

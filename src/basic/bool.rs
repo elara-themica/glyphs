@@ -2,8 +2,8 @@ use crate::{
   glyph::glyph_close,
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{round_to_word, ZeroCopy},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ToGlyph,
 };
 use core::{
   cmp::Ordering,
@@ -27,9 +27,11 @@ impl<G: Deref<Target = Glyph>> BoolGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for BoolGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, GlyphErr>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Bool) {
-      Err(GlyphDecodeErr::new(source, err))
+      Err(DecodeErr::new(source, err))
     } else {
       Ok(BoolGlyph(source))
     }
@@ -258,7 +260,9 @@ impl<B> Eq for BitVec<B> where B: AsRef<[u8]> {}
 impl<G: Deref<Target = Glyph>> FromGlyph<G>
   for BitVec<alloc::boxed::Box<[u8]>>
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match BitVec::<&[u8]>::from_glyph(source.deref()) {
       Ok(b) => {
         let data = alloc::boxed::Box::<[u8]>::from(b.data);
@@ -270,14 +274,18 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G>
       Err(e) => {
         // Awkwardness to satisfy borrow checker
         let err = e.into_parts().1;
-        Err(GlyphDecodeErr::new(source, err))
+        Err(DecodeErr::new(source, err))
       },
     }
   }
 }
 
 impl<'a> FromGlyph<&'a Glyph> for BitVec<&'a [u8]> {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(
+    source: &'a Glyph,
+  ) -> Result<Self, DecodeErr<&'a Glyph, Self::Error>> {
     let bvg = BitVecGlyph::<&'a Glyph>::from_glyph(source)?;
     let bv = bvg.bit_vector_parsed();
     Ok(bv)
@@ -519,10 +527,12 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BitVecGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for BitVecGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for BitVecGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match source.header().confirm_type(GlyphType::VecBool) {
       Ok(_) => Ok(BitVecGlyph { glyph: source }),
-      Err(err) => Err(GlyphDecodeErr::new(source, err)),
+      Err(err) => Err(DecodeErr::new(source, err)),
     }
   }
 }
@@ -549,9 +559,11 @@ impl<G> FromGlyph<G> for bool
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Bool) {
-      return Err(GlyphDecodeErr::new(source, err));
+      return Err(DecodeErr::new(source, err));
     }
     let content = source.header().short_content();
     let value = u32::from_le_bytes(*content);

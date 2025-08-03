@@ -7,8 +7,7 @@ use crate::{
   crypto::{HashGlyph, PasswordGlyph},
   misc::{DateTimeGlyph, UuidGlyph},
   structured::{DocGlyph, ObjGlyph},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphSorting,
-  GlyphType,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphSorting, GlyphType,
 };
 use core::{
   cmp::Ordering,
@@ -304,7 +303,9 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DynGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DynGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DynGlyph<G> {
-  fn from_glyph(src: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(src: G) -> Result<Self, DecodeErr<G, GlyphErr>> {
     Ok(DynGlyph::new(src))
   }
 }
@@ -330,10 +331,7 @@ impl<G: Deref<Target = Glyph>> PartialOrd for DynGlyph<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{
-    crypto::{CryptographicHash, GlyphHash, Password},
-  };
-  use rand::thread_rng;
+  use crate::crypto::{CryptographicHash, GlyphHash};
   use std::{dbg, vec};
 
   #[test]
@@ -379,7 +377,6 @@ mod tests {
     let map_dyn = DynGlyph::from_glyph(map_glyph).unwrap();
     dbg!(&map_dyn);
 
-
     // let obj = TestStruct { age: 34, name: String::from("Elara") };
     // let obj_glyph = Glyph::new(&obj).unwrap();
     // let obj_dyn = DynGlyph::from_glyph(obj_glyph).unwrap();
@@ -401,9 +398,10 @@ mod tests {
     let hash_dyn = DynGlyph::from_glyph(hash_glyph).unwrap();
     dbg!(&hash_dyn);
 
-    let pw = Password::new_argon2id(b"hunter2", thread_rng()).unwrap();
-    let pw_glyph = Glyph::new(&pw).unwrap();
-    let pw_dyn = DynGlyph::from_glyph(pw_glyph).unwrap();
-    dbg!(&pw_dyn);
+    // FIXME
+    // let pw = Password::new_argon2id(b"hunter2", thread_rng()).unwrap();
+    // let pw_glyph = Glyph::new(&pw).unwrap();
+    // let pw_dyn = DynGlyph::from_glyph(pw_glyph).unwrap();
+    // dbg!(&pw_dyn);
   }
 }

@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphType,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphType,
 };
 use core::{
   cmp::Ordering,
@@ -115,10 +115,12 @@ impl<G: Deref<Target = Glyph>> Debug for IntGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for IntGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match glyph.header().confirm_type(GlyphType::SignedInt) {
       Ok(()) => Ok(IntGlyph(glyph)),
-      Err(err) => Err(GlyphDecodeErr::new(glyph, err)),
+      Err(err) => Err(DecodeErr::new(glyph, err)),
     }
   }
 }
@@ -244,10 +246,12 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for UIntGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for UIntGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for UIntGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match glyph.header().confirm_type(GlyphType::UnsignedInt) {
       Ok(()) => Ok(UIntGlyph(glyph)),
-      Err(err) => Err(GlyphDecodeErr::new(glyph, err)),
+      Err(err) => Err(DecodeErr::new(glyph, err)),
     }
   }
 }
@@ -317,10 +321,12 @@ impl<G: Deref<Target = Glyph>> Debug for FloatGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for FloatGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match glyph.header().confirm_type(GlyphType::Float) {
       Ok(()) => Ok(FloatGlyph(glyph)),
-      Err(err) => Err(GlyphDecodeErr::new(glyph, err)),
+      Err(err) => Err(DecodeErr::new(glyph, err)),
     }
   }
 }

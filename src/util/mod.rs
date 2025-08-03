@@ -1,15 +1,14 @@
 //! Misc non-public utility code for the glyphs crate itself.
 mod bloom;
 pub(crate) mod debug;
+
 mod log;
 mod memoize;
 mod sorting;
 
 #[cfg(test)]
-mod test;
+pub(crate) mod test;
 
-#[cfg(test)]
-pub(crate) use self::test::*;
 #[allow(unused_imports)]
 pub(crate) use self::{bloom::*, log::*, memoize::*, sorting::*};
 #[allow(unused_imports)]
@@ -18,17 +17,15 @@ use crate::{
   zerocopy::{pad_to_word, round_to_word, ZeroCopy},
   FromGlyph, Glyph, GlyphErr, GlyphOffset, ToGlyph,
 };
-use core::{
-  fmt::{Debug, Formatter},
-  ops::Deref,
-  str::from_utf8,
-};
+use core::str::from_utf8;
 
+///
 pub(crate) trait SmallStrings {
   /// Returns the number of bytes necessary to serialize a small string.
   ///
   /// Returns an `Err` if the string is longer than 255 bytes.
   fn glyph_tiny_str_len(&self) -> Result<usize, GlyphErr>;
+
   fn glyph_tiny_str_write<'a>(
     &self,
     target: &'a mut [u8],
@@ -74,126 +71,4 @@ impl SmallStrings for str {
     pad_to_word(target, cursor)?;
     Ok(())
   }
-}
-
-pub struct LikelyStr<'a>(pub &'a [u8]);
-
-impl<'a> Debug for LikelyStr<'a> {
-  fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    match core::str::from_utf8(self.0) {
-      Ok(s) => {
-        write!(f, "Utf8({})", s)
-      },
-      Err(_) => {
-        write!(f, "Bytes({:?})", ShortHexDump(self.0, 8))
-      },
-    }
-  }
-}
-
-#[derive(Debug)]
-pub struct OwnedCell<T>(pub T);
-
-impl<T> Deref for OwnedCell<T> {
-  type Target = T;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
-
-/// Returns `Some(# items)` if the `size_hint()` on the iterator returns a
-/// matching upper and lower bound, and `None` otherwise.
-pub(crate) fn known_iter_len<I: Iterator>(iter: &I) -> Option<usize> {
-  let (lower_bound, upper_bound) = iter.size_hint();
-  if let Some(upper_bound) = upper_bound {
-    if lower_bound == upper_bound {
-      Some(upper_bound)
-    } else {
-      None
-    }
-  } else {
-    None
-  }
-}
-
-// TODO: Refactor this to use `known_iter_len()` above.
-pub(crate) fn checked_iter_len<I: Iterator>(
-  iter: &I,
-) -> Result<usize, GlyphErr> {
-  let (lower_bound, upper_bound) = iter.size_hint();
-  let upper_bound = upper_bound.ok_or_log(
-    ::log::Level::Error,
-    GlyphErr::UnknownIteratorLength(lower_bound, upper_bound),
-  )?;
-  if upper_bound != lower_bound {
-    Err(err!(
-      error,
-      GlyphErr::UnknownIteratorLength(lower_bound, Some(upper_bound))
-    ))
-  } else {
-    Ok(upper_bound)
-  }
-}
-
-/// When doing codec tests, the size of the buffer to read/write.
-pub(crate) const BENCH_BUF_SIZE: usize = 8192;
-
-/// Does a round trip codec test for a simple
-#[cfg(all(test, feature = "alloc"))]
-pub fn simple_codec_test<
-  T: Debug + Eq + ToGlyph + FromGlyph<alloc::boxed::Box<Glyph>>,
->(
-  value: T,
-) {
-  let glyph = crate::Glyph::new(&value).unwrap();
-  let decoded = T::from_glyph(glyph).unwrap();
-  assert_eq!(decoded, value);
-}
-
-/// Does a round trip codec test for a simple
-#[cfg(all(test, feature = "alloc"))]
-pub fn simple_codec_test_debug<
-  T: Debug + Eq + ToGlyph + FromGlyph<alloc::boxed::Box<Glyph>>,
->(
-  value: T,
-) {
-  std::dbg!(&value);
-  let glyph = crate::Glyph::new(&value).unwrap();
-  std::dbg!(&glyph);
-  let decoded = T::from_glyph(glyph).unwrap();
-  std::dbg!(&decoded);
-  assert_eq!(decoded, value);
-}
-
-pub fn simple_codec_slice_test<const L: usize, T, ZCT>(value: T)
-where
-  T: Copy + Sized,
-  ZCT: ZeroCopy + From<T> + Eq + Debug,
-  [ZCT]: ToGlyph,
-  for<'a> &'a [ZCT]: FromGlyph<&'a Glyph>,
-{
-  let array = [ZCT::from(value); L];
-  let slice = &array[..];
-  let vg = crate::Glyph::new(slice).unwrap();
-  std::dbg!(&vg);
-  let decoded = <&[ZCT]>::from_glyph(&*vg).unwrap();
-  assert_eq!(slice, decoded);
-}
-
-pub fn simple_codec_slice_test_debug<const L: usize, T, ZCT>(value: T)
-where
-  T: Copy + Sized,
-  ZCT: ZeroCopy + From<T> + Eq + Debug,
-  [ZCT]: ToGlyph,
-  for<'a> &'a [ZCT]: FromGlyph<&'a Glyph>,
-{
-  let array = [ZCT::from(value); L];
-  let slice = &array[..];
-  std::dbg!(&slice);
-  let vg = crate::Glyph::new(slice).unwrap();
-  std::dbg!(&vg);
-  let decoded = <&[ZCT]>::from_glyph(&*vg).unwrap();
-  std::dbg!(&decoded);
-  assert_eq!(slice, decoded);
 }

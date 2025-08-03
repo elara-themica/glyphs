@@ -1,7 +1,7 @@
 use crate::{
   zerocopy::{ZeroCopy, U32},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphType,
+  ToGlyph,
 };
 use core::{fmt::Debug, mem::transmute};
 use std::{cmp::Ordering, ops::Deref};
@@ -41,7 +41,9 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for UnitGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for UnitGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for UnitGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match glyph.header().confirm_type(GlyphType::Unit) {
       Ok(()) => {
         if glyph.header().is_short() {
@@ -50,10 +52,10 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for UnitGlyph<G> {
           Ok(UnitGlyph(glyph, type_id))
         } else {
           let glyph_len = glyph.as_ref().len();
-          Err(GlyphDecodeErr::new(glyph, GlyphErr::UnitLength(glyph_len)))
+          Err(DecodeErr::new(glyph, GlyphErr::UnitLength(glyph_len)))
         }
       },
-      Err(err) => Err(GlyphDecodeErr::new(glyph, err)),
+      Err(err) => Err(DecodeErr::new(glyph, err)),
     }
   }
 }
@@ -128,9 +130,11 @@ impl<G> FromGlyph<G> for UnitType
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = glyph.header().confirm_type(GlyphType::Unit) {
-      return Err(GlyphDecodeErr::new(glyph, err));
+      return Err(DecodeErr::new(glyph, err));
     }
     let content = glyph.header().short_content();
     let type_id = u32::from_le_bytes(*content);
@@ -160,12 +164,14 @@ impl<G> FromGlyph<G> for ()
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     let ug = match UnitType::from_glyph(glyph.deref()) {
       Ok(unit_type) => unit_type,
       Err(err) => {
         let (_glyph, err) = err.into_parts();
-        return Err(GlyphDecodeErr::new(glyph, err));
+        return Err(DecodeErr::new(glyph, err));
       },
     };
     if ug.eq(&UnitType::Nothing) {
@@ -173,7 +179,7 @@ where
     } else {
       err!(
         debug,
-        Err(GlyphDecodeErr::new(
+        Err(DecodeErr::new(
           glyph,
           GlyphErr::UnitTypeMismatch {
             expected: UnitType::Nothing,

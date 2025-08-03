@@ -258,7 +258,10 @@ pub fn aes_256ctr_decrypt(
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{crypto::test::TEST_PLAINTEXT, util::init_test_logger, GlyphErr};
+  use crate::{
+    util::test::{init_test_logger, TEST_PLAINTEXT},
+    GlyphErr,
+  };
   use ::test::Bencher;
   use alloc::vec::Vec;
   use rand::rngs::OsRng;

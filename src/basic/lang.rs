@@ -1,6 +1,6 @@
 use crate::{
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16, U32},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader,
   GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::boxed::Box;
@@ -21,6 +21,181 @@ use icu_collator::{Collator, CollatorOptions};
 
 pub(crate) static COLLATOR: StringCollator =
   StringCollator(AtomicUsize::new(0));
+
+#[cfg(feature = "alloc")]
+pub struct LocalizedString {
+  language:  Language,
+  direction: StringDirection,
+  content:   String,
+}
+
+#[cfg(feature = "alloc")]
+impl LocalizedString {
+  /// Creates a new localized string
+  pub fn new(
+    language: Language,
+    direction: StringDirection,
+    content: String,
+  ) -> Self {
+    Self {
+      language,
+      direction,
+      content,
+    }
+  }
+
+  /// Returns the natural language in which the string is written
+  pub fn language(&self) -> Language {
+    self.language
+  }
+
+  /// Returns the direction in which the string is written
+  pub fn direction(&self) -> StringDirection {
+    self.direction
+  }
+
+  /// Returns the contents of the string
+  pub fn content(&self) -> &str {
+    &self.content
+  }
+
+  /// Sets the natural language in which the string is written
+  pub fn set_language(&mut self, language: Language) {
+    self.language = language;
+  }
+
+  /// Sets the direction in which the string is written
+  pub fn set_direction(&mut self, direction: StringDirection) {
+    self.direction = direction;
+  }
+
+  /// Sets the content of the string
+  pub fn set_content(&mut self, content: String) {
+    self.content = content;
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl ToGlyph for LocalizedString {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    str_glyph_encode(
+      self.content.as_bytes(),
+      Some(self.language),
+      Some(self.direction),
+      target,
+      cursor,
+    )
+  }
+
+  fn glyph_len(&self) -> usize {
+    str_glyph_len(self.content.as_bytes().len())
+  }
+}
+
+pub struct LocalizedStr<'a> {
+  language:  Language,
+  direction: StringDirection,
+  content:   &'a str,
+}
+
+impl<'a> LocalizedStr<'a> {
+  /// Creates a new localized string
+  pub fn new(
+    language: Language,
+    direction: StringDirection,
+    content: &'a str,
+  ) -> Self {
+    Self {
+      language,
+      direction,
+      content,
+    }
+  }
+
+  /// Returns the natural language in which the string is written
+  pub fn language(&self) -> Language {
+    self.language
+  }
+
+  /// Returns the direction in which the string is written
+  pub fn direction(&self) -> StringDirection {
+    self.direction
+  }
+
+  /// Returns the contents of the string
+  pub fn content(&self) -> &str {
+    &self.content
+  }
+
+  /// Sets the natural language in which the string is written
+  pub fn set_language(&mut self, language: Language) {
+    self.language = language;
+  }
+
+  /// Sets the direction in which the string is written
+  pub fn set_direction(&mut self, direction: StringDirection) {
+    self.direction = direction;
+  }
+
+  /// Sets the content of the string
+  pub fn set_content(&mut self, content: &'a str) {
+    self.content = content;
+  }
+}
+
+impl<G: Deref<Target = Glyph>> FromGlyph<G> for LocalizedStr<'static> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
+    todo!()
+  }
+}
+
+impl<'a> ToGlyph for LocalizedStr<'a> {
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    str_glyph_encode(
+      self.content.as_bytes(),
+      Some(self.language),
+      Some(self.direction),
+      target,
+      cursor,
+    )
+  }
+
+  fn glyph_len(&self) -> usize {
+    str_glyph_len(self.content.as_bytes().len())
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> From<&'a LocalizedString> for LocalizedStr<'a> {
+  fn from(source: &'a LocalizedString) -> Self {
+    Self {
+      language:  source.language(),
+      direction: source.direction(),
+      content:   source.content(),
+    }
+  }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a, 'b> From<&'a LocalizedStr<'b>> for LocalizedString {
+  fn from(value: &'a LocalizedStr<'b>) -> Self {
+    LocalizedString::new(
+      value.language,
+      value.direction,
+      String::from(value.content),
+    )
+  }
+}
 
 /// A glyph containing a valid UTF-8 string.
 pub struct StringGlyph<G>
@@ -149,7 +324,9 @@ impl<G> FromGlyph<G> for StringGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     // Decoding is infallible; StringGlyph handles any (or no) content values.
     let decode_result = (|| {
       source.header().confirm_type(GlyphType::String)?;
@@ -161,7 +338,7 @@ where
         glyph:      source,
         valid_utf8: UnsafeCell::new(false),
       }),
-      Err(err) => Err(GlyphDecodeErr::new(source, err)),
+      Err(err) => Err(DecodeErr::new(source, err)),
     }
   }
 }
@@ -491,7 +668,9 @@ impl<G: Deref<Target = Glyph>> Debug for CharGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for CharGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     let decode_result = (|| {
       source.header().confirm_type(GlyphType::UnicodeChar)?;
       if !source.header().is_short() {
@@ -503,7 +682,7 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for CharGlyph<G> {
 
     match decode_result {
       Ok(()) => Ok(CharGlyph(source)),
-      Err(err) => Err(GlyphDecodeErr::new(source, err)),
+      Err(err) => Err(DecodeErr::new(source, err)),
     }
   }
 }
@@ -537,6 +716,8 @@ impl<G: Deref<Target = Glyph>> Ord for CharGlyph<G> {
     self.code_point().cmp(&other.code_point())
   }
 }
+
+pub enum StringGlyphErr {}
 
 pub(crate) struct StringCollator(AtomicUsize);
 
@@ -589,17 +770,21 @@ impl StringCollator {
 // }
 
 impl<'a> FromGlyph<&'a Glyph> for &'a str {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(
+    source: &'a Glyph,
+  ) -> Result<Self, DecodeErr<&'a Glyph, Self::Error>> {
     // TODO: Use closure to consolidate return of FromGlyphErr
 
     if let Err(err) = source.header().confirm_type(GlyphType::String) {
-      return Err(GlyphDecodeErr::new(source, err.into()));
+      return Err(DecodeErr::new(source, err.into()));
     }
     match source.content().get(2..) {
       None => Ok(""),
       Some(bytes) => match from_utf8(bytes) {
         Ok(valid_str) => Ok(valid_str),
-        Err(err) => Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => Err(DecodeErr::new(source, err.into())),
       },
     }
   }
@@ -610,12 +795,14 @@ impl<G> FromGlyph<G> for String
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     match <&str>::from_glyph(source.deref()) {
       Ok(as_str) => Ok(String::from(as_str)),
       Err(err) => {
         let err = err.into_parts().1;
-        Err(GlyphDecodeErr::new(source, err))
+        Err(DecodeErr::new(source, err))
       },
     }
   }
@@ -625,18 +812,20 @@ impl<G> FromGlyph<G> for char
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
-      return Err(GlyphDecodeErr::new(source, err.into()));
+      return Err(DecodeErr::new(source, err));
     }
     let value: u32 =
       match U32::bbrd(&source.header().short_content()[..], &mut 0) {
         Ok(value) => value.into(),
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
     match char::try_from(value) {
       Ok(c) => Ok(c),
-      Err(_err) => Err(GlyphDecodeErr::new(source, GlyphErr::IllegalValue)),
+      Err(_err) => Err(DecodeErr::new(source, GlyphErr::IllegalValue)),
     }
   }
 }

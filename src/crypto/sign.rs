@@ -30,8 +30,8 @@ use crate::{
   },
   util::debug::UnquotedDebugString,
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16},
-  FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader, GlyphOffset,
-  GlyphType, ToGlyph,
+  DecodeErr, FromGlyph, Glyph, GlyphErr, GlyphHeader, GlyphOffset, GlyphType,
+  ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -284,7 +284,9 @@ impl<G: Deref<Target = Glyph>> ToGlyph for SignatureGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for SignatureGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     let parse_result = || {
       glyph.header().confirm_type(GlyphType::Signature)?;
       let content = glyph.content();
@@ -313,7 +315,7 @@ impl<G: Deref<Target = Glyph>> FromGlyph<G> for SignatureGlyph<G> {
         key_offset,
         statement_offset,
       }),
-      Err(err) => Err(GlyphDecodeErr::new(glyph, err)),
+      Err(err) => Err(DecodeErr::new(glyph, err)),
     }
   }
 }

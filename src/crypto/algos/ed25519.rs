@@ -284,7 +284,10 @@ impl Debug for Ed25519Signature {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::crypto::{algos::SigningKey, test::TEST_PLAINTEXT};
+  use crate::{
+    crypto::algos::SigningKey,
+    util::test::{TEST_IMPOSTER_TEXT, TEST_PLAINTEXT},
+  };
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
 
@@ -297,8 +300,12 @@ mod tests {
 
     public_key.authenticate(TEST_PLAINTEXT, &signature).unwrap();
     secret_key.authenticate(TEST_PLAINTEXT, &signature).unwrap();
-    assert!(public_key.authenticate(b"IMPOSTER!", &signature).is_err());
-    assert!(secret_key.authenticate(b"IMPOSTER!", &signature).is_err());
+    assert!(public_key
+      .authenticate(TEST_IMPOSTER_TEXT, &signature)
+      .is_err());
+    assert!(secret_key
+      .authenticate(TEST_IMPOSTER_TEXT, &signature)
+      .is_err());
 
     // Serialize keys and the signature.
     let secret_bytes = secret_key.secret_bytes();

@@ -19,7 +19,7 @@ use crate::{
     round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
     I16, I32, I64, U128, U16, U32, U64,
   },
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 #[cfg(feature = "alloc")]
@@ -217,20 +217,22 @@ impl<G> FromGlyph<G> for VecGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Vec) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err.into()));
     }
     let contents = source.content_padded();
     let mut cursor = 0;
     let header = match VecGlyphHeader::bbrf(contents, &mut cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let offsets =
       match GlyphOffset::bbrfs(contents, &mut cursor, header.num_items()) {
         Ok(offsets) => offsets,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
     let offsets = NonNull::from(offsets);
     Ok(Self {
@@ -727,20 +729,22 @@ impl<G> FromGlyph<G> for BasicVecGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = glyph.header().confirm_type(GlyphType::VecBasic) {
-      return Err(err.into_fge(glyph));
+      return Err(DecodeErr::new(glyph, err));
     }
     let cursor = &mut 0;
     let content = glyph.content();
     let header = match BasicVecGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let tensor_lengths = match U32::bbrfs(content, cursor, header.tensor_rank())
     {
       Ok(tensor_lengths) => tensor_lengths,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let tensor_lengths = NonNull::from(tensor_lengths);
     *cursor = round_to_word(*cursor);
@@ -829,13 +833,15 @@ where
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{collections::vec::BasicVecGlyphHeader, util::BENCH_BUF_SIZE};
+  use crate::{
+    collections::vec::BasicVecGlyphHeader, util::test::BENCH_BUF_SIZE,
+  };
   use ::test::Bencher;
   use alloc::vec::Vec;
   use std::{dbg, println, vec};
 
   #[test]
-  fn codec_glyph_vec() -> Result<(), GlyphErr> {
+  fn codec_glyph_vec() {
     let to_encode = vec![
       "I",
       "am",
@@ -847,12 +853,12 @@ mod test {
       "modern",
       "Major-General",
     ];
-    let glyph = Glyph::new(&to_encode)?;
+    let glyph = Glyph::new(&to_encode).unwrap();
     println!("{:?}", &glyph);
 
-    let vg = VecGlyph::from_glyph(glyph)?;
+    let vg = VecGlyph::from_glyph(glyph).unwrap();
     for (i, glyph) in vg.iter().enumerate() {
-      let dec = <&str>::from_glyph(glyph)?;
+      let dec = <&str>::from_glyph(glyph).unwrap();
       assert_eq!(dec, to_encode[i]);
     }
 
@@ -862,13 +868,12 @@ mod test {
     for i in 0..8 {
       num_vec.push(i as u8);
     }
-    let vg = Glyph::new(&num_vec)?;
+    let vg = Glyph::new(&num_vec).unwrap();
     assert_eq!(
       vg.as_ref().as_ref().len(),
       size_of::<GlyphHeader>()
         + round_to_word(size_of::<BasicVecGlyphHeader>() + num_vec.len())
     );
-    Ok(())
   }
 
   /// Tests the encoding speed for a vector glyph.
@@ -925,24 +930,22 @@ mod test {
   }
 
   #[test]
-  fn test_dyn_enc_vec() -> Result<(), GlyphErr> {
+  fn test_dyn_enc_vec() {
     let to_encode: Vec<&dyn ToGlyph> = vec![&42u8, &42i64, &"world"];
-    let glyph = Glyph::new(&to_encode)?;
+    let glyph = Glyph::new(&to_encode).unwrap();
     dbg!(&glyph);
 
-    let vg = VecGlyph::from_glyph(glyph.deref())?;
-    let g0 = u32::from_glyph(vg.get(0).unwrap())?;
+    let vg = VecGlyph::from_glyph(glyph.deref()).unwrap();
+    let g0 = u32::from_glyph(vg.get(0).unwrap()).unwrap();
     assert_eq!(g0, 42);
-    let g1 = i64::from_glyph(vg.get(1).unwrap())?;
+    let g1 = i64::from_glyph(vg.get(1).unwrap()).unwrap();
     assert_eq!(g1, 42);
-    let g2 = <&str>::from_glyph(vg.get_parsed(2).unwrap())?;
+    let g2 = <&str>::from_glyph(vg.get_parsed(2).unwrap()).unwrap();
     drop(vg);
     assert_eq!(g2, "world");
     drop(glyph);
 
-    // Must not compile
+    // TODO: Must not compile.  Doc test?
     // assert_eq!(g2, "world"); // Compiler error
-
-    Ok(())
   }
 }

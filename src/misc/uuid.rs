@@ -1,7 +1,7 @@
 use crate::{
   zerocopy::{bounds_check, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr,
+  GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -35,28 +35,34 @@ impl<T> FromGlyph<T> for Uuid
 where
   T: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphDecodeErr<T>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: T) -> Result<Self, DecodeErr<T, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
     let content = source.content_padded();
     let cursor = &mut 0;
     let bytes = match u8::bbrda::<[u8], 16>(content, cursor) {
       Ok(bytes) => bytes,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     Ok(Uuid::from_bytes(bytes))
   }
 }
 
 impl<'a> FromGlyph<&'a Glyph> for &'a Uuid {
-  fn from_glyph(source: &'a Glyph) -> Result<Self, GlyphDecodeErr<&'a Glyph>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(
+    source: &'a Glyph,
+  ) -> Result<Self, DecodeErr<&'a Glyph, GlyphErr>> {
     if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
     let content = source.content();
     if let Err(err) = bounds_check(content, size_of::<Uuid>()) {
-      return Err(GlyphDecodeErr::new(source, err.into()));
+      return Err(DecodeErr::new(source, err.into()));
     }
     // SAFETY: We just did a bounds check, and Uuid is guaranteed to have the
     // same ABI as [u8; 16]
@@ -114,12 +120,14 @@ impl<T> FromGlyph<T> for UuidGlyph<T>
 where
   T: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: T) -> Result<Self, GlyphDecodeErr<T>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: T) -> Result<Self, DecodeErr<T, GlyphErr>> {
     if let Err(err) = source.header().confirm_type(GlyphType::UUID) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
     if let Err(err) = bounds_check(source.content_padded(), size_of::<Uuid>()) {
-      return Err(GlyphDecodeErr::new(source, err.into()));
+      return Err(DecodeErr::new(source, err.into()));
     }
     Ok(UuidGlyph(source))
   }
@@ -155,18 +163,18 @@ mod test {
   use std::dbg;
 
   #[test]
-  fn codec_uuid() -> Result<(), GlyphErr> {
+  fn codec_uuid() {
     // Scalar tests
     let uuid = Uuid::new_v4();
     dbg!(&uuid);
-    let glyph = Glyph::new(&uuid)?;
+    let glyph = Glyph::new(&uuid).unwrap();
     dbg!(&glyph);
-    let uuid_ref = <&Uuid>::from_glyph(glyph.as_ref())?;
+    let uuid_ref = <&Uuid>::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(uuid, *uuid_ref);
-    let new_uuid = Uuid::from_glyph(glyph.as_ref())?;
+    let new_uuid = Uuid::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(uuid, new_uuid);
 
-    let uuid_glyph = UuidGlyph::from_glyph(glyph.as_ref())?;
+    let uuid_glyph = UuidGlyph::from_glyph(glyph.as_ref()).unwrap();
     dbg!(&uuid_glyph);
     assert_eq!(uuid_glyph.get(), &uuid);
 
@@ -176,19 +184,18 @@ mod test {
       uuids.push(Uuid::new_v4());
     }
     dbg!(&uuids);
-    let glyph = Glyph::new(&uuids[..])?;
+    let glyph = Glyph::new(&uuids[..]).unwrap();
     dbg!(&glyph);
-    let uuids_decoded = <&[Uuid]>::from_glyph(glyph.as_ref())?;
+    let uuids_decoded = <&[Uuid]>::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(uuids_decoded, &uuids);
-    let vec_uuid_glyph = BasicVecGlyph::<_>::from_glyph(glyph.as_ref())?;
-    assert_eq!(vec_uuid_glyph.get::<Uuid>()?, &uuids[..]);
-    let uuids_parsed = vec_uuid_glyph.get_parsed::<Uuid>()?;
+    let vec_uuid_glyph =
+      BasicVecGlyph::<_>::from_glyph(glyph.as_ref()).unwrap();
+    assert_eq!(vec_uuid_glyph.get::<Uuid>().unwrap(), &uuids[..]);
+    let uuids_parsed = vec_uuid_glyph.get_parsed::<Uuid>().unwrap();
     drop(vec_uuid_glyph);
     assert_eq!(uuids_parsed, &uuids[..]);
     drop(glyph);
     // Compiler error, now referencing lifetime from a dropped object.
     // dbg!(uuids_parsed);
-
-    Ok(())
   }
 }

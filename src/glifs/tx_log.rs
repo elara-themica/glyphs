@@ -3,7 +3,8 @@ use crate::{
   glyph_close,
   util::{debug::ShortHexDump, SortedSliceRef},
   zerocopy::{ZeroCopy, U16},
-  FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader, GlyphType, ToGlyph,
+  DecodeErr, FromGlyph, Glyph, GlyphErr, GlyphHeader,
+  GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -168,24 +169,28 @@ impl<B> FromGlyph<B> for TxLogGlyph<B>
 where
   B: Deref<Target = Glyph>,
 {
-  fn from_glyph(glyph: B) -> Result<Self, GlyphDecodeErr<B>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: B) -> Result<Self, DecodeErr<B, Self::Error>> {
+    // TODO: Simplify decoding with the lambda syntax for error handling.
+
     if let Err(err) = glyph.header().confirm_type(GlyphType::GlifsTxLog) {
-      return Err(err.into_fge(glyph));
+      return Err(DecodeErr::new(glyph, err));
     }
     let source = glyph.content_padded();
     let cursor = &mut 0;
 
     let header = match TxLogHeader::bbrf(source, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let collection = match GlyphHash::bbrf(source, cursor) {
       Ok(collection) => collection,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let pk_bytes: &[u8; 32] = match u8::bbrfa(source, cursor) {
       Ok(pk_bytes) => pk_bytes,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let previous_tx = match GlyphHash::bbrfs(
       source,
@@ -193,40 +198,43 @@ where
       header.num_previous_transactions(),
     ) {
       Ok(previous_tx) => previous_tx,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
 
     let glyphs_added =
       match GlyphHash::bbrfs(source, cursor, header.num_glyphs_added()) {
         Ok(glyphs_added) => glyphs_added,
-        Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+        Err(err) => return Err(DecodeErr::new(glyph, err.into())),
       };
     let glyphs_deleted =
       match GlifsDelete::bbrfs(source, cursor, header.num_glyphs_deleted()) {
         Ok(glyphs_deleted) => glyphs_deleted,
-        Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+        Err(err) => return Err(DecodeErr::new(glyph, err.into())),
       };
     let extents_added =
       match GlyphHash::bbrfs(source, cursor, header.num_extents_added()) {
         Ok(extents_added) => extents_added,
-        Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+        Err(err) => return Err(DecodeErr::new(glyph, err.into())),
       };
     let extents_deleted =
       match GlifsDelete::bbrfs(source, cursor, header.num_extents_deleted()) {
         Ok(extents_deleted) => extents_deleted,
-        Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+        Err(err) => return Err(DecodeErr::new(glyph, err.into())),
       };
     let signed_content = &source[..*cursor];
 
     let sig_bytes: &[u8; 64] = match u8::bbrfa(source, cursor) {
       Ok(sig_bytes) => sig_bytes,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
 
     let pk = match VerifyingKey::from_bytes(&pk_bytes) {
       Ok(pk) => pk,
       Err(_err) => {
-        return Err(GlyphErr::Ed25519VerificationKeyInvalid.into_fge(glyph))
+        return Err(DecodeErr::new(
+          glyph,
+          GlyphErr::Ed25519VerificationKeyInvalid,
+        ));
       },
     };
 
@@ -406,7 +414,7 @@ impl<'a> ToGlyph for TxLogEncoder<'a> {
 #[allow(unused)]
 mod test {
   use super::*;
-  use crate::util::init_test_logger;
+  use crate::util::test::init_test_logger;
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;

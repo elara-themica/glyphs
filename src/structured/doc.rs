@@ -4,8 +4,8 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close,
   zerocopy::{ZeroCopy, U16},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphSorting, GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr,
+  GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   borrow::Borrow,
@@ -132,8 +132,9 @@ impl<I, B> Document<I, B> {
     let id_glyph = parent.id_glyph();
     let body_glyph = parent.body_glyph();
 
-    let id = I::from_glyph(id_glyph)?;
-    let body = B::from_glyph(body_glyph)?;
+    let id = I::from_glyph(id_glyph).map_err(|err| err.into_err().into())?;
+    let body =
+      B::from_glyph(body_glyph).map_err(|err| err.into_err().into())?;
 
     let prev_versions: SmallVec<DocVer, 2> =
       previous_versions.map(|v| *v).collect();
@@ -346,30 +347,32 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for DocGlyph<G> {
 impl<G: Deref<Target = Glyph>> Eq for DocGlyph<G> {}
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for DocGlyph<G> {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Document) {
-      return Err(GlyphDecodeErr::new(source, err.into()));
+      return Err(DecodeErr::new(source, err.into()));
     }
     let content = source.content_padded();
     let cursor = &mut 0;
 
     let dgh = match DocGlyphHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let nov = u16::from(dgh.num_old_versions) as usize;
     let ov = match DocVer::bbrfs(content, cursor, nov) {
       Ok(versions) => versions,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let id_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let id = id_glyph as *const Glyph;
     let body_glyph = match Glyph::read(content, cursor) {
       Ok(glyph) => glyph,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let body = body_glyph as *const Glyph;
 
@@ -405,26 +408,26 @@ impl<G: Deref<Target = Glyph>> PartialOrd for DocGlyph<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::util::{init_test_logger, BENCH_BUF_SIZE};
+  use crate::util::test::{init_test_logger, BENCH_BUF_SIZE};
   use ::test::Bencher;
   use alloc::string::String;
   use std::{dbg, iter, println};
 
   #[bench]
-  fn glyph_doc_merkle_chain(b: &mut Bencher) -> Result<(), GlyphErr> {
+  fn glyph_doc_merkle_chain(b: &mut Bencher) {
     init_test_logger();
 
     let root = Document::new((), ());
-    let rg = Glyph::new(&root)?;
+    let rg = Glyph::new(&root).unwrap();
     dbg!(&rg);
-    let rg = DocGlyph::from_glyph(rg)?;
+    let rg = DocGlyph::from_glyph(rg).unwrap();
     dbg!(&rg);
     let updated =
-      Document::<(), ()>::update(&rg, iter::once(&Default::default()))?;
-    let ug = Glyph::new(&updated)?;
+      Document::<(), ()>::update(&rg, iter::once(&Default::default())).unwrap();
+    let ug = Glyph::new(&updated).unwrap();
     dbg!(&ug);
     let ug_len = ug.glyph_len();
-    let ug = DocGlyph::from_glyph(Glyph::borrow(&ug))?;
+    let ug = DocGlyph::from_glyph(Glyph::borrow(&ug)).unwrap();
     dbg!(&ug);
 
     b.bytes = BENCH_BUF_SIZE as u64;
@@ -435,32 +438,31 @@ mod test {
       let prev_offset = &mut 0usize;
 
       let updated =
-        Document::<(), ()>::update(&ug, iter::once(&Default::default()))?;
-      updated.glyph_encode(target, cursor)?;
+        Document::<(), ()>::update(&ug, iter::once(&Default::default()))
+          .unwrap();
+      updated.glyph_encode(target, cursor).unwrap();
 
       while *cursor + ug_len < BENCH_BUF_SIZE {
-        let prev_glyph = Glyph::read(target, prev_offset)?;
-        let prev_glyph = DocGlyph::from_glyph(prev_glyph)?;
+        let prev_glyph = Glyph::read(target, prev_offset).unwrap();
+        let prev_glyph = DocGlyph::from_glyph(prev_glyph).unwrap();
         let updated = Document::<(), ()>::update(
           &prev_glyph,
           iter::once(&Default::default()),
         )?;
-        updated.glyph_encode(target, cursor)?;
+        updated.glyph_encode(target, cursor).unwrap();
       }
 
       Ok::<(), GlyphErr>(())
     });
-
-    Ok(())
   }
 
   #[test]
-  fn glyph_doc() -> Result<(), GlyphErr> {
+  fn glyph_doc() {
     let first_doc = Document::new(42u32, "Life, the Universe, and Everything");
-    let first_glyph = Glyph::new(&first_doc)?;
+    let first_glyph = Glyph::new(&first_doc).unwrap();
     println!("First glyph encoded as:\n {:?}", &first_glyph);
 
-    let first_doc_glyph = DocGlyph::from_glyph(first_glyph)?;
+    let first_doc_glyph = DocGlyph::from_glyph(first_glyph).unwrap();
 
     // println!(
     //   "Version of the first glyph is {:?}",
@@ -474,17 +476,16 @@ mod test {
     let mut second_doc = Document::<u32, String>::update(
       &first_doc_glyph,
       iter::once(&Default::default()),
-    )?;
+    )
+    .unwrap();
     second_doc.set_body(String::from("7 (good) times 6 (evil)"));
 
-    let second_glyph = Glyph::new(&second_doc)?;
+    let second_glyph = Glyph::new(&second_doc).unwrap();
     println!("Second glyph encoded as: \n {:?}", &second_glyph);
 
-    let second_doc_glyph = DocGlyph::from_glyph(second_glyph)?;
+    let second_doc_glyph = DocGlyph::from_glyph(second_glyph).unwrap();
     std::dbg!(&second_doc_glyph);
     // println!("Its version is: {:?}", second_doc_glyph.glyph());
-
-    Ok(())
   }
 
   // #[test]

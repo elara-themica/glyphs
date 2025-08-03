@@ -15,8 +15,8 @@ use crate::{
   glyph_close,
   util::SmallStrings,
   zerocopy::{round_to_word, ZeroCopy, U16, U32, U64},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
-  GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr,
+  GlyphHeader, GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -577,21 +577,23 @@ impl<B> FromGlyph<B> for ObjGlyph<B>
 where
   B: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: B) -> Result<Self, GlyphDecodeErr<B>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: B) -> Result<Self, DecodeErr<B, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Object) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
     let content = source.content_padded();
     let cursor = &mut 0;
 
     let header = match ObjGlyphHeader::bbrd(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let type_hash = if header.has_type_hash() {
       let hash = match GlyphHash::bbrf(content, cursor) {
         Ok(hash) => hash,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       Some(NonNull::from(hash))
     } else {
@@ -600,16 +602,16 @@ where
     let type_name = if header.has_type_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
         Ok(n) => n,
-        Err(e) => return Err(GlyphDecodeErr::new(source, e.into())),
+        Err(e) => return Err(DecodeErr::new(source, e.into())),
       };
       Some(NonNull::from(name))
     } else {
@@ -618,7 +620,7 @@ where
     let variant_id = if header.has_variant_id() {
       let id = match U64::bbrd(content, cursor) {
         Ok(value) => value,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       Some(id.get())
     } else {
@@ -627,16 +629,16 @@ where
     let variant_name = if header.has_variant_name() {
       let len = match u8::bbrf(content, cursor) {
         Ok(l) => l,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       let name_bytes = match u8::bbrfs(content, cursor, *len as usize) {
         Ok(bytes) => bytes,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
       *cursor = round_to_word(*cursor);
       let name = match from_utf8(name_bytes) {
         Ok(n) => n,
-        Err(e) => return Err(GlyphDecodeErr::new(source, e.into())),
+        Err(e) => return Err(DecodeErr::new(source, e.into())),
       };
       Some(NonNull::from(name))
     } else {
@@ -647,7 +649,7 @@ where
       match GlyphOffset::bbrfs(content, cursor, header.num_fields.get().into())
       {
         Ok(offsets) => offsets,
-        Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+        Err(err) => return Err(DecodeErr::new(source, err.into())),
       };
     let field_offsets = NonNull::from(field_offsets);
 
@@ -826,7 +828,7 @@ impl ObjGlyphLenCalc {
     field_len: usize,
   ) -> Result<(), ObjGlyphErr> {
     if field_name.is_some() != self.named_fields {
-      return Err(ObjGlyphErr::NamedFieldsConsistency);
+      return Err(ObjGlyphErr::NamedFieldsInconsistency);
     }
     if let Some(field_name) = field_name {
       let field_name_len = field_name
@@ -975,7 +977,7 @@ impl<'a> ObjGlyphSerializer<'a> {
 #[derive(Debug, Copy, Clone)]
 pub enum ObjGlyphErr {
   /// When writing an object glyph, either all or no fields must be named.
-  NamedFieldsConsistency,
+  NamedFieldsInconsistency,
 
   /// The maximum length of field names is 255 bytes.
   FieldNameTooLong(usize),
@@ -984,10 +986,7 @@ pub enum ObjGlyphErr {
 #[cfg(test)]
 pub(crate) mod test {
   use super::*;
-  use crate::util::debug::HexDump;
-  use std::{
-    string::{String, ToString},
-  };
+  use std::string::{String, ToString};
 
   pub(crate) struct TestObject {
     pub name: String,
@@ -1033,8 +1032,15 @@ pub(crate) mod test {
     }
   }
 
+  /// Tests encoding of object glyphs.
+  ///
+  /// This test currently provides somewhat limited coverage and could be
+  /// improved.  Options:
+  ///
+  /// - Refer to tests in `serde-glyphs` for some coverage cases.
+  /// - Better testing of (optional) sorting by field name bytes.
   #[test]
-  fn obj_glyph() {
+  fn codec_obj_glyph() {
     // Basic Encoding
     let mut len_calc =
       ObjGlyphLenCalc::new(false, Some("TestType"), None, false, true).unwrap();
@@ -1065,7 +1071,6 @@ pub(crate) mod test {
       writer.add_field(Some(&c.to_string()), &(n as u32)).unwrap();
     }
     writer.finish().unwrap();
-    std::dbg!(&HexDump(&buffer));
 
     let obj_glyph = Glyph::read(&buffer, &mut 0).unwrap();
     let decoded = ObjGlyph::from_glyph(obj_glyph).unwrap();
@@ -1079,7 +1084,5 @@ pub(crate) mod test {
       let observed_value = u32::from_glyph(field).unwrap();
       assert_eq!(expected_value, observed_value);
     }
-
-    // LATER: Expand test coverage
   }
 }

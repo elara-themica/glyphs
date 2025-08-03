@@ -12,6 +12,8 @@ edition = "2021"
 
 [dependencies]
 argon2 = { optional = true, version = "0.5" }
+# TODO: Make optional
+pbkdf2 = { optional = true, version = "0.12.2" }
 aes = { optional = true, version = "0.8" }
 num-bigint = "0.4.6"
 chrono = { optional = true, version = "0.4" }
@@ -43,8 +45,9 @@ serde_derive = "^1"
 
 [features]
 all_hashes = ["md5", "sha1", "sha2", "sha3"]
+all_passwords = ["argon2", "pbkdf2"]
 alloc = ["ed25519-dalek/alloc", "chrono/alloc"]
-crypto = ["aes", "argon2", "ctr", "ed25519-dalek", "rand", "rand_chacha", "sha3", "x25519-dalek"]
+crypto = ["aes", "ctr", "ed25519-dalek", "rand", "rand_chacha", "sha3", "x25519-dalek"]
 test = ["log", "crypto", "all_hashes"]
 rng = ["uuid/v4"]
 std = ["uuid/v1", "chrono/std"]
@@ -55,9 +58,10 @@ backtrace_full = ["backtrace"]
 glifs = []
 
 default = [
-    "std",
+    "all_hashes",
+    "all_passwords",
     "alloc",
-    "argon2",
+    "std",
     "test_slow",
     "blake3",
     "uuid",
@@ -67,9 +71,5 @@ default = [
     "backtrace",
     "glifs",
     "crypto",
-    "all_hashes",
     "chrono"
 ]
-
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

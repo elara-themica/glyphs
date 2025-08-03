@@ -21,7 +21,7 @@ mod unit;
 pub use unit::*;
 
 mod zc;
-use crate::GlyphDecodeErr;
+use crate::DecodeErr;
 pub use zc::*;
 
 impl<T> ToGlyph for Option<T>
@@ -51,15 +51,18 @@ impl<B, T> FromGlyph<B> for Option<T>
 where
   B: Deref<Target = Glyph>,
   T: FromGlyph<B>,
+  GlyphErr: From<T::Error>,
 {
-  fn from_glyph(source: B) -> Result<Self, GlyphDecodeErr<B>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: B) -> Result<Self, DecodeErr<B, Self::Error>> {
     let type_id = source.header().glyph_type();
     if type_id == GlyphType::Unit {
       let unit = match UnitGlyph::from_glyph(source.deref()) {
         Ok(unit) => unit,
         Err(err) => {
           let (_glyph, err) = err.into_parts();
-          return Err(GlyphDecodeErr::new(source, err));
+          return Err(DecodeErr::new(source, err));
         },
       };
       let unit_type_id = *unit.type_id();
@@ -68,15 +71,14 @@ where
       } else {
         Err(err!(
           debug,
-          GlyphDecodeErr::new(
-            source,
-            GlyphErr::UnexpectedUnitType(unit_type_id)
-          )
+          DecodeErr::new(source, GlyphErr::UnexpectedUnitType(unit_type_id))
         ))
       }
     } else {
-      let val = T::from_glyph(source)?;
-      Ok(Some(val))
+      match T::from_glyph(source) {
+        Ok(val) => Ok(Some(val)),
+        Err(err) => Err(err.map_err(|err| GlyphErr::from(err))),
+      }
     }
   }
 }
@@ -87,8 +89,8 @@ mod test {
   use super::*;
   use crate::{
     util::{
-      debug::HexDump, simple_codec_slice_test, simple_codec_test,
-      BENCH_BUF_SIZE,
+      debug::HexDump,
+      test::{simple_codec_slice_test, simple_codec_test, BENCH_BUF_SIZE},
     },
     FromGlyph, Glyph, GlyphErr,
   };
@@ -130,8 +132,6 @@ mod test {
       fn $enc_bench_name(b: &mut Bencher) -> Result<(), $crate::GlyphErr> {
         let mut buf: Box<[u8]> = repeat(0).take(BENCH_BUF_SIZE).collect();
 
-        // let mut buf =
-        //   $crate::buffers::ByteBuffer::new(BENCH_BUF_SIZE, true).unwrap();
         let value: $prim = Default::default();
 
         // Write the buffer
@@ -171,7 +171,8 @@ mod test {
           let cursor = &mut 0;
           loop {
             let glyph = $crate::Glyph::read(&buf, cursor)?;
-            let _decoded = <$prim>::from_glyph(glyph)?;
+            let _decoded = <$prim>::from_glyph(glyph)
+              .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
           }
           #[allow(unreachable_code)]
           Ok::<(), $crate::GlyphErr>(())
@@ -206,7 +207,8 @@ mod test {
       let cursor = &mut 0;
       loop {
         let glyph = Glyph::read(&buf, cursor)?;
-        let decoded = IntGlyph::from_glyph(glyph)?;
+        let decoded = IntGlyph::from_glyph(glyph)
+          .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
         outside = decoded.get_i32()?;
       }
     });
@@ -220,13 +222,16 @@ mod test {
     let glyph = Glyph::new(text)?;
     dbg!(&glyph);
 
-    let read_str = <&str>::from_glyph(glyph.as_ref())?;
+    let read_str = <&str>::from_glyph(glyph.as_ref())
+      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
     assert_eq!(read_str, text);
 
-    let read_string = String::from_glyph(glyph.as_ref())?;
+    let read_string = String::from_glyph(glyph.as_ref())
+      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
     assert_eq!(read_string.as_str(), text);
 
-    let str_glyph = StringGlyph::from_glyph(glyph.as_ref())?;
+    let str_glyph = StringGlyph::from_glyph(glyph.as_ref())
+      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
     assert_eq!(str_glyph.deref(), text);
 
     Ok(())

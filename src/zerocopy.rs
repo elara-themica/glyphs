@@ -46,7 +46,7 @@
 //! with otherwise generic code.  There's also a [`ZeroCopyGlyph`] trait for
 //! those types which have a regular glyph type associated with them as well.
 //! See the documentation for [`BasicGlyph`] for more details.
-use crate::GlyphType;
+use crate::{util::LogErr, GlyphType};
 use core::{
   fmt::Debug,
   hint::unreachable_unchecked,
@@ -54,6 +54,7 @@ use core::{
   ptr::{copy_nonoverlapping, write_unaligned},
   slice::{from_raw_parts, from_raw_parts_mut},
 };
+use log::Level;
 use std::marker::PhantomData;
 
 /// Bounds check that returns [`BufferErr`] on failure.
@@ -63,11 +64,11 @@ where
   T: AsRef<[u8]> + ?Sized,
 {
   if to > buffer.as_ref().len() {
-    let err = BufferErr::OutOfBounds {
+    Err(BufferErr::OutOfBounds {
       index:  to,
       length: buffer.as_ref().len(),
-    };
-    Err(err!(trace, err))
+    })
+    .log_err(Level::Trace)
   } else {
     Ok(())
   }
@@ -189,6 +190,81 @@ impl<T: ZeroCopy> ZCSliceRef<T> {
   pub unsafe fn deref_mut_u<'a>(&self, buffer: &'a mut [u8]) -> &'a mut [T] {
     let (mut offset, len) = self.parts();
     T::bbrfs_mut_u(buffer, &mut offset, len)
+  }
+}
+
+/// A reference to a (word-aligned) zero-copy type in a raw buffer.
+pub(crate) struct ZCSliceRef2<T: ZeroCopy> {
+  offset:   usize,
+  len:      usize,
+  _phantom: PhantomData<T>,
+}
+
+impl<T: ZeroCopy> ZCSliceRef2<T> {
+  pub fn new(offset: usize, len: usize) -> Self {
+    Self {
+      offset,
+      len,
+      _phantom: PhantomData,
+    }
+  }
+
+  /// References the slice from the specified buffer,
+  pub fn read(
+    buffer: &[u8],
+    cursor: &mut usize,
+    len: usize,
+  ) -> Result<Self, BufferErr> {
+    let offset = *cursor;
+    let _ = T::bbrfs(buffer, cursor, len)?; // We don't actually need the bytes
+    let len = buffer.len();
+    Ok(Self::new(offset, len))
+  }
+
+  /// Returns the offset in the source buffer at which the slice is stored
+  /// (in bytes).
+  pub fn offset(&self) -> usize {
+    self.offset
+  }
+
+  /// Returns the length of the referenced slice (in units of `T`)
+  pub fn len(&self) -> usize {
+    self.len
+  }
+
+  /// Returns the length of the referenced slice (in bytes)
+  pub fn len_bytes(&self) -> usize {
+    self.len.saturating_mul(size_of::<T>())
+  }
+
+  /// Returns the referenced `[T]` from its expected location in the source
+  /// buffer
+  pub fn deref_from<'a>(&self, buffer: &'a [u8]) -> Result<&'a [T], BufferErr> {
+    T::bbrfs(buffer, &mut (self.offset.clone()), self.len)
+  }
+
+  /// Returns the referenced `[T]` from its expected location in the source
+  /// buffer, skipping the bounds check
+  pub unsafe fn deref_from_u<'a>(&self, buffer: &'a [u8]) -> &'a [T] {
+    T::bbrfs_u(buffer, &mut (self.offset.clone()), self.len)
+  }
+
+  /// Returns a mutable copy of the referenced `[T]` from its expected location
+  /// in the source buffer
+  pub fn deref_from_mut<'a>(
+    &self,
+    buffer: &'a mut [u8],
+  ) -> Result<&'a mut [T], BufferErr> {
+    T::bbrfs_mut(buffer, &mut (self.offset.clone()), self.len)
+  }
+
+  /// Returns the referenced `[T]` from its expected location in the source
+  /// buffer, skipping the bounds check.
+  pub unsafe fn deref_from_mut_u<'a>(
+    &self,
+    buffer: &'a mut [u8],
+  ) -> &'a mut [T] {
+    T::bbrfs_mut_u(buffer, &mut (self.offset.clone()), self.len)
   }
 }
 

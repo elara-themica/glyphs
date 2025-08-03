@@ -9,7 +9,7 @@ use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
   zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
-  EncodedGlyph, FromGlyph, GlyphDecodeErr, GlyphErr, ToGlyph,
+  DecodeErr, EncodedGlyph, FromGlyph, GlyphErr, ToGlyph,
 };
 use core::{
   fmt::{Debug, Formatter},
@@ -219,18 +219,20 @@ impl<G: Deref<Target = Glyph>> HashGlyph<G> {
 }
 
 impl<G: Deref<Target = Glyph>> FromGlyph<G> for HashGlyph<G> {
-  fn from_glyph(glyph: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     /* SAFETY: We're going to guarantee that contents contain at least a header,
                to avoid duplicate bounds checks.
     */
     if let Err(err) = glyph.header().confirm_type(GlyphType::CryptoHash) {
-      return Err(err.into_fge(glyph));
+      return Err(DecodeErr::new(glyph, err));
     }
     let content = glyph.content();
     let cursor = &mut 0;
     let _header = match CryptoHashHeader::bbrf(content, cursor) {
       Ok(header) => header,
-      Err(err) => return Err(GlyphDecodeErr::new(glyph, err.into())),
+      Err(err) => return Err(DecodeErr::new(glyph, err.into())),
     };
     let digest_bytes = &content[*cursor..] as *const [u8];
     Ok(Self(glyph, digest_bytes))
@@ -625,20 +627,18 @@ macro_rules! hash_impls {
     }
 
     impl<G: Deref<Target = $crate::Glyph>> $crate::FromGlyph<G> for $hash_name {
-      fn from_glyph(glyph: G) -> Result<Self, $crate::GlyphDecodeErr<G>> {
-        let hg = match $crate::crypto::HashGlyph::<_>::from_glyph(glyph.deref())
-        {
-          Ok(hg) => hg,
-          Err(err) => {
-            let (_glyph, err) = err.into_parts();
-            return Err(err.into_fge(glyph));
+      type Error = $crate::GlyphErr;
+
+      fn from_glyph(
+        glyph: G,
+      ) -> Result<Self, $crate::DecodeErr<G, Self::Error>> {
+        match $crate::crypto::HashGlyph::<_>::from_glyph(glyph) {
+          Ok(hg) => match hg.get::<$hash_name>() {
+            Ok(hash) => Ok(*hash),
+            Err(err) => return Err(DecodeErr::new(hg.0, err)),
           },
-        };
-        let hash = match hg.get::<$hash_name>() {
-          Ok(hash) => hash,
-          Err(err) => return Err(err.into_fge(glyph)),
-        };
-        Ok(*hash)
+          Err(err) => Err(err),
+        }
       }
     }
 
@@ -907,7 +907,9 @@ mod test {
       blake3::Blake3Hash, md5::Md5Hash, sha1::Sha1Hash, sha256::Sha256Hash,
       sha3::Sha3Hash,
     },
-    util::{init_test_logger, simple_codec_slice_test, simple_codec_test},
+    util::test::{
+      init_test_logger, simple_codec_slice_test, simple_codec_test,
+    },
   };
   use ::test::Bencher;
   use rand::SeedableRng;

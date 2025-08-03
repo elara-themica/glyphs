@@ -5,7 +5,7 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close,
   zerocopy::{round_to_word, ZeroCopy, U32},
-  EncodedGlyph, FromGlyph, Glyph, GlyphDecodeErr, GlyphErr, GlyphHeader,
+  DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
 use alloc::collections::BTreeMap;
@@ -205,9 +205,11 @@ impl<G> FromGlyph<G> for MapGlyph<G>
 where
   G: Deref<Target = Glyph>,
 {
-  fn from_glyph(source: G) -> Result<Self, GlyphDecodeErr<G>> {
+  type Error = GlyphErr;
+
+  fn from_glyph(source: G) -> Result<Self, DecodeErr<G, Self::Error>> {
     if let Err(err) = source.header().confirm_type(GlyphType::Map) {
-      return Err(err.into_fge(source));
+      return Err(DecodeErr::new(source, err));
     }
 
     let content = source.content_padded();
@@ -215,11 +217,11 @@ where
 
     let mgh = match MapGlyphHeader::bbrf(content, cursor) {
       Ok(mgh) => mgh,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
     let offsets = match GlyphOffset::bbrfs(content, cursor, mgh.num_items()) {
       Ok(offsets) => offsets,
-      Err(err) => return Err(GlyphDecodeErr::new(source, err.into())),
+      Err(err) => return Err(DecodeErr::new(source, err.into())),
     };
 
     // Keep internal self references
@@ -458,7 +460,7 @@ mod test {
 
   /// Basic encoding and decoding test.
   #[test]
-  fn map_glyph_codec() -> Result<(), GlyphErr> {
+  fn map_glyph_codec() {
     // === Test Basic Encoding and Decoding ===
     let mut map = BTreeMap::new();
     map.insert("Liara", "T'Soni");
@@ -469,22 +471,20 @@ mod test {
     map.insert("Thane", "Krios");
     // std::dbg!(&map);
 
-    let glyph = Glyph::new(&map)?;
+    let glyph = Glyph::new(&map).unwrap();
     // std::dbg!(&glyph);
 
-    let decoded = MapGlyph::from_glyph(glyph)?;
+    let decoded = MapGlyph::from_glyph(glyph).unwrap();
     // std::dbg!(&map_glyph);
 
     // Checking Values (and sorted order)
     for ((glyph_key, glyph_value), (orig_key, orig_value)) in
       decoded.iter().zip(map.iter())
     {
-      let decoded_key = <&str>::from_glyph(glyph_key)?;
-      let decoded_value = <&str>::from_glyph(glyph_value)?;
+      let decoded_key = <&str>::from_glyph(glyph_key).unwrap();
+      let decoded_value = <&str>::from_glyph(glyph_value).unwrap();
       assert_eq!(decoded_key, *orig_key);
       assert_eq!(decoded_value, *orig_value);
     }
-
-    Ok(())
   }
 }
