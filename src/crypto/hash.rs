@@ -486,7 +486,7 @@ impl HashPrefix {
       0u128
     } else {
       // Need to use signed integers for arithmetic vs. logical shift
-      let mask = i128::MAX >> (self.prefix_len - 1);
+      let mask = i128::MIN >> (self.prefix_len - 1);
       mask as u128
     };
     let masked = num & mask;
