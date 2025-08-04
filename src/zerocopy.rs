@@ -39,10 +39,10 @@
 //! # Utility Types
 //!
 //!
-//! The other things of note are the enum [`ZeroCopyTypeID`], which is used by
+//! The other things of note are the enum [`BasicVecType`], which is used by
 //! some types that store these types directly without a glyph header, such as
 //! vectors of [`U32`]s in a [`BasicVecGlyph`].  There is also a corresponding
-//! trait [`HasZeroCopyID`] that maps these types with an ID so we can use them
+//! trait [`InBasicVec`] that maps these types with an ID so we can use them
 //! with otherwise generic code.  There's also a [`ZeroCopyGlyph`] trait for
 //! those types which have a regular glyph type associated with them as well.
 //! See the documentation for [`BasicGlyph`] for more details.
@@ -269,12 +269,12 @@ impl<T: ZeroCopy> ZCSliceRef2<T> {
 }
 
 /// [`ZeroCopy`] types with a corresponding glyph.
-pub trait HasZeroCopyID: ZeroCopy {
+pub trait InBasicVec: ZeroCopy {
   /// The ID used when labeling zero copy types in other glyphs.
   ///
   /// This value is used when working with these types, such as with
   /// [`BasicVecGlyph`].
-  const ZERO_COPY_ID: ZeroCopyTypeID;
+  const BASIC_VEC_TYPE: BasicVecType;
 }
 
 /// [`ZeroCopy`] types with a corresponding glyph.
@@ -754,7 +754,7 @@ pub unsafe trait ZeroCopy: Copy + Clone + Send + Sync {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u16)]
 #[non_exhaustive]
-pub enum ZeroCopyTypeID {
+pub enum BasicVecType {
   U8 = 0x0000,
   U16 = 0x0001,
   U32 = 0x0002,
@@ -790,32 +790,32 @@ pub enum ZeroCopyTypeID {
   HashSHA512,
 }
 
-impl From<u16> for ZeroCopyTypeID {
+impl From<u16> for BasicVecType {
   fn from(value: u16) -> Self {
     unsafe {
-      if value > ZeroCopyTypeID::Unknown as u16 {
-        ZeroCopyTypeID::Unknown
+      if value > BasicVecType::Unknown as u16 {
+        BasicVecType::Unknown
       } else {
-        transmute::<u16, ZeroCopyTypeID>(value)
+        transmute::<u16, BasicVecType>(value)
       }
     }
   }
 }
 
-impl From<U16> for ZeroCopyTypeID {
+impl From<U16> for BasicVecType {
   fn from(value: U16) -> Self {
     value.get().into()
   }
 }
 
-impl From<ZeroCopyTypeID> for u16 {
-  fn from(value: ZeroCopyTypeID) -> Self {
+impl From<BasicVecType> for u16 {
+  fn from(value: BasicVecType) -> Self {
     value as u16
   }
 }
 
-impl From<ZeroCopyTypeID> for U16 {
-  fn from(value: ZeroCopyTypeID) -> Self {
+impl From<BasicVecType> for U16 {
+  fn from(value: BasicVecType) -> Self {
     U16::from(value as u16)
   }
 }
@@ -834,14 +834,14 @@ pub enum BufferErr {
 
 unsafe impl ZeroCopy for u8 {}
 
-impl HasZeroCopyID for u8 {
-  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::U8;
+impl InBasicVec for u8 {
+  const BASIC_VEC_TYPE: BasicVecType = BasicVecType::U8;
 }
 
 unsafe impl ZeroCopy for i8 {}
 
-impl HasZeroCopyID for i8 {
-  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::I8;
+impl InBasicVec for i8 {
+  const BASIC_VEC_TYPE: BasicVecType = BasicVecType::I8;
 }
 
 gen_zc_prim!(

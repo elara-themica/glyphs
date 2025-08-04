@@ -1,5 +1,5 @@
 use crate::{
-  zerocopy::{bounds_check, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID},
+  zerocopy::{bounds_check, InBasicVec, ZeroCopy, BasicVecType},
   DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr,
   GlyphHeader, GlyphSorting, GlyphType, ToGlyph,
 };
@@ -27,8 +27,8 @@ impl ToGlyph for Uuid {
   }
 }
 
-impl HasZeroCopyID for Uuid {
-  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::UUID;
+impl InBasicVec for Uuid {
+  const BASIC_VEC_TYPE: BasicVecType = BasicVecType::UUID;
 }
 
 impl<T> FromGlyph<T> for Uuid

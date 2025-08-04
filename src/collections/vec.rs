@@ -16,21 +16,20 @@ use crate::{
   dynamic::DynGlyph,
   glyph_close,
   zerocopy::{
-    round_to_word, HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, F32, F64, I128,
-    I16, I32, I64, U128, U16, U32, U64,
+    bounds_check, pad_to_word, round_to_word, BasicVecType, InBasicVec,
+    ZeroCopy, F32, F64, I128, I16, I32, I64, U128, U16, U32, U64,
   },
   DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader,
   GlyphOffset, GlyphSorting, GlyphType, ToGlyph,
 };
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
 use core::{
+  borrow::Borrow,
   cmp::Ordering,
   fmt::{Debug, Formatter},
   mem::size_of,
   ptr::NonNull,
 };
-use std::ops::Deref;
+use std::{marker::PhantomData, ops::Deref};
 use uuid::Uuid;
 
 /// The specific type header for (non-primitive) vector glyphs.
@@ -298,83 +297,175 @@ impl<'a> Iterator for VecGlyphIterator<'a> {
   }
 }
 
-#[doc(hidden)]
-#[derive(Default)]
-pub struct VecGlyphLenCalc {
-  num_items: usize,
-  items_len: usize,
+/// Serializes data into a vector of glyphs.
+///
+/// Ideally, this could be done with a blanket implementation, but until
+/// specialization lands in stable rust, this would also cause basic types
+/// (e.g., `Vec<u32>`) to be written as a series of individual glyphs rather
+/// than as a much more efficient and convenient [`BasicVecGlyph`].
+///
+/// This type has constructors that accept slices, clonable iterators, and
+/// types with references that implement [`IntoIterator`] (i.e., you could even
+/// use it directly with an owned [`Vec`] if you wanted to).
+///
+/// ```rust
+/// # use glyphs::collections::VecGlyphWriter;
+/// # use glyphs::{Glyph, GlyphType, ToGlyph};
+/// let source = vec!["a", "vec", "of", "str"];
+///
+/// // Until rust's `#[feature(specialization)]` is finished, this requires a
+/// // blanket implementation that would frequently do the wrong thing.
+/// //
+/// // let glyph = Glyph::new(&source).unwrap();
+///
+/// // So do this, instead:
+/// let writer = VecGlyphWriter::from_slice(&source[..]);
+/// let glyph = Glyph::new(writer).unwrap();
+/// assert_eq!(glyph.glyph_type(), GlyphType::Vec);
+/// ```
+///
+/// This type has constructors that accept slices, clonable iterators, and
+/// types with references that implement [`IntoIterator`] (i.e., you could even
+/// use it directly with an owned [`Vec`] if you wanted to).
+///
+pub struct VecGlyphWriter<T>(T);
+
+// We use `()` for `T` here, because the trait solver can't infer the correct
+// types without it!  Hopefully this gets fixed at some point...
+impl VecGlyphWriter<()> {
+  /// New instance from a slice of the source type.
+  ///
+  /// ```rust
+  /// # use glyphs::collections::VecGlyphWriter;
+  /// # use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// # use glyphs::{Glyph, GlyphType, ToGlyph};
+  ///
+  /// // Write a slice of hashes as a series of glyphs instead of using the
+  /// // standard / more efficient `BasicVecGlyph`.
+  /// let source = [GlyphHash::zero(); 5];
+  /// let adapter = VecGlyphWriter::from_slice(&source[..]);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::Vec);
+  /// ```
+  pub fn from_slice<'a, T: ToGlyph>(slice: &'a [T]) -> impl ToGlyph + 'a {
+    VecGlyphWriter(ClonableIteratorAdapter(slice.iter()))
+  }
+
+  /// New instance from a clonable iterator.
+  ///
+  /// ```rust
+  /// # use glyphs::collections::VecGlyphWriter;
+  /// # use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// # use glyphs::{Glyph, GlyphType};
+  ///
+  /// // Write a slice of `u8`s as a series of glyphs instead of using the
+  /// // standard / more efficient `BasicVecGlyph`, directly from a mapping
+  /// // iterator.
+  /// let source = [1u8, 2u8, 3u8];
+  /// let map = (&source[..]).iter().map(|val| val + 1);
+  /// let adapter = VecGlyphWriter::from_clonable_iterator(map);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::Vec);
+  /// ```
+  pub fn from_clonable_iterator<I>(iter: I) -> impl ToGlyph
+  where
+    I: Iterator + ExactSizeIterator + Clone,
+    I::Item: ToGlyph,
+  {
+    VecGlyphWriter(ClonableIteratorAdapter(iter))
+  }
 }
 
-impl VecGlyphLenCalc {
-  pub fn new() -> Self {
-    Default::default()
+impl<I> VecGlyphWriter<I>
+where
+    for<'a> &'a I: IntoIterator,
+    for<'a> <&'a I as IntoIterator>::IntoIter: ExactSizeIterator,
+    for<'a> <&'a I as IntoIterator>::Item: ToGlyph,
+{
+  /// New instance from any type that can be iterated over.
+  ///
+  /// Specifically, a _reference_ to the iterable must implement the
+  /// [`IntoIterator`] trait.  The [`Iterator`] it produces must have a known
+  /// size (i.e., implement [`ExactSizeIterator`]).
+  ///
+  /// While this works well with a standard [`Vec`], it notably does not work
+  /// with a slice!  While a reference to a slice _is_ iterable, we need the
+  /// reference to our generic type to be iterable!  We can't accept the `[T]`
+  /// type as this generic because it's `!Sized` and so we can't create a new
+  /// instance of the type.  Oh the other hand, we can't use a `&[T]` as that
+  /// generic type either, because a reference to _that_ (i.e., `&&[T]`)
+  /// doesn't implement `IntoIterator`.  Finally, we can't use the slice's
+  /// iterator directly because (1) iterators are consumable, and we'll need to
+  /// iterate over the items at least twice (once for length), and (2) while a
+  /// reference to [`Iter`](type@core::iter::Iter) could theoretically implement
+  /// `IntoIterator` because it implements [`Clone`], the standard library
+  /// doesn't actually implement this trait.
+  ///
+  /// For slices, just use [`from_slice()`] instead.  We use an internal adapter
+  /// type to get around #3, though we omit that from our public interface by
+  /// returning an opaque type instead.
+  ///
+  /// Finally, note that using this constructor typically requires helping the
+  /// trait solver by specifying the type that the resulting iterator will be
+  /// producing, even though it should be trivially obvious!  (It's the exact
+  /// same type as the parameter.)  Some of the error messages I got while
+  /// trying to find an API shape that would work for this suggested that this
+  /// is a known limitation in the trait solver, so hopefully this can be fixed
+  /// at some point.
+  ///
+  /// ```rust
+  /// use glyphs::collections::VecGlyphWriter;
+  /// use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// use glyphs::{Glyph, GlyphType};
+  ///
+  /// let source = vec!["a", "vec", "of", "str"];
+  /// // NOTE!  The turbofish operator is typically required here, even though
+  /// //        the resulting type is be trivially obvious!  (It's the same type
+  /// //        as the parameter)
+  /// let adapter = VecGlyphWriter::<Vec<&str>>::from_iterable(source);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::Vec);
+  /// ```
+  pub fn from_iterable(iterable: I) -> impl ToGlyph
+  {
+    VecGlyphWriter(iterable)
+  }
+}
+
+impl<C> ToGlyph for VecGlyphWriter<C>
+where
+    for<'a> &'a C: IntoIterator,
+    for<'a> <&'a C as IntoIterator>::IntoIter: ExactSizeIterator,
+    for<'a> <&'a C as IntoIterator>::Item: ToGlyph,
+{
+  fn glyph_encode(
+    &self,
+    target: &mut [u8],
+    cursor: &mut usize,
+  ) -> Result<(), GlyphErr> {
+    let iter = self.0.into_iter();
+    let mut vgs = VecGlyphSerializer::new(iter.len(), target, cursor)?;
+    for field in iter {
+      vgs.add_field(&field)?;
+    }
+    vgs.finish()
   }
 
-  pub fn add_item(&mut self, item_len: usize) {
-    self.num_items = self.num_items.saturating_add(1);
-    self.items_len = self.items_len.saturating_add(item_len);
-  }
-
-  pub fn finish(self) -> usize {
-    size_of::<GlyphHeader>()
-      + round_to_word(
-        size_of::<VecGlyphHeader>() + size_of::<GlyphOffset>() * self.num_items,
-      )
-      + self.items_len
+  fn glyph_len(&self) -> usize {
+    let iter = self.0.into_iter();
+    let mut len_calc = VecGlyphLenCalc::new();
+    for field in iter {
+      len_calc.add_item(field.glyph_len());
+    }
+    len_calc.finish()
   }
 }
 
-#[doc(hidden)]
-pub struct VecGlyphSerializer<'a> {
-  target:         &'a mut [u8],
-  cursor:         &'a mut usize,
-  glyph_start:    usize,
-  content_start:  usize,
-  offsets_cursor: usize,
-}
-
-impl<'a> VecGlyphSerializer<'a> {
-  pub fn new(
-    len: usize,
-    target: &'a mut [u8],
-    cursor: &'a mut usize,
-  ) -> Result<Self, GlyphErr> {
-    let glyph_start = *cursor;
-    *cursor += size_of::<GlyphHeader>();
-    let content_start = *cursor;
-    VecGlyphHeader::new(len)?.bbwr(target, cursor)?;
-    let offsets_cursor = GlyphOffset::skip(target, cursor, len, true)?;
-    Ok(Self {
-      target,
-      cursor,
-      glyph_start,
-      content_start,
-      offsets_cursor,
-    })
-  }
-
-  pub fn add_field<T: ToGlyph>(&mut self, field: &T) -> Result<(), GlyphErr> {
-    GlyphOffset::new(*self.cursor - self.content_start)?
-      .bbwr(self.target, &mut self.offsets_cursor)?;
-    field.glyph_encode(self.target, self.cursor)
-  }
-
-  pub fn finish(self) -> Result<(), GlyphErr> {
-    glyph_close(
-      GlyphType::Vec,
-      self.target,
-      self.glyph_start,
-      self.cursor,
-      false,
-    )?;
-    Ok(())
-  }
-}
 
 #[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Debug)]
 #[repr(packed)]
 pub(crate) struct BasicVecGlyphHeader {
-  /// A type identifier.  See [`ZeroCopyTypeID`].
+  /// A type identifier.  See [`BasicVecType`].
   pub basic_type_id: U16,
 
   /// The number of dimensions in a multidimensional array.
@@ -388,12 +479,13 @@ impl BasicVecGlyphHeader {
     self.tensor_rank as usize
   }
 
-  pub fn new<T: HasZeroCopyID>(tensor_rank: usize) -> Result<Self, GlyphErr> {
+  // FIXME: Docs
+  pub fn new<T: InBasicVec>(tensor_rank: usize) -> Result<Self, GlyphErr> {
     let tensor_rank = u8::try_from(tensor_rank)
       .map_err(|_t| GlyphErr::TensorRankOverflow(tensor_rank))?;
 
     Ok(Self {
-      basic_type_id: T::ZERO_COPY_ID.into(),
+      basic_type_id: T::BASIC_VEC_TYPE.into(),
       tensor_rank,
       reserved: Default::default(),
     })
@@ -401,7 +493,7 @@ impl BasicVecGlyphHeader {
 
   pub fn confirm_zero_copy_type(
     &self,
-    expected: ZeroCopyTypeID,
+    expected: BasicVecType,
   ) -> Result<(), GlyphErr> {
     let observed = self.get_zero_copy_type_id();
     if observed == expected {
@@ -411,14 +503,14 @@ impl BasicVecGlyphHeader {
     }
   }
 
-  pub fn get_zero_copy_type_id(&self) -> ZeroCopyTypeID {
+  pub fn get_zero_copy_type_id(&self) -> BasicVecType {
     self.basic_type_id.into()
   }
 }
 
 unsafe impl ZeroCopy for BasicVecGlyphHeader {}
 
-/// A vector of a basic zero-copy type, e.g., a [`U32`].
+/// A simple vector of a zero-copy type.
 ///
 /// The type is generic over the type of glyph `G`, allowing it to be
 /// constructed from borrowed or owned data, and over the corresponding type
@@ -448,13 +540,13 @@ impl<G: Deref<Target = Glyph>> BasicVecGlyph<G> {
   }
 
   /// Returns the ZeroCopy type contained in the glyph.
-  pub fn type_id(&self) -> ZeroCopyTypeID {
+  pub fn type_id(&self) -> BasicVecType {
     self.header().basic_type_id.into()
   }
 
   /// Returns `Err` the glyph does not contain a vector of the specified type.
-  pub fn confirm_type<T: HasZeroCopyID>(&self) -> Result<(), GlyphErr> {
-    self.header().confirm_zero_copy_type(T::ZERO_COPY_ID)
+  pub fn confirm_type<T: InBasicVec>(&self) -> Result<(), GlyphErr> {
+    self.header().confirm_zero_copy_type(T::BASIC_VEC_TYPE)
   }
 
   /// Returns the array's tensor rank.
@@ -487,7 +579,7 @@ impl<G: Deref<Target = Glyph>> BasicVecGlyph<G> {
   ///
   /// Returns an error if the type ID of `[T]` does not match the type ID
   /// stored in the glyph.
-  pub fn get<T: HasZeroCopyID>(&self) -> Result<&[T], GlyphErr> {
+  pub fn get<T: InBasicVec>(&self) -> Result<&[T], GlyphErr> {
     self.confirm_type::<T>()?;
     let bytes = self.as_bytes();
     let slice = T::bbrfs_i(bytes, &mut 0);
@@ -508,7 +600,7 @@ impl<'a> BasicVecGlyph<&'a Glyph> {
   ///
   /// Returns an error if the type ID of `[T]` does not match the type ID
   /// stored in the glyph.
-  pub fn get_parsed<T: HasZeroCopyID>(&self) -> Result<&'a [T], GlyphErr> {
+  pub fn get_parsed<T: InBasicVec>(&self) -> Result<&'a [T], GlyphErr> {
     self.confirm_type::<T>()?;
     let bytes = self.as_bytes_parsed();
     let slice = T::bbrfs_i(bytes, &mut 0);
@@ -523,75 +615,75 @@ impl<G: Deref<Target = Glyph>> Debug for BasicVecGlyph<G> {
     df.field("type", &self.type_id());
 
     match self.type_id() {
-      ZeroCopyTypeID::U8 => {
+      BasicVecType::U8 => {
         let values: &[u8] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::U16 => {
+      BasicVecType::U16 => {
         let values: &[U16] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::U32 => {
+      BasicVecType::U32 => {
         let values: &[U32] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::U64 => {
+      BasicVecType::U64 => {
         let values: &[U64] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::U128 => {
+      BasicVecType::U128 => {
         let values: &[U128] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::I8 => {
+      BasicVecType::I8 => {
         let values: &[i8] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::I16 => {
+      BasicVecType::I16 => {
         let values: &[I16] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::I32 => {
+      BasicVecType::I32 => {
         let values: &[I32] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::I64 => {
+      BasicVecType::I64 => {
         let values: &[I64] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::I128 => {
+      BasicVecType::I128 => {
         let values: &[I128] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::F32 => {
+      BasicVecType::F32 => {
         let values: &[F32] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::F64 => {
+      BasicVecType::F64 => {
         let values: &[F64] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::HashMD5 => {
+      BasicVecType::HashMD5 => {
         let values: &[Md5Hash] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::HashSHA1 => {
+      BasicVecType::HashSHA1 => {
         let values: &[Sha1Hash] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::HashSHA2 => {
+      BasicVecType::HashSHA2 => {
         let values: &[Sha256Hash] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::HashSHA3 => {
+      BasicVecType::HashSHA3 => {
         let values: &[Sha3Hash] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::HashBlake3 => {
+      BasicVecType::HashBlake3 => {
         let values: &[Blake3Hash] = self.get().unwrap();
         df.field("values", &values);
       },
-      ZeroCopyTypeID::UUID => {
+      BasicVecType::UUID => {
         let values: &[Uuid] = self.get().unwrap();
         df.field("values", &values);
       },
@@ -622,92 +714,92 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for BasicVecGlyph<G> {
         .cmp(&other.header().basic_type_id.get())
         .then(self.as_bytes().cmp(other.as_bytes())),
       GlyphSorting::Experimental => match (self.type_id(), other.type_id()) {
-        (ZeroCopyTypeID::U8, ZeroCopyTypeID::U8) => {
+        (BasicVecType::U8, BasicVecType::U8) => {
           let a: &[u8] = self.get().unwrap();
           let b: &[u8] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::U16, ZeroCopyTypeID::U16) => {
+        (BasicVecType::U16, BasicVecType::U16) => {
           let a: &[U16] = self.get().unwrap();
           let b: &[U16] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::U32, ZeroCopyTypeID::U32) => {
+        (BasicVecType::U32, BasicVecType::U32) => {
           let a: &[U32] = self.get().unwrap();
           let b: &[U32] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::U64, ZeroCopyTypeID::U64) => {
+        (BasicVecType::U64, BasicVecType::U64) => {
           let a: &[U64] = self.get().unwrap();
           let b: &[U64] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::U128, ZeroCopyTypeID::U128) => {
+        (BasicVecType::U128, BasicVecType::U128) => {
           let a: &[U128] = self.get().unwrap();
           let b: &[U128] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::I8, ZeroCopyTypeID::I8) => {
+        (BasicVecType::I8, BasicVecType::I8) => {
           let a: &[i8] = self.get().unwrap();
           let b: &[i8] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::I16, ZeroCopyTypeID::I16) => {
+        (BasicVecType::I16, BasicVecType::I16) => {
           let a: &[I16] = self.get().unwrap();
           let b: &[I16] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::I32, ZeroCopyTypeID::I32) => {
+        (BasicVecType::I32, BasicVecType::I32) => {
           let a: &[I32] = self.get().unwrap();
           let b: &[I32] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::I64, ZeroCopyTypeID::I64) => {
+        (BasicVecType::I64, BasicVecType::I64) => {
           let a: &[I64] = self.get().unwrap();
           let b: &[I64] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::I128, ZeroCopyTypeID::I128) => {
+        (BasicVecType::I128, BasicVecType::I128) => {
           let a: &[I128] = self.get().unwrap();
           let b: &[I128] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::F32, ZeroCopyTypeID::F32) => {
+        (BasicVecType::F32, BasicVecType::F32) => {
           let a: &[F32] = self.get().unwrap();
           let b: &[F32] = other.get().unwrap();
           a.partial_cmp(b).unwrap_or(Ordering::Equal)
         },
-        (ZeroCopyTypeID::F64, ZeroCopyTypeID::F64) => {
+        (BasicVecType::F64, BasicVecType::F64) => {
           let a: &[F64] = self.get().unwrap();
           let b: &[F64] = other.get().unwrap();
           a.partial_cmp(b).unwrap_or(Ordering::Equal)
         },
-        (ZeroCopyTypeID::HashMD5, ZeroCopyTypeID::HashMD5) => {
+        (BasicVecType::HashMD5, BasicVecType::HashMD5) => {
           let a: &[Md5Hash] = self.get().unwrap();
           let b: &[Md5Hash] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::HashSHA1, ZeroCopyTypeID::HashSHA1) => {
+        (BasicVecType::HashSHA1, BasicVecType::HashSHA1) => {
           let a: &[Sha1Hash] = self.get().unwrap();
           let b: &[Sha1Hash] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::HashSHA2, ZeroCopyTypeID::HashSHA2) => {
+        (BasicVecType::HashSHA2, BasicVecType::HashSHA2) => {
           let a: &[Sha256Hash] = self.get().unwrap();
           let b: &[Sha256Hash] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::HashSHA3, ZeroCopyTypeID::HashSHA3) => {
+        (BasicVecType::HashSHA3, BasicVecType::HashSHA3) => {
           let a: &[Sha3Hash] = self.get().unwrap();
           let b: &[Sha3Hash] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::HashBlake3, ZeroCopyTypeID::HashBlake3) => {
+        (BasicVecType::HashBlake3, BasicVecType::HashBlake3) => {
           let a: &[Blake3Hash] = self.get().unwrap();
           let b: &[Blake3Hash] = other.get().unwrap();
           a.cmp(b)
         },
-        (ZeroCopyTypeID::UUID, ZeroCopyTypeID::UUID) => {
+        (BasicVecType::UUID, BasicVecType::UUID) => {
           let a: &[Uuid] = self.get().unwrap();
           let b: &[Uuid] = other.get().unwrap();
           a.cmp(b)
@@ -777,72 +869,281 @@ impl<G: Deref<Target = Glyph>> PartialOrd for BasicVecGlyph<G> {
   }
 }
 
-/// Vectors of primitives and very common types with fixed-length
-/// representations may have a more specific implementation.  This `impl`
-/// is the default used for all other types (e.g., `str`).
-impl<T> ToGlyph for [T]
-where
-  T: ToGlyph,
-{
-  default fn glyph_encode(
-    &self,
-    target: &mut [u8],
-    cursor: &mut usize,
-  ) -> Result<(), GlyphErr> {
-    let mut vgs = VecGlyphSerializer::new(self.len(), target, cursor)?;
-    for field in self.iter() {
-      vgs.add_field(field)?;
-    }
-    vgs.finish()
-  }
-
-  default fn glyph_len(&self) -> usize {
-    let mut vglc = VecGlyphLenCalc::new();
-    for field in self.iter() {
-      vglc.add_item(field.glyph_len());
-    }
-    vglc.finish()
-  }
-}
-
-/// Encodes a `Vec<T>` into a glyph, provided `T` implements `ToGlyph`.
+/// Serializes data into a basic vector glyph.
 ///
-/// This is the default implementation when there's not a more specialized
-/// version, e.g., that uses a specific type of vector glyph to avoid the
-/// overhead of each item being encoded as a glyph, that avoids the per-item
-/// overhead of storing individual items as glyphs.  This would be extremely
-/// inefficient, for example, for a vector of `u8`
-#[cfg(feature = "alloc")]
-impl<'a, T> ToGlyph for Vec<T>
+/// Unlike [`VecGlyphWriter`], which serializes any data implementing
+/// [`ToGlyph`] into a series of individual glyphs, i.e., a [`VecGlyph`], this
+/// type serializes fixed-length, zero-copy types implementing [`InBasicVec`]
+/// into a basic vector glyph containing _only_ the target type, i.e., a
+/// [`BasicVecGlyph`].  After optimization, serialization should typically be
+/// just a memory copy, and no de-serialization is required so long as
+/// we don't require alignment greater than 8 bytes.
+///
+/// Many such types (e.g., `[&`[`GlyphHash`]`]`) already have implementations
+/// of `ToGlyph` that use this type for serialization, but blanket
+/// implementations are not currently possible due to the lack of specialization
+/// in stable rust.
+///
+/// See the [`module level documentation`](module@crate::collections) for an
+/// overview.
+///
+/// ```rust
+/// # use glyphs::collections::BasicVecGlyphWriter;
+/// # use glyphs::crypto::{CryptographicHash, GlyphHash};
+/// # use glyphs::{Glyph, GlyphType};
+/// let source = vec![GlyphHash::zero(); 5];
+/// let adapter = BasicVecGlyphWriter::from_iterable(source);
+/// let glyph = Glyph::new(adapter).unwrap();
+/// assert_eq!(glyph.glyph_type(), GlyphType::VecBasic);
+/// ```
+pub struct BasicVecGlyphWriter<C, T>(C, PhantomData<T>);
+
+impl<'a, C, T> BasicVecGlyphWriter<C, T>
 where
-  T: ToGlyph,
+  C: 'a,
+  &'a C: IntoIterator,
+  <&'a C as IntoIterator>::IntoIter: ExactSizeIterator,
+  <&'a C as IntoIterator>::Item: Borrow<T>,
+  T: InBasicVec,
 {
-  default fn glyph_encode(
+  /// New instance from any type that can be iterated over.
+  ///
+  /// Specifically, a _reference_ to the iterable must implement the
+  /// [`IntoIterator`] trait.  The [`Iterator`] it produces must have a known
+  /// size (i.e., implement [`ExactSizeIterator`]), and the items this iterator
+  /// produces must be a type from which an instance of the type to be written
+  /// into the basic vector glyph can be borrowed (e.g., if `T: InBasicVec`,
+  /// then the iterator could produce a `T`, `&T`, `Box<T>`, etc...).
+  ///
+  /// While this works well with a standard [`Vec`], it notably does not work
+  /// with a slice (see source comments for details).  For slices use
+  /// [`from_slice()`] instead.
+  ///
+  /// ```rust
+  /// # use glyphs::collections::BasicVecGlyphWriter;
+  /// # use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// # use glyphs::{Glyph, GlyphType};
+  /// let source = [1u8, 2u8, 3u8];
+  /// let adapter = BasicVecGlyphWriter::from_slice(&source[..]);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::VecBasic);
+  /// ```
+  pub fn from_iterable(iterable: C) -> Self {
+    Self(iterable, Default::default())
+  }
+}
+
+impl<I, T> BasicVecGlyphWriter<I, T>
+where
+  I: Iterator + ExactSizeIterator + Clone,
+  I::Item: Borrow<T>,
+  T: InBasicVec,
+{
+  /// New instance from a clonable iterator.
+  ///
+  /// ```rust
+  /// # use glyphs::collections::BasicVecGlyphWriter;
+  /// # use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// # use glyphs::{Glyph, GlyphType};
+  /// let source = [1u8, 2u8, 3u8];
+  /// let map = (&source[..]).iter().map(|val| val + 1);
+  /// let adapter = BasicVecGlyphWriter::from_clonable_iterator(map);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::VecBasic);
+  /// ```
+  pub fn from_clonable_iterator(iter: I) -> impl ToGlyph {
+    BasicVecGlyphWriter(ClonableIteratorAdapter(iter), Default::default())
+  }
+}
+
+impl<'a, T>
+BasicVecGlyphWriter<(), T>
+where
+  T: InBasicVec,
+{
+  /// New instance from a slice of [`InBasicVec`].
+  ///
+  /// ```rust
+  /// use glyphs::collections::BasicVecGlyphWriter;
+  /// use glyphs::crypto::{CryptographicHash, GlyphHash};
+  /// use glyphs::{Glyph, GlyphType};
+  ///
+  /// let source = [1u8, 2u8, 3u8];
+  /// let adapter = BasicVecGlyphWriter::from_slice(&source[..]);
+  /// let glyph = Glyph::new(adapter).unwrap();
+  /// assert_eq!(glyph.glyph_type(), GlyphType::VecBasic);
+  /// ```
+  pub fn from_slice(slice: &'a [T]) -> impl ToGlyph + 'a {
+    BasicVecGlyphWriter(ClonableIteratorAdapter(slice.iter()), PhantomData::<T>)
+  }
+}
+
+impl<C, T> ToGlyph for BasicVecGlyphWriter<C, T>
+where
+    for<'b> &'b C: IntoIterator,
+    for<'b> <&'b C as IntoIterator>::IntoIter: ExactSizeIterator,
+    for<'b> <&'b C as IntoIterator>::Item: Borrow<T>,
+    T: InBasicVec,
+{
+  fn glyph_encode(
     &self,
     target: &mut [u8],
     cursor: &mut usize,
   ) -> Result<(), GlyphErr> {
-    (&self[..]).glyph_encode(target, cursor)
+    assert_glyph_alignment!(debug, *cursor);
+
+    // Content length isn't just glyph length minus header; padding matters
+    let content_len = size_of::<BasicVecGlyphHeader>()
+      + size_of::<U32>()
+      + size_of::<T>() * self.0.into_iter().len();
+    let glyph_len = size_of::<GlyphHeader>() + round_to_word(content_len);
+    std::dbg!(content_len, glyph_len, self.glyph_len());
+
+    // Consolidated bounds check for writing glyph of primitives
+    bounds_check(target, *cursor + glyph_len)?;
+
+    GlyphHeader::new(GlyphType::VecBasic, content_len)?.bbwr(target, cursor)?;
+
+    // Secondary header contains type id and tensor rank
+    BasicVecGlyphHeader::new::<T>(1)?.bbwr(target, cursor)?;
+
+    // With a a simple array, the length of the first tensor rank is the length
+    // of the entire array. No need to pad, because of the size of the
+    // secondary header and one tensor rank length, we're already at a multiple
+    // of 8 bytes
+    U32::try_from(self.0.into_iter().len())?.bbwr(target, cursor)?;
+    assert_glyph_alignment!(debug, *cursor);
+
+    // Write the actual data.
+    for item in self.0.into_iter() {
+      item.borrow().bbwr(target, cursor)?;
+    }
+
+    // Zero pad out the glyph
+    pad_to_word(target, cursor)?;
+    Ok(())
   }
 
-  default fn glyph_len(&self) -> usize {
-    (self[..]).glyph_len()
+  fn glyph_len(&self) -> usize {
+    size_of::<GlyphHeader>()
+      + size_of::<BasicVecGlyphHeader>()
+      + size_of::<U32>()
+      + round_to_word(size_of::<T>() * self.0.into_iter().len())
   }
 }
+
+
+/// Quasi-private serializer for vector glyphs--calculates glyph length.
+///
+/// This is marked as public for `serde-glyph`, but should not be considered
+/// part of this crate's public / stable API.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct VecGlyphLenCalc {
+  num_items: usize,
+  items_len: usize,
+}
+
+impl VecGlyphLenCalc {
+  pub fn new() -> Self {
+    Default::default()
+  }
+
+  pub fn add_item(&mut self, item_len: usize) {
+    self.num_items = self.num_items.saturating_add(1);
+    self.items_len = self.items_len.saturating_add(item_len);
+  }
+
+  pub fn finish(self) -> usize {
+    size_of::<GlyphHeader>()
+      + round_to_word(
+        size_of::<VecGlyphHeader>() + size_of::<GlyphOffset>() * self.num_items,
+      )
+      + self.items_len
+  }
+}
+
+/// Quasi-private serializer for vector glyphs.
+///
+/// This is marked as public for `serde-glyph`, but should not be considered
+/// part of this crate's public / stable API.
+#[doc(hidden)]
+pub struct VecGlyphSerializer<'a> {
+  target:         &'a mut [u8],
+  cursor:         &'a mut usize,
+  glyph_start:    usize,
+  content_start:  usize,
+  offsets_cursor: usize,
+}
+
+impl<'a> VecGlyphSerializer<'a> {
+  pub fn new(
+    len: usize,
+    target: &'a mut [u8],
+    cursor: &'a mut usize,
+  ) -> Result<Self, GlyphErr> {
+    let glyph_start = *cursor;
+    *cursor += size_of::<GlyphHeader>();
+    let content_start = *cursor;
+    VecGlyphHeader::new(len)?.bbwr(target, cursor)?;
+    let offsets_cursor = GlyphOffset::skip(target, cursor, len, true)?;
+    Ok(Self {
+      target,
+      cursor,
+      glyph_start,
+      content_start,
+      offsets_cursor,
+    })
+  }
+
+  pub fn add_field<T: ToGlyph>(&mut self, field: &T) -> Result<(), GlyphErr> {
+    GlyphOffset::new(*self.cursor - self.content_start)?
+      .bbwr(self.target, &mut self.offsets_cursor)?;
+    field.glyph_encode(self.target, self.cursor)
+  }
+
+  pub fn finish(self) -> Result<(), GlyphErr> {
+    glyph_close(
+      GlyphType::Vec,
+      self.target,
+      self.glyph_start,
+      self.cursor,
+      false,
+    )?;
+    Ok(())
+  }
+}
+
+
+
+/// Private adapter class for [`VecGlyphWriter`] and [`BasicVecGlyphWriter`] to
+/// accept more (and more convienent) user types.
+struct ClonableIteratorAdapter<T>(T);
+
+impl<'a, T> IntoIterator for &'a ClonableIteratorAdapter<T>
+where
+  T: Iterator + Clone,
+{
+  type IntoIter = T;
+  type Item = T::Item;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.0.clone()
+  }
+}
+
+
+
 
 #[cfg(test)]
 mod test {
+  // FIXME
   use super::*;
-  use crate::{
-    collections::vec::BasicVecGlyphHeader, util::test::BENCH_BUF_SIZE,
-  };
-  use ::test::Bencher;
-  use alloc::vec::Vec;
-  use std::{dbg, println, vec};
+  use ::test::{black_box, Bencher};
 
   #[test]
   fn codec_glyph_vec() {
-    let to_encode = vec![
+    let strings = std::vec![
       "I",
       "am",
       "the",
@@ -853,99 +1154,111 @@ mod test {
       "modern",
       "Major-General",
     ];
-    let glyph = Glyph::new(&to_encode).unwrap();
-    println!("{:?}", &glyph);
+    let writer = VecGlyphWriter::from_slice(&strings[..]);
+    let glyph = Glyph::new(writer).unwrap();
 
     let vg = VecGlyph::from_glyph(glyph).unwrap();
     for (i, glyph) in vg.iter().enumerate() {
       let dec = <&str>::from_glyph(glyph).unwrap();
-      assert_eq!(dec, to_encode[i]);
+      assert_eq!(dec, strings[i]);
     }
 
-    // Ensure vectors of primitives use their specialized types, rather than
-    // the per-item type information.
-    let mut num_vec = Vec::new();
-    for i in 0..8 {
-      num_vec.push(i as u8);
-    }
-    let vg = Glyph::new(&num_vec).unwrap();
-    assert_eq!(
-      vg.as_ref().as_ref().len(),
-      size_of::<GlyphHeader>()
-        + round_to_word(size_of::<BasicVecGlyphHeader>() + num_vec.len())
-    );
+    let numbers = std::vec![0u8, 1, 2, 3, 4, 5, 6, 7];
+    let bgv = Glyph::new(&numbers[..]).unwrap();
+    assert_eq!(bgv.glyph_type(), GlyphType::VecBasic);
+    let decoded = BasicVecGlyph::from_glyph(bgv).unwrap();
+    assert_eq!(decoded.type_id(), BasicVecType::U8);
+    assert_eq!(decoded.get::<u8>().unwrap(), &numbers[..]);
   }
 
-  /// Tests the encoding speed for a vector glyph.
-  ///
-  /// This should be close to the worst-case-scenario for encoding a vector
-  /// glyph; 3 items in 64 bytes.
+  // FIXME
+  // /// Tests the encoding speed for a vector glyph.
+  // ///
+  // /// This should be close to the worst-case-scenario for encoding a vector
+  // /// glyph; 3 items in 64 bytes.
+  // #[bench]
+  // fn enc_glyph_vec(b: &mut Bencher) {
+  //   let ga = Glyph::new(&1).unwrap();
+  //   let gb = Glyph::new(&2).unwrap();
+  //   let gc = Glyph::new(&0xbadc_0ffe_e0dd_f00d_u64.to_be()).unwrap();
+  //   let src = vec![ga, gb, gc];
+  //
+  //   let mut target: alloc::boxed::Box<[u8]> =
+  //     core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
+  //
+  //   b.bytes = BENCH_BUF_SIZE as u64;
+  //   b.iter(|| {
+  //     let cursor = &mut 0;
+  //     for _ in 0..128 {
+  //       src.glyph_encode(target.as_mut(), cursor)?;
+  //     }
+  //     Ok::<(), GlyphErr>(())
+  //   });
+  // }
+
+  // FIXME
+  // /// Tests the decoding speed for a vector glyph.
+  // ///
+  // /// This should be close to the worst-case-scenario for decoding a vector
+  // /// glyph; 3 items in 64 bytes.
+  // #[bench]
+  // fn dec_glyph_vec(b: &mut Bencher) {
+  //   let ga = Glyph::new(&1).unwrap();
+  //   let gb = Glyph::new(&2).unwrap();
+  //   let gc = Glyph::new(&3_u64.to_be()).unwrap();
+  //   let src = vec![ga, gb, gc];
+  //
+  //   let mut target: alloc::boxed::Box<[u8]> =
+  //     core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
+  //
+  //   let cursor = &mut 0;
+  //   for _ in 0..128 {
+  //     src.glyph_encode(target.as_mut(), cursor).unwrap();
+  //   }
+  //
+  //   b.bytes = BENCH_BUF_SIZE as u64;
+  //   b.iter(|| {
+  //     let cursor = &mut 0;
+  //     for _ in 0..128 {
+  //       let _ = Glyph::read(&target, cursor)?;
+  //     }
+  //     Ok::<(), GlyphErr>(())
+  //   });
+  // }
+  //
+  // FIXME
+  // #[test]
+  // fn test_dyn_enc_vec() {
+  //   let to_encode: Vec<&dyn ToGlyph> = vec![&42u8, &42i64, &"world"];
+  //   let glyph = Glyph::new(&to_encode).unwrap();
+  //   dbg!(&glyph);
+  //
+  //   let vg = VecGlyph::from_glyph(glyph.deref()).unwrap();
+  //   let g0 = u32::from_glyph(vg.get(0).unwrap()).unwrap();
+  //   assert_eq!(g0, 42);
+  //   let g1 = i64::from_glyph(vg.get(1).unwrap()).unwrap();
+  //   assert_eq!(g1, 42);
+  //   let g2 = <&str>::from_glyph(vg.get_parsed(2).unwrap()).unwrap();
+  //   drop(vg);
+  //   assert_eq!(g2, "world");
+  //   drop(glyph);
+  //
+  //   // TODO: Must not compile.  Doc test?
+  //   // assert_eq!(g2, "world"); // Compiler error
+  // }
+
   #[bench]
-  fn enc_glyph_vec(b: &mut Bencher) {
-    let ga = Glyph::new(&1).unwrap();
-    let gb = Glyph::new(&2).unwrap();
-    let gc = Glyph::new(&0xbadc_0ffe_e0dd_f00d_u64.to_be()).unwrap();
-    let src = vec![ga, gb, gc];
+  fn enc_basic_vec(b: &mut Bencher) {
+    let source = [42u32; 8192];
+    let foo = &source[..];
+    foo.glyph_len();
 
-    let mut target: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
+    let glyph = Glyph::new(&source[..]).unwrap();
+    std::dbg!(&glyph);
 
-    b.bytes = BENCH_BUF_SIZE as u64;
+    b.bytes = source.glyph_len() as u64;
     b.iter(|| {
-      let cursor = &mut 0;
-      for _ in 0..128 {
-        src.glyph_encode(target.as_mut(), cursor)?;
-      }
-      Ok::<(), GlyphErr>(())
-    });
-  }
-
-  /// Tests the decoding speed for a vector glyph.
-  ///
-  /// This should be close to the worst-case-scenario for decoding a vector
-  /// glyph; 3 items in 64 bytes.
-  #[bench]
-  fn dec_glyph_vec(b: &mut Bencher) {
-    let ga = Glyph::new(&1).unwrap();
-    let gb = Glyph::new(&2).unwrap();
-    let gc = Glyph::new(&3_u64.to_be()).unwrap();
-    let src = vec![ga, gb, gc];
-
-    let mut target: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-
-    let cursor = &mut 0;
-    for _ in 0..128 {
-      src.glyph_encode(target.as_mut(), cursor).unwrap();
-    }
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let cursor = &mut 0;
-      for _ in 0..128 {
-        let _ = Glyph::read(&target, cursor)?;
-      }
-      Ok::<(), GlyphErr>(())
-    });
-  }
-
-  #[test]
-  fn test_dyn_enc_vec() {
-    let to_encode: Vec<&dyn ToGlyph> = vec![&42u8, &42i64, &"world"];
-    let glyph = Glyph::new(&to_encode).unwrap();
-    dbg!(&glyph);
-
-    let vg = VecGlyph::from_glyph(glyph.deref()).unwrap();
-    let g0 = u32::from_glyph(vg.get(0).unwrap()).unwrap();
-    assert_eq!(g0, 42);
-    let g1 = i64::from_glyph(vg.get(1).unwrap()).unwrap();
-    assert_eq!(g1, 42);
-    let g2 = <&str>::from_glyph(vg.get_parsed(2).unwrap()).unwrap();
-    drop(vg);
-    assert_eq!(g2, "world");
-    drop(glyph);
-
-    // TODO: Must not compile.  Doc test?
-    // assert_eq!(g2, "world"); // Compiler error
+      black_box(Glyph::new(&source[..]).unwrap());
+    })
   }
 }

@@ -49,11 +49,11 @@ pub const BENCH_BUF_SIZE: usize = 8192;
 
 /// Does a round trip codec test for a simple
 #[cfg(all(test, feature = "alloc"))]
-pub fn simple_codec_test<
-  T: Debug + Eq + ToGlyph + FromGlyph<alloc::boxed::Box<Glyph>>,
->(
-  value: T,
-) {
+pub fn simple_codec_test<T>(value: T)
+where
+  T: Debug + Eq + FromGlyph<alloc::boxed::Box<Glyph>>,
+  for<'a> &'a T: ToGlyph,
+{
   let glyph = crate::Glyph::new(&value).unwrap();
   let decoded = T::from_glyph(glyph).unwrap();
   assert_eq!(decoded, value);

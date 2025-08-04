@@ -239,7 +239,6 @@ impl PasswordAlgorithmParameters {
         // iterations: U32
         size_of::<U32>()
       },
-      _ => 0,
     }
   }
 

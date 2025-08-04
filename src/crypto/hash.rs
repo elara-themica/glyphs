@@ -8,7 +8,7 @@
 use crate::{
   glyph::{Glyph, GlyphType},
   util::debug::ShortHexDump,
-  zerocopy::{HasZeroCopyID, ZeroCopy, ZeroCopyTypeID, U16},
+  zerocopy::{InBasicVec, ZeroCopy, BasicVecType, U16},
   DecodeErr, EncodedGlyph, FromGlyph, GlyphErr, ToGlyph,
 };
 use core::{
@@ -524,8 +524,8 @@ impl HashPrefix {
 /// SAFETY: Byte arrays are inherently zero copy.
 unsafe impl ZeroCopy for HashPrefix {}
 
-impl HasZeroCopyID for HashPrefix {
-  const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::HashPrefix;
+impl InBasicVec for HashPrefix {
+  const BASIC_VEC_TYPE: BasicVecType = BasicVecType::HashPrefix;
 }
 
 impl Debug for HashPrefix {
@@ -574,9 +574,9 @@ macro_rules! hash_impls {
   ($hash_name:ident, $hash_len:expr, $hash_tid:ident, $zc_tid:ident, $context_name:ident) => {
     unsafe impl $crate::zerocopy::ZeroCopy for $hash_name {}
 
-    impl $crate::zerocopy::HasZeroCopyID for $hash_name {
-      const ZERO_COPY_ID: $crate::zerocopy::ZeroCopyTypeID =
-        $crate::zerocopy::ZeroCopyTypeID::$zc_tid;
+    impl $crate::zerocopy::InBasicVec for $hash_name {
+      const BASIC_VEC_TYPE: $crate::zerocopy::BasicVecType =
+        $crate::zerocopy::BasicVecType::$zc_tid;
     }
 
     impl $crate::crypto::CryptographicHash for $hash_name {

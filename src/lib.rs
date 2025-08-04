@@ -83,12 +83,6 @@
 
 // Used to enable testing with no_std
 #![feature(test)]
-// Used to allow specialized vector encoding for slices of primitives.
-#![feature(specialization)]
-
-// Used for generated documentation to reference feature requirements.
-#![feature(doc_cfg)]
-
 
 
 // Used by specialization feature

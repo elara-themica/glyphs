@@ -25,21 +25,19 @@ macro_rules! err {
   }};
 }
 
-// /// Function will return a [`BufferErr::Overflow`] if check fails.
-// #[allow(unused)]
-// macro_rules! check_bounds {
-//   ($offset:expr, $num_bytes:expr, $buf_len:expr) => {{
-//     let last_byte = $offset + $num_bytes;
-//     if last_byte > $buf_len {
-//       return Err($crate::zerocopy::BufferErr::Overflow {
-//         needed:    last_byte,
-//         available: $buf_len,
-//       });
-//     } else {
-//       last_byte
-//     }
-//   }};
-// }
+/// Asserts 8-byte alignment in a buffer containing glyphs.
+/// 
+/// Typically, use the second `debug` variant to avoid assert statements in
+/// release-mode code.
+macro_rules! assert_glyph_alignment {
+  ($cursor:expr) => {
+    assert_eq!($cursor % size_of::<$crate::GlyphHeader>(), 0);
+  };
+  
+  (debug, $cursor:expr) => {
+    debug_assert_eq!($cursor % size_of::<$crate::GlyphHeader>(), 0);
+  }
+}
 
 /// Generates a zero-copy version of primitive type.
 ///
@@ -104,8 +102,8 @@ macro_rules! gen_zc_prim {
 
     unsafe impl ZeroCopy for $zc_prim {}
 
-    impl $crate::zerocopy::HasZeroCopyID for $zc_prim {
-      const ZERO_COPY_ID: ZeroCopyTypeID = ZeroCopyTypeID::$zc_type_id;
+    impl $crate::zerocopy::InBasicVec for $zc_prim {
+      const BASIC_VEC_TYPE: BasicVecType = BasicVecType::$zc_type_id;
     }
 
     impl ZeroCopyGlyph for $zc_prim {
@@ -417,34 +415,11 @@ macro_rules! gen_prim_slice_to_glyph {
         target: &mut [u8],
         cursor: &mut usize,
       ) -> Result<(), $crate::GlyphErr> {
-        unsafe {
-          // Consolidated bounds check for writing glyph of primitives
-          $crate::zerocopy::bounds_check(target, *cursor + self.glyph_len())?;
-          let header = $crate::GlyphHeader::new(
-            $crate::GlyphType::VecBasic,
-            size_of::<$crate::collections::BasicVecGlyphHeader>()
-              + size_of::<$crate::zerocopy::U32>()
-              + size_of::<$source_type>() * self.len(),
-          )?;
-          header.bbwr_u(target, cursor);
-          let header2 =
-            crate::collections::BasicVecGlyphHeader::new::<$source_type>(1)?;
-          header2.bbwr_u(target, cursor);
-          let len = $crate::zerocopy::U32::try_from(self.len())?;
-          len.bbwr_u(target, cursor);
-          $source_type::bbwrs_u(self, target, cursor);
-          $crate::zerocopy::pad_to_word_u(target, cursor);
-          Ok(())
-        }
+        $crate::collections::BasicVecGlyphWriter::from_slice(self).glyph_encode(target, cursor)
       }
 
       fn glyph_len(&self) -> usize {
-        size_of::<$crate::GlyphHeader>()
-          + size_of::<$crate::collections::BasicVecGlyphHeader>()
-          + size_of::<$crate::zerocopy::U32>()
-          + $crate::zerocopy::round_to_word(
-            size_of::<$source_type>() * self.len(),
-          )
+        $crate::collections::BasicVecGlyphWriter::from_slice(self).glyph_len()
       }
     }
   };
@@ -456,37 +431,13 @@ macro_rules! gen_prim_slice_to_glyph {
         target: &mut [u8],
         cursor: &mut usize,
       ) -> Result<(), GlyphErr> {
-        unsafe {
-          // Consolidated bounds check for writing glyph of primitives
-          $crate::zerocopy::bounds_check(target, *cursor + self.glyph_len())?;
-          let header = $crate::GlyphHeader::new(
-            $crate::GlyphType::VecBasic,
-            size_of::<$crate::collections::BasicVecGlyphHeader>()
-              + size_of::<U32>()
-              + size_of::<$zc_type>() * self.len(),
-          )?;
-          header.bbwr_u(target, cursor);
-          let header2 =
-            crate::collections::BasicVecGlyphHeader::new::<$zc_type>(1)?;
-          header2.bbwr_u(target, cursor);
-          let len = $crate::zerocopy::U32::try_from(self.len())?;
-          len.bbwr_u(target, cursor);
-          for element in self.iter() {
-            let zct: $zc_type = ($conv_fn)(element);
-            zct.bbwr_u(target, cursor);
-          }
-          $crate::zerocopy::pad_to_word_u(target, cursor);
-          Ok(())
-        }
+        let map = self.into_iter().map(|element| ($conv_fn)(element));
+        $crate::collections::BasicVecGlyphWriter::from_clonable_iterator(map).glyph_encode(target, cursor)
       }
 
       fn glyph_len(&self) -> usize {
-        size_of::<$crate::GlyphHeader>()
-          + size_of::<$crate::collections::BasicVecGlyphHeader>()
-          + size_of::<U32>()
-          + $crate::zerocopy::round_to_word(
-            size_of::<$source_type>() * self.len(),
-          )
+        let map = self.into_iter().map(|element| ($conv_fn)(element));
+        $crate::collections::BasicVecGlyphWriter::from_clonable_iterator(map).glyph_len()
       }
     }
   };
