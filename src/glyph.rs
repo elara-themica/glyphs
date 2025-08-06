@@ -5,10 +5,11 @@ use crate::{
   basic::UnitType,
   crypto::{CryptoErr, CryptographicHash, GlyphHash, PasswordErr},
   dynamic::DynGlyph,
+  structured::ObjectErr,
   util::debug::{HexDump, ShortHexDump},
   zerocopy::{
-    pad_to_word, round_to_word, BufferErr, InBasicVec, ZeroCopy,
-    BasicVecType, U16, U32,
+    pad_to_word, round_to_word, BasicVecType, BufferErr, InBasicVec, ZeroCopy,
+    U16, U32,
   },
 };
 #[cfg(feature = "alloc")]
@@ -660,7 +661,7 @@ impl From<GlyphType> for u16 {
 
 /// Various errors associated with handling glyphs.
 //
-// Note:  Early micro-benchmarks indicated that codec performance can be
+// Note: Early micro-benchmarks indicated that codec performance can be
 // significantly affected by what kinds of variants are included, as this
 // enum may be returned from those functions.  Specifically, the addition of
 // an `Other(Option<String>)` slowed these functions down by a factor of 3x.
@@ -669,9 +670,7 @@ impl From<GlyphType> for u16 {
 #[repr(C, u32)]
 pub enum GlyphErr {
   BufferErr(BufferErr),
-
-  /// User type labels may not have user type labels themselves.
-  RecursiveUserTypeLabel,
+  ObjectErr(ObjectErr),
 
   /// The header contained invalid data (illegal version, reserved bytes not
   /// zero, etc...)
@@ -779,10 +778,6 @@ pub enum GlyphErr {
   /// Attempted to calculate a hash value using an algorithm that is not
   /// available to running code.
   HashAlgorithmMissing,
-
-  #[cfg(feature = "serde")]
-  /// An unspecified error occurred while (de-)serializing through serde.
-  SerdeErr,
 
   /// When encoding an object glyph, names of types, variants, and fields must
   /// be less than 255 bytes.

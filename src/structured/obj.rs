@@ -826,14 +826,14 @@ impl ObjGlyphLenCalc {
     &mut self,
     field_name: Option<&str>,
     field_len: usize,
-  ) -> Result<(), ObjGlyphErr> {
+  ) -> Result<(), ObjectErr> {
     if field_name.is_some() != self.named_fields {
-      return Err(ObjGlyphErr::NamedFieldsInconsistency);
+      return Err(ObjectErr::NamedFieldsInconsistency);
     }
     if let Some(field_name) = field_name {
       let field_name_len = field_name
         .glyph_tiny_str_len()
-        .map_err(|_| ObjGlyphErr::FieldNameTooLong(field_name.len()))?;
+        .map_err(|_| ObjectErr::FieldNameTooLong(field_name.len()))?;
       self.labels_len = self.labels_len.saturating_add(field_name_len);
     }
 
@@ -974,13 +974,41 @@ impl<'a> ObjGlyphSerializer<'a> {
 }
 
 /// Errors related to Object Glyphs.
-#[derive(Debug, Copy, Clone)]
-pub enum ObjGlyphErr {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ObjectErr {
   /// When writing an object glyph, either all or no fields must be named.
   NamedFieldsInconsistency,
 
   /// The maximum length of field names is 255 bytes.
   FieldNameTooLong(usize),
+
+  /// Attempt to deserialize an `enum` variant or `struct` with named fields
+  /// from an [`ObjGlyph`] with unnamed fields.
+  FieldNamesMissing,
+  
+  /// An object was expected to have a specific type name, but none was present.
+  TypeNameMissing,
+  
+  /// An object was expected to have a specific type name, but the observed
+  /// type name did not match.
+  TypeNameMismatch,
+  
+  /// An object was expected to have a specific variant name, but none was 
+  /// present.
+  VariantNameMissing,
+
+  /// An object was expected to have a specific variant name, but the observed
+  /// variant name did not match.
+  VariantNameMismatch,
+
+  /// Attempt to deserialize a unit struct or unit enum variant (neither have
+  /// fields) from an [`ObjGlyph`] with fields.
+  UnexpectedFields,
+
+  /// Attempt to deserialize a tuple (or tuple struct or tuple variant) from an
+  /// object with named fields.
+  UnexpectedFieldNames,
+  
 }
 
 #[cfg(test)]

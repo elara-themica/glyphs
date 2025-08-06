@@ -12,7 +12,6 @@ edition = "2021"
 
 [dependencies]
 argon2 = { optional = true, version = "0.5" }
-# TODO: Make optional
 pbkdf2 = { optional = true, version = "0.12.2" }
 aes = { optional = true, version = "0.8" }
 num-bigint = "0.4.6"
@@ -26,7 +25,6 @@ log = { optional = true, version = "0.4" }
 md5 = { default-features = false, optional = true, version = "0.7" }
 rand = { optional = true, version = "0.8.4" }
 rand_chacha = { optional = true, version = "0.3.1" }
-serde = { optional = true, version = "^1" }
 sha1 = { optional = true, version = "0.10" }
 sha2 = { optional = true, version = "0.10" }
 sha3 = { optional = true, version = "0.10" }
@@ -40,7 +38,6 @@ zeroize = "1.8.1"
 rand = { version = "0.8.4" }
 log = { version = "0.4.14" }
 env_logger = { version = "0.11.3" }
-serde_derive = "^1"
 
 
 [features]
@@ -66,7 +63,6 @@ default = [
     "blake3",
     "uuid",
     "rng",
-    "serde",
     "log",
     "backtrace",
     "glifs",
