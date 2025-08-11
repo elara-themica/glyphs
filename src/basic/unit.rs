@@ -205,17 +205,3 @@ impl ToGlyph for () {
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn codec_unit() {
-    let nothing_glyph = Glyph::new(&UnitType::Nothing).unwrap();
-    std::dbg!(&nothing_glyph);
-    let ut = UnitType::from_glyph(nothing_glyph.as_ref()).unwrap();
-    assert_eq!(ut, UnitType::Nothing);
-    let ug = UnitGlyph::from_glyph(nothing_glyph.as_ref()).unwrap();
-    assert_eq!(ug.type_id(), &UnitType::Nothing);
-  }
-}

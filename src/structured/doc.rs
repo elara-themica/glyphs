@@ -408,53 +408,10 @@ impl<G: Deref<Target = Glyph>> PartialOrd for DocGlyph<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::util::test::{init_test_logger, BENCH_BUF_SIZE};
-  use ::test::Bencher;
   use alloc::string::String;
-  use std::{dbg, iter, println};
+  use std::{iter, println};
 
-  #[bench]
-  fn glyph_doc_merkle_chain(b: &mut Bencher) {
-    init_test_logger();
 
-    let root = Document::new((), ());
-    let rg = Glyph::new(&root).unwrap();
-    dbg!(&rg);
-    let rg = DocGlyph::from_glyph(rg).unwrap();
-    dbg!(&rg);
-    let updated =
-      Document::<(), ()>::update(&rg, iter::once(&Default::default())).unwrap();
-    let ug = Glyph::new(&updated).unwrap();
-    dbg!(&ug);
-    let ug_len = ug.glyph_len();
-    let ug = DocGlyph::from_glyph(Glyph::borrow(&ug)).unwrap();
-    dbg!(&ug);
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let mut buffer = [0u8; BENCH_BUF_SIZE];
-      let target = &mut buffer[..];
-      let cursor = &mut 0usize;
-      let prev_offset = &mut 0usize;
-
-      let updated =
-        Document::<(), ()>::update(&ug, iter::once(&Default::default()))
-          .unwrap();
-      updated.glyph_encode(target, cursor).unwrap();
-
-      while *cursor + ug_len < BENCH_BUF_SIZE {
-        let prev_glyph = Glyph::read(target, prev_offset).unwrap();
-        let prev_glyph = DocGlyph::from_glyph(prev_glyph).unwrap();
-        let updated = Document::<(), ()>::update(
-          &prev_glyph,
-          iter::once(&Default::default()),
-        )?;
-        updated.glyph_encode(target, cursor).unwrap();
-      }
-
-      Ok::<(), GlyphErr>(())
-    });
-  }
 
   #[test]
   fn glyph_doc() {

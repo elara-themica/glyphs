@@ -1,3 +1,4 @@
+// TODO: Sorting for localized strings
 use crate::{
   zerocopy::{pad_to_word, round_to_word, ZeroCopy, U16, U32},
   DecodeErr, EncodedGlyph, FromGlyph, Glyph, GlyphErr, GlyphHeader,
@@ -18,12 +19,14 @@ use core::{
   },
 };
 use icu_collator::{Collator, CollatorOptions};
-use crate::zerocopy::BufferErr;
 
 pub(crate) static COLLATOR: StringCollator =
   StringCollator(AtomicUsize::new(0));
 
+
+/// A string with language metadata.
 #[cfg(feature = "alloc")]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalizedString {
   language:  Language,
   direction: StringDirection,
@@ -76,6 +79,24 @@ impl LocalizedString {
   }
 }
 
+impl Default for LocalizedString {
+  fn default() -> Self {
+    Self {
+      language:  Language::Unknown,
+      direction: StringDirection::Unspecified,
+      content:   String::new(),
+    }
+  }
+}
+
+impl Deref for LocalizedString {
+  type Target = str;
+
+  fn deref(&self) -> &Self::Target {
+    self.content()
+  }
+}
+
 #[cfg(feature = "alloc")]
 impl ToGlyph for LocalizedString {
   fn glyph_encode(
@@ -97,6 +118,7 @@ impl ToGlyph for LocalizedString {
   }
 }
 
+/// The reference version of [`LocalizedString`].
 pub struct LocalizedStr<'a> {
   language:  Language,
   direction: StringDirection,
@@ -148,19 +170,26 @@ impl<'a> LocalizedStr<'a> {
   }
 }
 
-impl<G: Deref<Target = Glyph>> FromGlyph<G> for LocalizedStr<'static> {
-  type Error = GlyphErr;
-
-  fn from_glyph(glyph: G) -> Result<Self, DecodeErr<G, Self::Error>> {
-    todo!()
+impl Default for LocalizedStr<'static> {
+  fn default() -> Self {
+    Self {
+      language:  Language::Unknown,
+      direction: StringDirection::Unspecified,
+      content:   "",
+    }
   }
 }
 
-impl<'a> TryFrom<&'a Glyph> for LocalizedStr<'a> {
-  type Error = StringGlyphErr;
+impl<'a> FromGlyph<&'a Glyph> for LocalizedStr<'a> {
+  type Error = GlyphErr;
 
-  fn try_from(value: &'a Glyph) -> Result<Self, Self::Error> {
-    todo!()
+  fn from_glyph(glyph: &'a Glyph) -> Result<Self, DecodeErr<&'a Glyph, Self::Error>> {
+    let decode_result = (|| {
+      let sg = StringGlyph::from_glyph(glyph)?;
+      let s = sg.get_parsed()?;
+      Result::<LocalizedStr, GlyphErr>::Ok(s)
+    })();
+    decode_result.map_err(|err| DecodeErr::new(glyph, err))
   }
 }
 
@@ -236,10 +265,8 @@ where
     }
   }
 
-  /// Returns the raw bytes of the string
-  pub fn get_str_bytes(&self) -> &[u8] {
-    let metadata_len = size_of::<StringMetadata>();
-    match self.glyph.content().get(metadata_len..) {
+  fn get_bytes(&self) -> &[u8] {
+    match self.glyph.content().get(2..) {
       None => &[],
       Some(bytes) => bytes,
     }
@@ -247,14 +274,14 @@ where
 
   /// Returns the value as a valid UTF-8 [`str`], or an error if glyph does
   /// not contain only valid UTF-8.
-  pub fn get_str(&self) -> Result<&str, GlyphErr> {
+  pub fn get(&self) -> Result<LocalizedStr<'_>, GlyphErr> {
     match self.glyph.content().get(2..) {
-      None => Ok(""),
+      None => Ok(LocalizedStr::default()),
       Some(bytes) => {
         // SAFETY: The only impact of a data race here is duplicated work.
-        unsafe {
+        let bytes: &str = unsafe {
           match *self.valid_utf8.get() {
-            true => Ok(from_utf8_unchecked(bytes)),
+            true => Ok::<&str, GlyphErr>(from_utf8_unchecked(bytes)),
             false => match from_utf8(bytes) {
               Ok(string) => {
                 *self.valid_utf8.get() = true;
@@ -263,7 +290,46 @@ where
               Err(err) => Err(err.into()),
             },
           }
-        }
+        }?;
+        Ok(LocalizedStr::new(self.language(), self.direction(), bytes))
+      },
+    }
+  }
+}
+
+impl<'a> StringGlyph<&'a Glyph> {
+
+  fn get_bytes_parsed(&self) -> &'a [u8] {
+    match self.glyph.content().get(2..) {
+      None => &[],
+      Some(bytes) => bytes,
+    }
+  }
+
+  /// Returns the value as a valid UTF-8 [`str`], or an error if glyph does
+  /// not contain only valid UTF-8.
+  ///
+  /// Unlike `get_bytes()`, this function is only available when (1) the source
+  /// is a glyph from some other buffer, but (2) will return a slice with a
+  /// lifetime tied to that underlying buffer, not to this `StringGlyph`.
+  pub fn get_parsed(&self) -> Result<LocalizedStr<'a>, GlyphErr> {
+    match self.glyph.content().get(2..) {
+      None => Ok(LocalizedStr::default()),
+      Some(bytes) => {
+        // SAFETY: The only impact of a data race here is duplicated work.
+        let bytes: &str = unsafe {
+          match *self.valid_utf8.get() {
+            true => Ok::<&str, GlyphErr>(from_utf8_unchecked(bytes)),
+            false => match from_utf8(bytes) {
+              Ok(string) => {
+                *self.valid_utf8.get() = true;
+                Ok(string)
+              },
+              Err(err) => Err(err.into()),
+            },
+          }
+        }?;
+        Ok(LocalizedStr::new(self.language(), self.direction(), bytes))
       },
     }
   }
@@ -313,7 +379,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for StringGlyph<G> {
         .language()
         .cmp(&other.language())
         .then(self.direction().cmp(&other.direction()))
-        .then(self.get_str_bytes().cmp(other.get_str_bytes())),
+        .then(self.glyph.content().get(2..).cmp(&other.glyph.content().get(2..))),
       GlyphSorting::Experimental => {
         let collator = COLLATOR.get();
         self
@@ -321,7 +387,7 @@ impl<G: Deref<Target = Glyph>> EncodedGlyph<G> for StringGlyph<G> {
           .cmp(&other.language())
           .then(self.direction().cmp(&other.direction()))
           .then(
-            collator.compare_utf8(self.get_str_bytes(), other.get_str_bytes()),
+            collator.compare_utf8(self.get_bytes(), other.get_bytes()),
           )
       },
     }
@@ -360,8 +426,8 @@ impl<G: Deref<Target = Glyph>> Ord for StringGlyph<G> {
       .cmp(&other.language())
       .then(self.direction().cmp(&other.direction()))
       .then_with(|| {
-        let a = self.get_str_bytes();
-        let b = other.get_str_bytes();
+        let a = self.get_bytes();
+        let b = other.get_bytes();
         let c = COLLATOR.get();
         c.compare_utf8(a, b)
       })
@@ -728,9 +794,9 @@ impl<G: Deref<Target = Glyph>> Ord for CharGlyph<G> {
 }
 
 /// Errors resulting from working with string glyphs
-pub enum StringGlyphErr {
-  BufferReadErr(BufferErr)
-}
+// pub enum StringGlyphErr {
+//   BufferReadErr(BufferErr)
+// }
 
 pub(crate) struct StringCollator(AtomicUsize);
 
@@ -761,26 +827,6 @@ impl StringCollator {
     }
   }
 }
-
-// impl<G> FromGlyph<G> for char
-// where
-//   G: Deref<Target = Glyph>,
-// {
-//   fn from_glyph(source: G) -> Result<Self, FromGlyphErr<G>> {
-//     if let Err(err) = source.header().confirm_type(GlyphType::UnicodeChar) {
-//       return Err(err.into_fge(source));
-//     }
-//     let value: u32 =
-//       match U32::bbrd(&source.header().short_content()[..], &mut 0) {
-//         Ok(value) => value.into(),
-//         Err(err) => return Err(FromGlyphErr::new(source, err.into())),
-//       };
-//     match char::try_from(value) {
-//       Ok(c) => Ok(c),
-//       Err(_err) => Err(FromGlyphErr::new(source, GlyphErr::IllegalValue)),
-//     }
-//   }
-// }
 
 impl<'a> FromGlyph<&'a Glyph> for &'a str {
   type Error = GlyphErr;
@@ -930,81 +976,4 @@ fn str_glyph_encode(
 #[inline]
 fn str_glyph_len(content_len: usize) -> usize {
   size_of::<GlyphHeader>() + round_to_word(2 + content_len)
-}
-
-
-#[cfg(test)]
-#[allow(unused)]
-mod tests {
-  use super::*;
-  use alloc::vec::Vec;
-  use std::thread;
-
-  const NAMES: [&str; 7] = [
-    "Kaiden Alenko",
-    "Jane Shepard",
-    "Ashley Williams",
-    "Garrus Vakarian",
-    "Urdnox Wrex",
-    "Tali vas Normandy",
-    "Liara T'Soni",
-  ];
-
-  #[test]
-  fn icu_collation() {
-    let c = COLLATOR.get();
-    let result = c.compare(NAMES[0], NAMES[1]);
-    std::dbg!(&result);
-    let mut new_names = NAMES.clone();
-    new_names.sort_by(|a, b| c.compare(a, b));
-    std::dbg!(&new_names);
-
-    // Disabled long-running test for thread safety.
-    // for _i in 0..2000 {
-    //   thread::spawn(move || {
-    //     let c = COLLATOR.get();
-    //     for _ in 0..100_000 {
-    //       let mut new_names = names.clone();
-    //       new_names.sort_by(|a, b| c.compare(a, b));
-    //     }
-    //   });
-    // }
-  }
-
-  #[test]
-  fn string_glyph() {
-    // Encode the list of names into glyphs, both from `str` and `String`.
-    let mut str_glyphs = Vec::new();
-    let mut string_glyphs = Vec::new();
-    for name in NAMES {
-      str_glyphs.push(Glyph::new(name).unwrap());
-      string_glyphs.push(Glyph::new(String::from(name)).unwrap());
-    }
-
-    // Ensure all combinations of round-trip codecs match.
-    for ((name, str_glyph), string_glyph) in NAMES
-      .iter()
-      .zip(str_glyphs.iter())
-      .zip(string_glyphs.iter())
-    {
-      let decoded1 = <&str>::from_glyph(str_glyph.as_ref()).unwrap();
-      assert_eq!(*name, decoded1);
-      let decoded2 = <&str>::from_glyph(string_glyph.as_ref()).unwrap();
-      assert_eq!(*name, decoded2);
-      let decoded3 = String::from_glyph(string_glyph.as_ref()).unwrap();
-      assert_eq!(*name, decoded3);
-      let decoded4 = String::from_glyph(string_glyph.as_ref()).unwrap();
-      assert_eq!(*name, decoded4);
-
-      let sg = StringGlyph::from_glyph(string_glyph.as_ref()).unwrap();
-      let decoded5 = sg.get_str().unwrap();
-      assert_eq!(*name, decoded5);
-      assert_eq!(sg.get_str_bytes(), name.as_bytes());
-
-      let sg = StringGlyph::from_glyph(str_glyph.as_ref()).unwrap();
-      let decoded6 = sg.get_str().unwrap();
-      assert_eq!(*name, decoded6);
-      assert_eq!(sg.get_str_bytes(), name.as_bytes());
-    }
-  }
 }

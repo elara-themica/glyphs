@@ -262,7 +262,6 @@ mod test {
     util::test::{init_test_logger, TEST_PLAINTEXT},
     GlyphErr,
   };
-  use ::test::Bencher;
   use alloc::vec::Vec;
   use rand::rngs::OsRng;
   use std::{dbg, println};
@@ -293,22 +292,22 @@ mod test {
     Ok(())
   }
 
-  #[cfg(feature = "crypto")]
-  #[bench]
-  fn bench_aes_ctr(b: &mut Bencher) -> Result<(), GlyphErr> {
-    init_test_logger();
-
-    let mut data = [0u8; 8192];
-
-    let mut rng = OsRng::default();
-    let key = AesKey::new(&mut rng);
-    let iv = AesIv::from_ephemeral_key(&key);
-
-    b.bytes = 8192;
-    b.iter(|| {
-      aes_256ctr_encrypt(&key, &iv, &mut data);
-    });
-
-    Ok(())
-  }
+  // #[cfg(feature = "crypto")]
+  // #[bench]
+  // fn bench_aes_ctr(b: &mut Bencher) -> Result<(), GlyphErr> {
+  //   init_test_logger();
+  //
+  //   let mut data = [0u8; 8192];
+  //
+  //   let mut rng = OsRng::default();
+  //   let key = AesKey::new(&mut rng);
+  //   let iv = AesIv::from_ephemeral_key(&key);
+  //
+  //   b.bytes = 8192;
+  //   b.iter(|| {
+  //     aes_256ctr_encrypt(&key, &iv, &mut data);
+  //   });
+  //
+  //   Ok(())
+  // }
 }

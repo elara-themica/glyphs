@@ -79,25 +79,15 @@
 //!
 //!
 
-#![no_std]
-
-// Used to enable testing with no_std
-#![feature(test)]
-
+#![cfg_attr(not(feature = "std"), no_std)]
 
 // Used by specialization feature
 #![allow(incomplete_features)]
 // Warnings disabled while in concept development.
 #![allow(dead_code)]
 
-#[cfg(feature = "std")]
-extern crate std;
-
 #[cfg(feature = "alloc")]
 extern crate alloc;
-
-#[cfg(test)]
-extern crate test;
 
 /// Internal Macros
 #[macro_use]

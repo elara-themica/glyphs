@@ -88,19 +88,15 @@ where
 mod test {
   use super::*;
   use crate::{
-    util::{
-      debug::HexDump,
-      test::{simple_codec_slice_test, simple_codec_test, BENCH_BUF_SIZE},
-    },
-    FromGlyph, Glyph, GlyphErr,
+    util::test::{simple_codec_slice_test, simple_codec_test},
+    FromGlyph, Glyph,
   };
-  use ::test::Bencher;
-  use alloc::boxed::Box;
-  use std::{dbg, hint::black_box, iter::repeat, ops::Deref, string::String};
+  use alloc::string::String;
+  use core::ops::Deref;
 
   #[test]
   fn codec_basic() {
-    //== Simple Scalar Values ==/
+    //=== Simple Scalar Values ===/
     simple_codec_test(());
     simple_codec_test(Option::<u32>::None);
     simple_codec_test(Option::<u32>::Some(0xDEAD_BEEF));
@@ -110,8 +106,9 @@ mod test {
     simple_codec_test(-32i32);
     simple_codec_test(-64i64);
     simple_codec_test(-128i128);
+    simple_codec_test('🦋');
 
-    //== Simple Slices ==/
+    //=== Simple Slices ===/
     simple_codec_slice_test::<3, u8, u8>(42u8);
     simple_codec_slice_test::<3, u16, U16>(0xF00D);
     simple_codec_slice_test::<3, u32, U32>(0xDEAD_BEEF);
@@ -124,259 +121,44 @@ mod test {
     simple_codec_slice_test::<3, i128, I128>(-1234);
     simple_codec_slice_test::<3, f32, F32>(core::f32::consts::E);
     simple_codec_slice_test::<3, f64, F64>(core::f64::consts::E);
-  }
+    // No basic slice for `char`, as it's not safely zero-copy.
 
-  macro_rules! gen_bench {
-    ($enc_bench_name:ident, $dec_bench_name:ident, $prim:ty) => {
-      #[bench]
-      fn $enc_bench_name(b: &mut Bencher) -> Result<(), $crate::GlyphErr> {
-        let mut buf: Box<[u8]> = repeat(0).take(BENCH_BUF_SIZE).collect();
+    //=== Vary Slice Lengths ===/
+    simple_codec_slice_test::<0, u32, U32>(0xDEAD_BEEF);
+    simple_codec_slice_test::<1, u32, U32>(0xDEAD_BEEF);
+    simple_codec_slice_test::<2, u32, U32>(0xDEAD_BEEF);
+    simple_codec_slice_test::<3, u32, U32>(0xDEAD_BEEF);
+    simple_codec_slice_test::<7, u32, U32>(0xDEAD_BEEF);
+    simple_codec_slice_test::<8, u32, U32>(0xDEAD_BEEF);
 
-        let value: $prim = Default::default();
-
-        // Write the buffer
-        b.bytes = BENCH_BUF_SIZE as u64;
-        b.iter(|| {
-          let cursor = &mut 0;
-          loop {
-            $crate::ToGlyph::glyph_encode(&value, buf.as_mut(), cursor)?;
-          }
-          #[allow(unreachable_code)]
-          Result::<(), $crate::GlyphErr>::Ok(())
-        });
-        let _ = black_box(buf);
-        Ok(())
-      }
-
-      #[bench]
-      fn $dec_bench_name(b: &mut Bencher) -> Result<(), $crate::GlyphErr> {
-        let mut buf: alloc::boxed::Box<[u8]> =
-          core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-        // let mut buf = ByteBuffer::new(BENCH_BUF_SIZE, true).unwrap();
-        let value: $prim = Default::default();
-
-        // Write the buffer
-        let cursor = &mut 0;
-        while *cursor
-          <= BENCH_BUF_SIZE
-            - size_of::<$prim>()
-            - size_of::<$crate::GlyphHeader>()
-        {
-          $crate::ToGlyph::glyph_encode(&value, buf.as_mut(), cursor)?;
-        }
-
-        // Read all the glyphs from the buffer
-        b.bytes = BENCH_BUF_SIZE as u64;
-        b.iter(|| {
-          let cursor = &mut 0;
-          loop {
-            let glyph = $crate::Glyph::read(&buf, cursor)?;
-            let _decoded = <$prim>::from_glyph(glyph)
-              .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
-          }
-          #[allow(unreachable_code)]
-          Ok::<(), $crate::GlyphErr>(())
-        });
-        Ok(())
-      }
-    };
-  }
-
-  gen_bench!(enc_glyph_u32, dec_glyph_u32, u32);
-  gen_bench!(enc_glyph_u64, dec_glyph_u64, u64);
-
-  #[bench]
-  fn dec_basic_glyph_i32(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let mut buf: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-    let value: i32 = 1;
-
-    // Write the buffer
-    let cursor = &mut 0;
-    while *cursor <= BENCH_BUF_SIZE - size_of::<i32>() {
-      value.glyph_encode(buf.as_mut(), cursor).unwrap();
-    }
-
-    dbg!(&HexDump(buf.as_ref()));
-
-    let mut outside = 0i32;
-
-    // Read all the glyphs from the buffer
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter::<_, _>(|| -> Result<(), GlyphErr> {
-      let cursor = &mut 0;
-      loop {
-        let glyph = Glyph::read(&buf, cursor)?;
-        let decoded = IntGlyph::from_glyph(glyph)
-          .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
-        outside = decoded.get_i32()?;
-      }
-    });
-    Ok(())
-  }
-
-  #[test]
-  fn codec_glyph_str() -> Result<(), GlyphErr> {
-    // Basic encoding
+    //=== Strings ===/
     let text = "hunter2";
-    let glyph = Glyph::new(text)?;
-    dbg!(&glyph);
-
-    let read_str = <&str>::from_glyph(glyph.as_ref())
-      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
+    let glyph = Glyph::new(text).unwrap();
+    let read_str = <&str>::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(read_str, text);
-
-    let read_string = String::from_glyph(glyph.as_ref())
-      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
+    let read_string = String::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(read_string.as_str(), text);
-
-    let str_glyph = StringGlyph::from_glyph(glyph.as_ref())
-      .map_err(|err| Into::<GlyphErr>::into(err.into_err()))?;
+    let str_glyph = StringGlyph::from_glyph(glyph.as_ref()).unwrap();
     assert_eq!(str_glyph.deref(), text);
 
-    Ok(())
-  }
-
-  #[bench]
-  fn enc_glyph_str(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let mut buf: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-    let value = "My xenoscience studies range from urban to agrarian, \
-                 I am the very model of a scientist Salarian!";
-
-    let target = buf.as_mut();
-    let glyph = Glyph::new(value)?;
-    let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| -> Result<(), GlyphErr> {
-      let cursor = &mut 0;
-      loop {
-        value.glyph_encode(target, cursor)?
-      }
-    });
-
-    let cursor = &mut 0;
-    for _ in 0..iterations {
-      let glyph = Glyph::read(&buf, cursor)?;
-      let as_read = <&str>::from_glyph(glyph)?;
-      assert_eq!(value, as_read);
-    }
-    Ok(())
-  }
-
-  #[bench]
-  fn dec_glyph_str(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let mut buf: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-    let value = "My xenoscience studies range from urban to agrarian, \
-                 I am the very model of a scientist Salarian!";
-
-    let glyph = Glyph::new(value)?;
-    dbg!(&glyph);
-
-    // let mut buf = [0xFFu8; 120];
-    // let mut cursor = 0;
-    // value.glyph_encode(&mut buf, &mut cursor)?;
-    // dbg!(cursor);
-    // dbg!(HexDump(&buf[..]));
-
-    let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
-    dbg!(&glyph.glyph_len());
-    dbg!(&iterations);
-
-    let cursor = &mut 0;
-    for _ in 0..iterations {
-      dbg!(&cursor);
-      value.glyph_encode(buf.as_mut(), cursor)?;
-    }
-    std::println!("HERE");
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let cursor = &mut 0;
-      for _ in 0..iterations {
-        let glyph = Glyph::read(&buf, cursor)?;
-        let _ = <&str>::from_glyph(glyph)?;
-      }
-      Ok::<(), GlyphErr>(())
-    });
-    Ok(())
-  }
-
-  #[test]
-  fn codec_glyph_char() {
-    let value = 'K';
-    let glyph = Glyph::new(&value).unwrap();
-    let as_read = char::from_glyph(glyph).unwrap();
-    assert_eq!(value, as_read);
-  }
-
-  #[bench]
-  fn enc_glyph_char(b: &mut Bencher) {
-    let mut buf: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-    let value = 'K';
-
-    let glyph = Glyph::new(&value).unwrap();
-    let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| -> Result<(), GlyphErr> {
-      let cursor = &mut 0;
-      loop {
-        value.glyph_encode(buf.as_mut(), cursor)?
-      }
-    });
-
-    let cursor = &mut 0;
-    for _ in 0..iterations {
-      let glyph = Glyph::read(&buf, cursor).unwrap();
-      let as_read = char::from_glyph(glyph).unwrap();
-      assert_eq!(value, as_read);
-    }
-  }
-
-  #[bench]
-  fn dec_glyph_char(b: &mut Bencher) {
-    let mut buf: alloc::boxed::Box<[u8]> =
-      core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-    let value = 'K';
-
-    let glyph = Glyph::new(&value).unwrap();
-    let iterations = BENCH_BUF_SIZE / glyph.glyph_len();
-
-    let cursor = &mut 0;
-    for _ in 0..iterations {
-      value.glyph_encode(buf.as_mut(), cursor).unwrap();
+    //=== Vary String Lengths ===/
+    let mut text = String::new();
+    for _i in 0..64 {
+      let glyph = Glyph::new(&text).unwrap();
+      let read_str = <&str>::from_glyph(glyph.as_ref()).unwrap();
+      assert_eq!(read_str, text);
+      text.push('a');
     }
 
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let cursor = &mut 0;
-      for _ in 0..iterations {
-        let glyph = Glyph::read(&buf, cursor)?;
-        let _ = char::from_glyph(glyph)?;
-      }
-      Ok::<(), GlyphErr>(())
-    });
-  }
-
-  #[bench]
-  fn validate_utf8(b: &mut Bencher) {
-    let value = b"My xenoscience studies range from urban to agrarian, \
-               I am the very model of a scientist Salarian!";
-
-    let iterations = BENCH_BUF_SIZE / value.len();
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let mut sum: u64 = 0;
-      for _ in 0..iterations {
-        let as_str = from_utf8(&value[..])?;
-        sum += as_str.as_bytes()[0] as u64;
-      }
-      Ok::<u64, core::str::Utf8Error>(sum)
-    })
+    //=== Unit Type ===//
+    let nothing_glyph = Glyph::new(&UnitType::Nothing).unwrap();
+    let ut = UnitType::from_glyph(nothing_glyph.as_ref()).unwrap();
+    assert_eq!(ut, UnitType::Nothing);
+    let ug = UnitGlyph::from_glyph(nothing_glyph.as_ref()).unwrap();
+    assert_eq!(ug.type_id(), &UnitType::Nothing);
+    // Resulting glyphs from using the `()` type directly should be the same as
+    // explicitly using `UnitType::Nothing`.
+    let from_unit_type = Glyph::new(()).unwrap();
+    assert_eq!(from_unit_type.as_ref(), nothing_glyph.as_ref());
   }
 }

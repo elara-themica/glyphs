@@ -235,8 +235,8 @@ impl PasswordAlgorithmParameters {
         // t_cost: U32, m_cost: U32, p_cost: U32
         size_of::<U32>() + size_of::<U32>() + size_of::<U32>()
       },
-      PasswordAlgorithmParameters::Pbkdf2HmacSha256 { iterations } => {
-        // iterations: U32
+      PasswordAlgorithmParameters::Pbkdf2HmacSha256 { .. } => {
+        // it's only the # of iterations, and that's a U32.
         size_of::<U32>()
       },
     }
@@ -277,7 +277,6 @@ impl PasswordAlgorithmParameters {
       PasswordAlgorithmParameters::Pbkdf2HmacSha256 { .. } => {
         PasswordAlgorithm::Pbkdf2HmacSha256
       },
-      _ => PasswordAlgorithm::Unknown,
     }
   }
 }
@@ -589,10 +588,17 @@ impl<G: Deref<Target = Glyph>> PasswordGlyph<G> {
     Password::try_from(self)
   }
 
-  /// Returns `true` if the provided password matches.
-  pub fn matches(&self, password: &[u8]) -> Result<bool, GlyphErr> {
-    let pw = self.password()?;
-    todo!()
+  /// Returns `true` only if the provided password matches hash.
+  ///
+  /// It returns `false` if either the (1) password doesn't match or (2) we
+  /// could not decode the original password hash.
+  pub fn matches(&self, password: &[u8]) -> bool {
+    if let Ok(hashed) = self.password() {
+      if hashed.matches(password).is_ok() {
+        return true;
+      }
+    }
+    false
   }
 
   fn parameter_data(&self) -> &[u8] {

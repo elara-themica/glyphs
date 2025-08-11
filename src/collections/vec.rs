@@ -997,7 +997,6 @@ where
       + size_of::<U32>()
       + size_of::<T>() * self.0.into_iter().len();
     let glyph_len = size_of::<GlyphHeader>() + round_to_word(content_len);
-    std::dbg!(content_len, glyph_len, self.glyph_len());
 
     // Consolidated bounds check for writing glyph of primitives
     bounds_check(target, *cursor + glyph_len)?;
@@ -1007,7 +1006,7 @@ where
     // Secondary header contains type id and tensor rank
     BasicVecGlyphHeader::new::<T>(1)?.bbwr(target, cursor)?;
 
-    // With a a simple array, the length of the first tensor rank is the length
+    // With a simple array, the length of the first tensor rank is the length
     // of the entire array. No need to pad, because of the size of the
     // secondary header and one tensor rank length, we're already at a multiple
     // of 8 bytes
@@ -1137,9 +1136,7 @@ where
 
 #[cfg(test)]
 mod test {
-  // FIXME
   use super::*;
-  use ::test::{black_box, Bencher};
 
   #[test]
   fn codec_glyph_vec() {
@@ -1170,95 +1167,5 @@ mod test {
     assert_eq!(decoded.type_id(), BasicVecType::U8);
     assert_eq!(decoded.get::<u8>().unwrap(), &numbers[..]);
   }
-
-  // FIXME
-  // /// Tests the encoding speed for a vector glyph.
-  // ///
-  // /// This should be close to the worst-case-scenario for encoding a vector
-  // /// glyph; 3 items in 64 bytes.
-  // #[bench]
-  // fn enc_glyph_vec(b: &mut Bencher) {
-  //   let ga = Glyph::new(&1).unwrap();
-  //   let gb = Glyph::new(&2).unwrap();
-  //   let gc = Glyph::new(&0xbadc_0ffe_e0dd_f00d_u64.to_be()).unwrap();
-  //   let src = vec![ga, gb, gc];
-  //
-  //   let mut target: alloc::boxed::Box<[u8]> =
-  //     core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-  //
-  //   b.bytes = BENCH_BUF_SIZE as u64;
-  //   b.iter(|| {
-  //     let cursor = &mut 0;
-  //     for _ in 0..128 {
-  //       src.glyph_encode(target.as_mut(), cursor)?;
-  //     }
-  //     Ok::<(), GlyphErr>(())
-  //   });
-  // }
-
-  // FIXME
-  // /// Tests the decoding speed for a vector glyph.
-  // ///
-  // /// This should be close to the worst-case-scenario for decoding a vector
-  // /// glyph; 3 items in 64 bytes.
-  // #[bench]
-  // fn dec_glyph_vec(b: &mut Bencher) {
-  //   let ga = Glyph::new(&1).unwrap();
-  //   let gb = Glyph::new(&2).unwrap();
-  //   let gc = Glyph::new(&3_u64.to_be()).unwrap();
-  //   let src = vec![ga, gb, gc];
-  //
-  //   let mut target: alloc::boxed::Box<[u8]> =
-  //     core::iter::repeat(0).take(BENCH_BUF_SIZE).collect();
-  //
-  //   let cursor = &mut 0;
-  //   for _ in 0..128 {
-  //     src.glyph_encode(target.as_mut(), cursor).unwrap();
-  //   }
-  //
-  //   b.bytes = BENCH_BUF_SIZE as u64;
-  //   b.iter(|| {
-  //     let cursor = &mut 0;
-  //     for _ in 0..128 {
-  //       let _ = Glyph::read(&target, cursor)?;
-  //     }
-  //     Ok::<(), GlyphErr>(())
-  //   });
-  // }
-  //
-  // FIXME
-  // #[test]
-  // fn test_dyn_enc_vec() {
-  //   let to_encode: Vec<&dyn ToGlyph> = vec![&42u8, &42i64, &"world"];
-  //   let glyph = Glyph::new(&to_encode).unwrap();
-  //   dbg!(&glyph);
-  //
-  //   let vg = VecGlyph::from_glyph(glyph.deref()).unwrap();
-  //   let g0 = u32::from_glyph(vg.get(0).unwrap()).unwrap();
-  //   assert_eq!(g0, 42);
-  //   let g1 = i64::from_glyph(vg.get(1).unwrap()).unwrap();
-  //   assert_eq!(g1, 42);
-  //   let g2 = <&str>::from_glyph(vg.get_parsed(2).unwrap()).unwrap();
-  //   drop(vg);
-  //   assert_eq!(g2, "world");
-  //   drop(glyph);
-  //
-  //   // TODO: Must not compile.  Doc test?
-  //   // assert_eq!(g2, "world"); // Compiler error
-  // }
-
-  #[bench]
-  fn enc_basic_vec(b: &mut Bencher) {
-    let source = [42u32; 8192];
-    let foo = &source[..];
-    foo.glyph_len();
-
-    let glyph = Glyph::new(&source[..]).unwrap();
-    std::dbg!(&glyph);
-
-    b.bytes = source.glyph_len() as u64;
-    b.iter(|| {
-      black_box(Glyph::new(&source[..]).unwrap());
-    })
-  }
+  
 }

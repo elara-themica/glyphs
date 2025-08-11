@@ -3,7 +3,7 @@ use alloc::string::FromUtf8Error;
 
 use crate::{
   basic::UnitType,
-  crypto::{CryptoErr, CryptographicHash, GlyphHash, PasswordErr},
+  crypto::{CryptoErr, CryptographicHash, GlyphHash, HashErr, PasswordErr},
   dynamic::DynGlyph,
   structured::ObjectErr,
   util::debug::{HexDump, ShortHexDump},
@@ -12,6 +12,7 @@ use crate::{
     U16, U32,
   },
 };
+
 #[cfg(feature = "alloc")]
 use alloc::{boxed::Box, sync::Arc};
 use core::{
@@ -20,10 +21,10 @@ use core::{
   fmt::{Debug, Display, Formatter},
   mem::{size_of, transmute},
   num::TryFromIntError,
+  ops::Deref,
   str::Utf8Error,
 };
-use std::ops::Deref;
-use crate::crypto::HashErr;
+
 // /// Semi-structured data designed to be read without deserialization.
 // /* === IMPORTANT: SAFETY ===
 //
@@ -736,9 +737,6 @@ pub enum GlyphErr {
   /// Some data was not or could not be sorted as required.
   SortErr,
 
-  /// Some `BufferError` occurred
-  // BufferErr(BufferErr),
-
   /// The glyph header asserted that some bytes were padding bytes, but those
   /// bytes were not set equal to zero.
   PaddingNonZero,
@@ -1099,8 +1097,8 @@ impl<G: Deref<Target = Glyph>> From<GlyphDecodeErr<G>> for GlyphErr {
 pub struct Glyph([u8]);
 
 impl Glyph {
-  //   /// Interpret the glyph dynamically (detect type and return an enum
-  //   /// [`DynGlyph`]).
+  /// Interpret the glyph dynamically (detect type and return an enum
+  /// [`DynGlyph`]).
   pub(crate) fn as_dyn(&self) -> DynGlyph<&Glyph> {
     DynGlyph::new(self)
   }
@@ -1331,11 +1329,14 @@ where
     self.glyph
   }
 
-  pub(crate) fn into_err(self) -> E {
+  /// Extracts just the error
+  pub fn into_err(self) -> E {
     self.err
   }
 
-  pub(crate) fn into_parts(self) -> (G, E) {
+  /// Deconstructs the error into a tuple of the glyph and the error encountered
+  /// in decoding it.
+  pub fn into_parts(self) -> (G, E) {
     (self.glyph, self.err)
   }
 

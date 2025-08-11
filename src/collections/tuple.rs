@@ -903,8 +903,6 @@ where
 #[cfg(test)]
 mod test {
   use super::*;
-  use ::test::Bencher;
-  use std::hint::black_box;
 
   const BENCH_BUF_SIZE: usize = 8192;
 
@@ -949,51 +947,5 @@ mod test {
       sum += i32::from_glyph(glyph).unwrap();
     }
     assert_eq!(sum, 8 + 6 + 7 + 5 + 3);
-  }
-
-  /// Benchmark the encoding of a short tuple glyph.
-  ///
-  /// This should be close to the worst case for encoding tuple glyphs, with
-  /// a separate object to write every 4 bytes.
-  #[bench]
-  fn enc_glyph_tuple(b: &mut Bencher) {
-    let mut buf = [0; BENCH_BUF_SIZE];
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| unsafe {
-      let cursor = &mut 0;
-      black_box(buf);
-      for _ in 0..256 {
-        ((), (), ())
-          .glyph_encode(&mut buf[..], cursor)
-          .unwrap_unchecked()
-      }
-      black_box(buf);
-      Ok::<(), GlyphErr>(())
-    })
-  }
-
-  /// Benchmark the decoding of short tuple glyph.
-  ///
-  /// This should be close to the worst case for decoding tuple glyphs, with
-  /// a separate object to parse every 4 bytes.
-  #[bench]
-  fn dec_glyph_tuple(b: &mut Bencher) {
-    let mut buf = [0u8; BENCH_BUF_SIZE];
-    let cursor = &mut 0;
-    for _ in 0..256 {
-      ((), (), ()).glyph_encode(&mut buf[..], cursor).unwrap();
-    }
-
-    b.bytes = BENCH_BUF_SIZE as u64;
-    b.iter(|| {
-      let cursor = &mut 0;
-      for _ in 0..256 {
-        let tg = Glyph::read(&buf, cursor)?;
-        let (a, b, c): ((), (), ()) =
-          FromGlyph::from_glyph(tg).map_err(|err| err.into_err())?;
-        black_box((a, b, c));
-      }
-      Ok::<(), GlyphErr>(())
-    })
   }
 }

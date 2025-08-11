@@ -968,7 +968,6 @@ mod test {
       init_test_logger, simple_codec_slice_test, simple_codec_test,
     },
   };
-  use ::test::Bencher;
   use rand::SeedableRng;
   use rand_chacha::ChaCha20Rng;
   use std::dbg;
@@ -1011,65 +1010,6 @@ mod test {
       simple_codec_test(hash);
       simple_codec_slice_test::<3, Blake3Hash, Blake3Hash>(hash);
     }
-  }
-
-  #[cfg(all(feature = "md5", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_md5(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let bytes = [0u8; 8192];
-
-    b.bytes = bytes.len() as u64;
-    b.iter(|| Md5Hash::new(&bytes[..]));
-
-    Ok(())
-  }
-
-  #[cfg(all(feature = "sha1", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_sha1(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let bytes = [42u8; 8192];
-
-    b.bytes = bytes.len() as u64;
-    b.iter(|| {
-      let _hash = Sha1Hash::new(&bytes[..]);
-    });
-    Ok(())
-  }
-
-  #[cfg(all(feature = "sha2", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_sha2(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let bytes = [42u8; 8192];
-
-    b.bytes = bytes.len() as u64;
-    b.iter(|| {
-      let _hash = Sha256Hash::new(&bytes[..]);
-    });
-    Ok(())
-  }
-
-  #[cfg(all(feature = "sha3", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_sha3(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let bytes = [42u8; 8192];
-
-    b.bytes = bytes.len() as u64;
-    b.iter(|| {
-      let _hash = Sha3Hash::new(&bytes[..]);
-    });
-    Ok(())
-  }
-
-  #[cfg(all(feature = "blake3", feature = "test_slow"))]
-  #[bench]
-  fn bench_hash_blake3(b: &mut Bencher) -> Result<(), GlyphErr> {
-    let bytes = [42u8; 8192];
-
-    b.bytes = bytes.len() as u64;
-    b.iter(|| {
-      let _hash = Blake3Hash::new(&bytes[..]);
-    });
-    Ok(())
   }
 
   #[test]
